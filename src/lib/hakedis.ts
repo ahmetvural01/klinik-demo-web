@@ -1,12 +1,17 @@
 import { prisma } from "@/lib/prisma";
 import { stripSystemTags } from "@/lib/format-text";
 import { turkeyMonthRangeUtc, turkeyDateKey } from "@/lib/tz";
+import { EXAM_STATUS_CANCELLED } from "@/lib/examination-status";
 import type { Prisma } from "@prisma/client";
 
 export type DoctorRates = { kkYuzde: number; genelYuzde: number; maasYuzde: number };
 
-// Rapor sayfasındaki (src/app/api/reports/route.ts) hakediş formülüyle birebir
-// aynı mantık — iki yerde farklı sonuç çıkmasın diye buradan paylaşılıyor.
+// Ön teşhis (diagnoz) kayıtları ücrete yansımaz. Hakediş bunun yanında
+// planlanan (PLANLANDI) ve iptal edilen (IPTAL) tedavileri de saymaz — hasta
+// bakiyesi ve Raporlar'daki hakediş (src/app/api/reports/route.ts) ile aynı
+// kural (CHARGEABLE_EXAMINATION_WHERE). Sorgu ön teşhisi dışarıda bırakır; iki
+// durum ise ödenmiş dönemlerin eski hesabını koruyabilmek için kodda ayrılır
+// (bkz. computeDoctorMonthlyHakedis).
 const TREATMENT_ONLY_WHERE = {
   NOT: [
     { status: { contains: "diagnoz", mode: "insensitive" as const } },
@@ -14,7 +19,24 @@ const TREATMENT_ONLY_WHERE = {
     { status: { contains: "on teshis", mode: "insensitive" as const } },
   ],
 };
+const NOT_CHARGEABLE_STATUSES = new Set<string>(["PLANLANDI", EXAM_STATUS_CANCELLED]);
 
+/**
+ * Tedavi (ön teşhis olmayan) kaydı yeni hakediş kuralında sayılır mı? Planlanan
+ * ve iptal edilen sayılmaz. Dönem kilidi (api/examinations/[id]) de bu kuralı
+ * kullanır: ödenmiş ayda sayılma durumunu değiştiren geçiş hakedişi değiştirir.
+ */
+export function isChargeableForHakedis(status: string | null | undefined) {
+  return !NOT_CHARGEABLE_STATUSES.has(String(status ?? ""));
+}
+
+/**
+ * "Hekim kimdir" kuralının sunucu karşılığı (istemcide lib/staff-roles
+ * `isEffectiveDoctor`): DOKTOR her zaman; YÖNETİCİ, "Doktor olarak gizle"
+ * işaretli değilse hekimdir. Profil kaydı olmayan yönetici de hekim sayılır —
+ * kurum sahibi hesabı profilsiz açılıyor; önceden seçicilerde görünüp seçilince
+ * 403 alıyor, sahip-hekim takvimden kayboluyordu.
+ */
 export function effectiveDoctorWhere(institutionId?: string | null, branchId?: string): Prisma.UserWhereInput {
   return {
     isActive: true,
@@ -22,16 +44,16 @@ export function effectiveDoctorWhere(institutionId?: string | null, branchId?: s
     ...(branchId ? { branchMemberships: { some: { branchId, isActive: true } } } : {}),
     OR: [
       { role: "DOKTOR" },
-      { role: "YONETICI", profile: { is: { hideAsDoctor: false } } },
+      { role: "YONETICI", OR: [{ profile: { is: null } }, { profile: { is: { hideAsDoctor: false } } }] },
     ],
   };
 }
 
 /**
  * Hakediş süreçlerine (ödeme, aylık döküm, detay) dahil olabilecek kullanıcıyı
- * bulur: DOKTOR rolü her zaman uygundur; YONETICI ise yalnızca ayarlardan
- * "randevu/hakediş ekranlarında doktor olarak görünsün" işaretlenmişse
- * (profile.hideAsDoctor === false) uygun sayılır.
+ * bulur: DOKTOR rolü her zaman uygundur; YONETICI ise "Doktor olarak gizle"
+ * işaretli değilse (profil kaydı yoksa da) uygundur — effectiveDoctorWhere ile
+ * aynı kural.
  */
 export async function findEligibleDoctor(params: { doctorId: string; institutionId: string | null; branchId: string }) {
   const { doctorId, institutionId, branchId } = params;
@@ -79,6 +101,49 @@ function monthKey(year: number, month: number) {
 }
 
 /**
+ * Verilen aralıkta hakediş ödemesi yapılmış (kapanmış) ayların anahtarları —
+ * isDoctorPeriodSettled ile aynı ölçüt: o aya etiketlenmiş aktif "Doktor
+ * Hakedişi" gideri ya da o ay kaydedilmiş eski hakediş ödemesi.
+ */
+async function settledMonthKeys(params: { doctorId: string; institutionId: string | null; branchId: string; rangeStart: Date; rangeEnd: Date }) {
+  const { doctorId, institutionId, branchId, rangeStart, rangeEnd } = params;
+  const startKey = turkeyDateKey(rangeStart).slice(0, 7);
+  const endKey = turkeyDateKey(rangeEnd).slice(0, 7);
+  const [expenseRows, legacyPayments] = await Promise.all([
+    prisma.expense.findMany({
+      where: {
+        doctorId,
+        status: "AKTIF",
+        ...(institutionId ? { institutionId } : {}),
+        branchId,
+        periodYear: { gte: Number(startKey.slice(0, 4)), lte: Number(endKey.slice(0, 4)) },
+        periodMonth: { not: null },
+      },
+      select: { periodYear: true, periodMonth: true },
+    }),
+    prisma.payment.findMany({
+      where: {
+        doctorId,
+        patientId: null,
+        status: "ACTIVE",
+        ...(institutionId ? { institutionId } : {}),
+        branchId,
+        createdAt: { gte: rangeStart, lte: rangeEnd },
+      },
+      select: { createdAt: true },
+    }),
+  ]);
+  const keys = new Set<string>();
+  for (const row of expenseRows) {
+    if (row.periodYear == null || row.periodMonth == null) continue;
+    const key = monthKey(row.periodYear, row.periodMonth);
+    if (key >= startKey && key <= endKey) keys.add(key);
+  }
+  for (const payment of legacyPayments) keys.add(turkeyDateKey(new Date(payment.createdAt)).slice(0, 7));
+  return keys;
+}
+
+/**
  * Bir ay için geçerli olan doktor komisyon oranını döner. Oranlar personel
  * ekranından değiştirildiğinde `DoctorRateHistory`'e dönem-damgalı bir satır
  * eklenir; burada o ayın SONUNDA geçerli olan en güncel (effectiveFrom <= ay
@@ -107,6 +172,17 @@ export async function getDoctorRatesForMonth(doctorId: string, institutionId: st
  *         brüt = ciro - (kkMasraf + labCost + genelMasraf); hakediş = brüt * maasYuzde/100.
  * Her ay, kendi döneminde geçerli olan orana göre hesaplanır (bkz. getDoctorRatesForMonth) —
  * `rates` parametresi yalnızca hiç oran geçmişi olmayan aylar için varsayılan/fallback'tir.
+ *
+ * Ciroya planlanan (PLANLANDI) ve iptal edilen (IPTAL) tedaviler girmez. Kural
+ * değişmeden önce eski hesapla ödenmiş bir ay, kural değişti diye "fazla ödendi"
+ * ya da eksi kalan göstermesin: hakedişi ödenmiş bir ayda ödenen tutar yeni
+ * hesabı aşıyorsa eski hesap (planlanan/iptal dahil) kullanılır ve hakediş
+ * ödenenle sınırlanır (kalan 0; ikinci ödeme açılmaz). Ödenen yeni hesabı
+ * aşmıyorsa (yeni kuralla ödenmiş ya da kısmen ödenmiş ay) yeni hesap geçerlidir.
+ * Önceden "ödenmiş ay eski hesapla" kuralı yeni hesapla ödenen ayı da eski
+ * hesaba döndürüyor, iptal/planlanan tedavilerin payını yeniden "Ödenecek"
+ * gösteriyordu. Ay satırındaki `rule` hangi hesabın seçildiğini söyler
+ * (ay ayrıntısı aynı satırları listeler, bkz. getDoctorMonthDetail).
  */
 export async function computeDoctorMonthlyHakedis(params: {
   doctorId: string;
@@ -118,37 +194,50 @@ export async function computeDoctorMonthlyHakedis(params: {
 }) {
   const { doctorId, institutionId, branchId, rates, rangeStart, rangeEnd } = params;
 
-  const [examinations, labInvoices] = await Promise.all([
+  const [examinationRows, labInvoices, settledKeys] = await Promise.all([
     prisma.examination.findMany({
       where: { doctorId, institutionId, branchId, diagnosedAt: { gte: rangeStart, lte: rangeEnd }, ...TREATMENT_ONLY_WHERE },
-      select: { patientId: true, amount: true, diagnosedAt: true },
+      select: { patientId: true, amount: true, diagnosedAt: true, status: true },
     }),
     (prisma as any).labOrderInvoice.findMany({
       where: { status: "ACTIVE", labOrder: { doctorId, institutionId, branchId }, issuedAt: { gte: rangeStart, lte: rangeEnd } },
       select: { amount: true, issuedAt: true },
     }),
+    settledMonthKeys({ doctorId, institutionId, branchId, rangeStart, rangeEnd }),
+  ]);
+  // getUTCFullYear()/getUTCMonth() yerine Türkiye takvim tarihi kullanılır
+  // — aksi halde 00:00-02:59 Türkiye saatindeki bir kayıt bir önceki UTC
+  // gününe (dolayısıyla bazen bir önceki aya) sayılırdı.
+  const keyOf = (d: Date) => turkeyDateKey(new Date(d)).slice(0, 7);
+  const chargeable = examinationRows.filter((e) => isChargeableForHakedis(e.status));
+  const chargeablePatients = new Set(chargeable.map((e) => e.patientId));
+  const hasSettled = settledKeys.size > 0;
+  // Eski hesap (planlanan/iptal dahil) yalnız ödenmiş aylar için gerekir.
+  const legacyRows = hasSettled ? examinationRows.filter((e) => settledKeys.has(keyOf(e.diagnosedAt))) : [];
+  const patientIds = [...new Set((hasSettled ? examinationRows : chargeable).map((e) => e.patientId))];
+
+  const [patientPayments, paidByMonth] = await Promise.all([
+    patientIds.length > 0
+      ? prisma.payment.findMany({
+          where: {
+            patientId: { in: patientIds },
+            doctorId,
+            institutionId,
+            branchId,
+            status: "ACTIVE",
+            createdAt: { gte: rangeStart, lte: rangeEnd },
+          },
+          select: { amount: true, method: true, createdAt: true, patientId: true },
+        })
+      : Promise.resolve([]),
+    // Hakediş ay kapandıktan sonra ödenir: o aya etiketli ödemeler bugüne kadar okunur.
+    hasSettled
+      ? computeDoctorMonthlyOdenen({ doctorId, institutionId, branchId, rangeStart, rangeEnd: new Date(Math.max(rangeEnd.getTime(), Date.now())) })
+      : Promise.resolve(new Map<string, number>()),
   ]);
 
-  const patientIds = [...new Set(examinations.map((e) => e.patientId))];
-  const patientPayments = patientIds.length > 0
-    ? await prisma.payment.findMany({
-        where: {
-          patientId: { in: patientIds },
-          doctorId,
-          institutionId,
-          branchId,
-          status: "ACTIVE",
-          createdAt: { gte: rangeStart, lte: rangeEnd },
-        },
-        select: { amount: true, method: true, createdAt: true },
-      })
-    : [];
-
-  const buckets = new Map<string, { year: number; month: number; ciro: number; kk: number; labCost: number }>();
-  const ensure = (d: Date) => {
-    // getUTCFullYear()/getUTCMonth() yerine Türkiye takvim tarihi kullanılır
-    // — aksi halde 00:00-02:59 Türkiye saatindeki bir kayıt bir önceki UTC
-    // gününe (dolayısıyla bazen bir önceki aya) sayılırdı.
+  type Bucket = { year: number; month: number; ciro: number; kk: number; labCost: number };
+  const ensure = (buckets: Map<string, Bucket>, d: Date) => {
     const [yearStr, monthStr] = turkeyDateKey(d).split("-");
     const year = Number(yearStr);
     const month = Number(monthStr);
@@ -161,38 +250,70 @@ export async function computeDoctorMonthlyHakedis(params: {
     return bucket;
   };
 
-  for (const e of examinations) ensure(new Date(e.diagnosedAt)).ciro += Number(e.amount);
-  for (const inv of labInvoices) ensure(new Date(inv.issuedAt)).labCost += Number(inv.amount || 0);
+  const current = new Map<string, Bucket>();
+  for (const e of chargeable) ensure(current, new Date(e.diagnosedAt)).ciro += Number(e.amount);
+  for (const inv of labInvoices) ensure(current, new Date(inv.issuedAt)).labCost += Number(inv.amount || 0);
   for (const p of patientPayments) {
-    if (p.method === "KREDI_KARTI") ensure(new Date(p.createdAt)).kk += Number(p.amount);
+    if (p.method === "KREDI_KARTI" && p.patientId && chargeablePatients.has(p.patientId)) ensure(current, new Date(p.createdAt)).kk += Number(p.amount);
+  }
+
+  const legacy = new Map<string, Bucket>();
+  if (hasSettled) {
+    for (const e of legacyRows) ensure(legacy, new Date(e.diagnosedAt)).ciro += Number(e.amount);
+    for (const inv of labInvoices) {
+      if (settledKeys.has(keyOf(inv.issuedAt))) ensure(legacy, new Date(inv.issuedAt)).labCost += Number(inv.amount || 0);
+    }
+    for (const p of patientPayments) {
+      if (p.method === "KREDI_KARTI" && settledKeys.has(keyOf(p.createdAt))) ensure(legacy, new Date(p.createdAt)).kk += Number(p.amount);
+    }
   }
 
   const round2 = (n: number) => Math.round(n * 100) / 100;
+  const calc = (b: Bucket, monthRates: DoctorRates) => {
+    const kkMasraf = b.kk * (monthRates.kkYuzde / 100);
+    const genelMasraf = b.ciro * (monthRates.genelYuzde / 100);
+    const toplamGider = kkMasraf + b.labCost + genelMasraf;
+    const brut = b.ciro - toplamGider;
+    const hakedilen = round2(brut * (monthRates.maasYuzde / 100));
+    return {
+      ciro: round2(b.ciro),
+      hakedilen,
+      breakdown: {
+        ciro: round2(b.ciro),
+        kk: round2(b.kk),
+        kkMasraf: round2(kkMasraf),
+        genelMasraf: round2(genelMasraf),
+        labCost: round2(b.labCost),
+        toplamGider: round2(toplamGider),
+        brut: round2(brut),
+        hakedilen,
+        kkYuzde: monthRates.kkYuzde,
+        genelYuzde: monthRates.genelYuzde,
+        maasYuzde: monthRates.maasYuzde,
+      },
+    };
+  };
 
+  const keys = new Set([...current.keys(), ...legacy.keys()]);
   const results = await Promise.all(
-    Array.from(buckets.values()).map(async (b) => {
-      const monthRates = await getDoctorRatesForMonth(doctorId, institutionId, branchId, b.year, b.month, rates);
-      const kkMasraf = b.kk * (monthRates.kkYuzde / 100);
-      const genelMasraf = b.ciro * (monthRates.genelYuzde / 100);
-      const toplamGider = kkMasraf + b.labCost + genelMasraf;
-      const brut = b.ciro - toplamGider;
-      const hakedilen = round2(brut * (monthRates.maasYuzde / 100));
+    Array.from(keys).map(async (key) => {
+      const base = (current.get(key) ?? legacy.get(key)) as Bucket;
+      const monthRates = await getDoctorRatesForMonth(doctorId, institutionId, branchId, base.year, base.month, rates);
+      const chargeableResult = calc(current.get(key) ?? { year: base.year, month: base.month, ciro: 0, kk: 0, labCost: 0 }, monthRates);
+      const legacyBucket = legacy.get(key);
+      const paid = paidByMonth.get(key) || 0;
+      if (!legacyBucket || paid <= chargeableResult.hakedilen + 0.5) {
+        return { year: base.year, month: base.month, ...chargeableResult, rule: "chargeable" as const };
+      }
+      // Ödenen yeni hesabı aşıyor: ay kural değişmeden önce eski hesapla ödenmiş.
+      const legacyResult = calc(legacyBucket, monthRates);
+      const chosen = legacyResult.hakedilen >= chargeableResult.hakedilen ? legacyResult : chargeableResult;
       return {
-        year: b.year, month: b.month,
-        ciro: round2(b.ciro), hakedilen,
-        breakdown: {
-          ciro: round2(b.ciro),
-          kk: round2(b.kk),
-          kkMasraf: round2(kkMasraf),
-          genelMasraf: round2(genelMasraf),
-          labCost: round2(b.labCost),
-          toplamGider: round2(toplamGider),
-          brut: round2(brut),
-          hakedilen,
-          kkYuzde: monthRates.kkYuzde,
-          genelYuzde: monthRates.genelYuzde,
-          maasYuzde: monthRates.maasYuzde,
-        },
+        year: base.year,
+        month: base.month,
+        ...chosen,
+        hakedilen: round2(Math.min(paid, chosen.hakedilen)),
+        rule: chosen === legacyResult ? "legacy" as const : "chargeable" as const,
       };
     })
   );
@@ -232,6 +353,36 @@ export async function isDoctorPeriodSettled(doctorId: string, institutionId: str
     }),
   ]);
   return expenseCount > 0 || legacyPaymentCount > 0;
+}
+
+/**
+ * Hakedişi ödenmiş bir ay eski kuralla mı (planlanan ve iptal edilen
+ * tedaviler dahil) hesaplanıyor? computeDoctorMonthlyHakedis'in o ay için
+ * seçtiği kural (`rule`). Dönem kilidi bunu yalnız eski hesabı etkileyen bir
+ * düzeltmede sorar (ör. planlanan tedaviyi "Yapıldı" ile bugüne taşımak): yeni
+ * kuralla hesaplanan ödenmiş ayın hakedişini böyle bir düzeltme değiştirmez.
+ * Oran yedeği hakediş ekranlarıyla aynıdır (şube oranı, yoksa kişinin oranı).
+ */
+export async function isDoctorMonthOnLegacyRule(params: { doctorId: string; institutionId: string; branchId: string; year: number; month: number }): Promise<boolean> {
+  const { doctorId, institutionId, branchId, year, month } = params;
+  const doctor = await prisma.user.findFirst({
+    where: { id: doctorId, institutionId },
+    select: {
+      kkYuzde: true, genelYuzde: true, maasYuzde: true,
+      branchMemberships: { where: { branchId }, select: { kkYuzde: true, genelYuzde: true, maasYuzde: true }, take: 1 },
+    },
+  });
+  // Doktor bulunamazsa güvenli taraf: eski hesap sayılır (kilit uygulanır).
+  if (!doctor) return true;
+  const branchRates = doctor.branchMemberships[0];
+  const rates = {
+    kkYuzde: Number(branchRates?.kkYuzde ?? doctor.kkYuzde ?? 3),
+    genelYuzde: Number(branchRates?.genelYuzde ?? doctor.genelYuzde ?? 15),
+    maasYuzde: Number(branchRates?.maasYuzde ?? doctor.maasYuzde ?? 40),
+  };
+  const { start, end } = monthRangeUtc(year, month);
+  const rows = await computeDoctorMonthlyHakedis({ doctorId, institutionId, branchId, rates, rangeStart: start, rangeEnd: end });
+  return rows.find((row) => row.year === year && row.month === month)?.rule === "legacy";
 }
 
 /**
@@ -306,18 +457,26 @@ export async function getDoctorMonthDetail(params: {
   branchId: string;
   year: number;
   month: number;
+  /**
+   * Ayın hesabı eski kuralla mı seçildi (computeDoctorMonthlyHakedis satırındaki
+   * `rule === "legacy"`: kural değişmeden önce ödenmiş ay)? Öyleyse planlanan ve
+   * iptal edilen tedaviler de listelenir. Varsayılan: yalnız hakedişe girenler.
+   */
+  legacyRule?: boolean;
 }) {
-  const { doctorId, institutionId, branchId, year, month } = params;
+  const { doctorId, institutionId, branchId, year, month, legacyRule = false } = params;
   const { start, end } = monthRangeUtc(year, month);
 
-  const examinations = await prisma.examination.findMany({
+  // Satırlar aylık hesapla (computeDoctorMonthlyHakedis) aynı kuralla seçilir.
+  const examinationRows = await prisma.examination.findMany({
     where: { doctorId, ...(institutionId ? { institutionId } : {}), branchId, diagnosedAt: { gte: start, lte: end }, ...TREATMENT_ONLY_WHERE },
     select: {
-      id: true, patientId: true, diagnosedAt: true, treatmentName: true, toothNo: true, amount: true,
+      id: true, patientId: true, diagnosedAt: true, treatmentName: true, toothNo: true, amount: true, status: true,
       patient: { select: { fullName: true } },
     },
     orderBy: { diagnosedAt: "asc" },
   });
+  const examinations = legacyRule ? examinationRows : examinationRows.filter((e) => isChargeableForHakedis(e.status));
 
   const patientIds = [...new Set(examinations.map((e) => e.patientId))];
   const patientPayments = patientIds.length > 0

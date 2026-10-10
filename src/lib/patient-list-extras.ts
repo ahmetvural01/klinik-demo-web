@@ -1,26 +1,21 @@
 import { prisma } from "@/lib/prisma";
+import { computePatientBalances, moneyToNumber } from "@/lib/patient-balance";
 
 // Hasta listesinde (GET /api/patients?extras=1) satır başına "son ziyaret",
 // "sonraki randevu" ve "kalan bakiye". Yalnız ekrandaki sayfanın hasta
 // kimlikleri için toplu sorgu yapılır (satır başına ayrı istek yok).
 //
-// Bakiye formülü hasta dosyasıyla (hasta-detay-content.tsx: indirimli
-// ücretlenen tedavi − tahsilat) ve Muhasebe > Alacaklar ile
-// (api/muhasebe/alacaklar) AYNIDIR: ön teşhis/diagnoz kayıtları hariç
-// tedavi toplamı, hastanın indirim oranı uygulanır, aktif tahsilatlar
-// düşülür; hepsi aktif şube içinde.
+// Bakiye tek kaynaktan gelir (src/lib/patient-balance.ts): hasta dosyası,
+// Muhasebe > Alacaklar ve Raporlar ile aynı kural — ücrete yansıyan tedavi
+// toplamı (ön teşhis, planlanan ve iptal edilen tedaviler hariç), hastanın
+// indirim oranı, aktif tahsilatlar; hepsi aktif şube içinde. Önceden iptal
+// edilen ve planlanan tedaviler bu sütunda borç görünüyordu.
 
 export type PatientListExtra = {
   lastVisitAt: string | null;
   nextAppointment: { startAt: string; doctorName: string | null } | null;
   balance: number | null;
 };
-
-const DIAGNOSIS_EXCLUDE = [
-  { status: { contains: "diagnoz", mode: "insensitive" as const } },
-  { status: { contains: "ön teşhis", mode: "insensitive" as const } },
-  { status: { contains: "on teshis", mode: "insensitive" as const } },
-];
 
 const UPCOMING_STATUSES = ["BEKLIYOR", "GELDI", "ONAYLANDI"] as const;
 const VISITED_STATUSES = ["GELDI", "TAMAMLANDI"] as const;
@@ -43,7 +38,7 @@ export async function loadPatientListExtras(options: {
 
   const tenant = { ...(institutionId ? { institutionId } : {}), branchId };
 
-  const [upcoming, visited, examSums, paymentSums] = await Promise.all([
+  const [upcoming, visited, balances] = await Promise.all([
     includeVisits
       ? prisma.appointment.findMany({
           where: { ...tenant, patientId: { in: ids }, startAt: { gte: now }, status: { in: [...UPCOMING_STATUSES] } },
@@ -60,19 +55,14 @@ export async function loadPatientListExtras(options: {
         })
       : Promise.resolve([]),
     includeBalance
-      ? prisma.examination.groupBy({
-          by: ["patientId"],
-          where: { ...tenant, patientId: { in: ids }, NOT: DIAGNOSIS_EXCLUDE },
-          _sum: { amount: true },
+      ? computePatientBalances({
+          institutionId,
+          branchId,
+          patientIds: ids,
+          // Liste satırındaki indirim oranı zaten okundu; hasta tablosu yeniden okunmaz.
+          discountRates: new Map(patients.map((patient) => [patient.id, patient.discountRate])),
         })
-      : Promise.resolve([]),
-    includeBalance
-      ? prisma.payment.groupBy({
-          by: ["patientId"],
-          where: { ...tenant, patientId: { in: ids }, status: "ACTIVE" },
-          _sum: { amount: true },
-        })
-      : Promise.resolve([]),
+      : Promise.resolve(null),
   ]);
 
   for (const appointment of upcoming) {
@@ -85,15 +75,10 @@ export async function loadPatientListExtras(options: {
     if (entry && row._max.startAt) entry.lastVisitAt = row._max.startAt.toISOString();
   }
 
-  if (includeBalance) {
-    const charged = new Map(examSums.map((row) => [row.patientId, Number(row._sum.amount ?? 0)]));
-    const paid = new Map(paymentSums.map((row) => [row.patientId as string, Number(row._sum.amount ?? 0)]));
-    for (const patient of patients) {
-      const entry = result.get(patient.id);
-      if (!entry) continue;
-      const gross = charged.get(patient.id) ?? 0;
-      const net = gross * (1 - Number(patient.discountRate || 0) / 100);
-      entry.balance = Math.round((net - (paid.get(patient.id) ?? 0)) * 100) / 100;
+  if (balances) {
+    for (const [patientId, balance] of balances) {
+      const entry = result.get(patientId);
+      if (entry) entry.balance = moneyToNumber(balance.bakiye);
     }
   }
 

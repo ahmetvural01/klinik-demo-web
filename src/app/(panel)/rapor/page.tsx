@@ -1,47 +1,55 @@
 "use client";
 
-import { reportQuickRange } from "@/lib/report-date-range";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import Link from "next/link";
-import { ArrowRight } from "lucide-react";
+import { Suspense, useCallback, useEffect, useState, type ReactNode } from "react";
+import { ArrowRight, FileSpreadsheet, FileText } from "lucide-react";
+import { usePermissions } from "@/components/auth/PermissionProvider";
+import { Button } from "@/components/ui/Button";
+import { Callout } from "@/components/ui/Callout";
+import { DateRangeFilter } from "@/components/ui/DateRangeFilter";
+import { DescriptionList, type DescriptionItem } from "@/components/ui/DescriptionList";
+import { Disclosure } from "@/components/ui/Disclosure";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { ExportMenu } from "@/components/ui/ExportMenu";
+import { LoadErrorState } from "@/components/ui/LoadErrorState";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { PageSkeleton, Skeleton } from "@/components/ui/PageSkeleton";
+import { Section } from "@/components/ui/Section";
+import { StatStrip, type StatItem } from "@/components/ui/StatStrip";
 import { Tabs, useTabParam } from "@/components/ui/Tabs";
 import { Toolbar } from "@/components/ui/Toolbar";
-import { Input, Select } from "@/components/ui/Input";
-import { Badge, type BadgeTone } from "@/components/ui/Badge";
-import { EmptyState } from "@/components/ui/EmptyState";
-import { LoadErrorState } from "@/components/ui/LoadErrorState";
+import { METHOD_LABELS, money } from "@/components/muhasebe/muhasebe-utils";
+import { DATE_PRESET_SETS, formatRangeLabel, todayKey, writeDateRangeParams, type DateRange, type DateRangeValue } from "@/lib/date-presets";
+import { useDateRangeParam } from "@/lib/use-date-range-param";
 import { isAbortError, useLatestRequest } from "@/lib/use-latest-request";
-import { turkeyDateKey } from "@/lib/tz";
-import { METHOD_LABELS, money, shortDate } from "@/components/muhasebe/muhasebe-utils";
+import { isLedgerPreset } from "@/lib/ledger-periods";
+import { INCOME_TAX_TARIFF_YEAR, incomeTaxBracketRows } from "@/lib/tax-brackets";
 
-type ExpenseCat = { category: string; amount: number };
-type FirmaRow = { name: string; amount: number };
-type TopExam = { treatmentName: string; count: number };
-type TopTooth = { tooth: string; count: number };
-
-type DayCloseCheck = { key: string; label: string; status: "ok" | "warning" | "critical"; detail: string; href: string };
-type DayClose = {
-  income: number; expense: number; net: number;
-  cashIn?: number; cashOut?: number; cashNet?: number;
-  cash: number; card: number; transfer: number; mailOrder: number; other: number;
-  openLabCount: number; openFollowUpCount: number; overdueInstallments: number;
-  unpaidTreatmentPatientCount: number;
-  checks: DayCloseCheck[];
-};
 type Stats = {
-  totalRevenue: number; totalExpenses: number;
-  totalLabCost: number; totalFirmaAlim: number; netCash: number;
-  newPatients: number; totalExaminations: number;
-  cash: number; card: number; transfer: number; mailOrder: number; other: number;
-  expenseByCategory: ExpenseCat[];
-  firmaByName: FirmaRow[];
-  topExaminations: TopExam[];
-  topTeeth: TopTooth[];
-  overdueInstallments: number;
-  outputVAT: number; inputVAT: number; netVAT: number;
-  periodNetProfit: number; annualNetProfit: number; gelirVergisi: number;
-  dayClose: DayClose | null;
+  totalRevenue: number;
+  totalExpenses: number;
+  totalLabCost: number;
+  totalFirmaAlim: number;
+  netCash: number;
+  newPatients: number;
+  totalExaminations: number;
+  cash: number;
+  card: number;
+  transfer: number;
+  mailOrder: number;
+  other: number;
+  expenseByCategory: { category: string; amount: number }[];
+  firmaByName: { name: string; amount: number }[];
+  topExaminations: { treatmentName: string; count: number }[];
+  topTeeth: { tooth: string; count: number }[];
+  outputVAT: number;
+  inputVAT: number;
+  netVAT: number;
+  periodNetProfit: number;
+  annualNetProfit: number;
+  gelirVergisi: number;
+  /** Uygulanan gelir vergisi tarifesinin yılı (sunucu; eski yanıtta yok). */
+  taxTariffYear?: number;
+  dayClose: { cashNet?: number; unpaidTreatmentPatientCount: number } | null;
 };
 
 const EMPTY: Stats = {
@@ -49,59 +57,48 @@ const EMPTY: Stats = {
   netCash: 0, newPatients: 0, totalExaminations: 0,
   cash: 0, card: 0, transfer: 0, mailOrder: 0, other: 0,
   expenseByCategory: [], firmaByName: [], topExaminations: [], topTeeth: [],
-  overdueInstallments: 0,
   outputVAT: 0, inputVAT: 0, netVAT: 0,
   periodNetProfit: 0, annualNetProfit: 0, gelirVergisi: 0,
   dayClose: null,
 };
 
-type Tab = "genel" | "giderler" | "islemler";
-const TAB_KEYS: readonly Tab[] = ["genel", "giderler", "islemler"];
-type Period = "bugun" | "hafta" | "ay" | "yil" | "ozel";
-const PERIOD_LABELS: Record<Period, string> = { bugun: "Bugün", hafta: "Bu hafta", ay: "Bu ay", yil: "Bu yıl", ozel: "Tarih aralığı seç" };
+// "giderler" eski adresi: giderler artık Özet'te; bilinmeyen sekme Özet'i açar.
+type Tab = "genel" | "islemler" | "vergi";
+const TAB_KEYS: readonly Tab[] = ["genel", "islemler", "vergi"];
 
-const STATUS: Record<DayCloseCheck["status"], { tone: BadgeTone; label: string }> = {
-  ok: { tone: "success", label: "Tamam" },
-  warning: { tone: "warning", label: "Bakılmalı" },
-  critical: { tone: "critical", label: "Acil" },
-};
+// Sunucunun gelir vergisi hesabıyla aynı tarife — tek kaynak src/lib/tax-brackets.ts.
+const TAX_BRACKETS = incomeTaxBracketRows();
 
-const PCT = (n: number, t: number) => (t > 0 ? Math.round((n / t) * 100) : 0);
-const count = (n: number) => (n || 0).toLocaleString("tr-TR");
-const signed = (n: number) => `${n < 0 ? "−" : ""}${money(Math.abs(n))}`;
+const count = (value: number) => (value || 0).toLocaleString("tr-TR");
+const signed = (value: number) => `${value < 0 ? "−" : ""}${money(Math.abs(value))}`;
+const csvAmount = (value: number) => (value || 0).toFixed(2).replace(".", ",");
 
-function Card({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
-  return (
-    <section className="ui-surface p-4 sm:p-5">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-sm font-bold text-slate-900">{title}</h2>
-        {action}
-      </div>
-      {children}
-    </section>
-  );
+function ledgerHref(value: DateRangeValue, range: DateRange, tur?: "TAHSILAT" | "GIDER") {
+  const params = new URLSearchParams({ tab: "defter" });
+  if (tur) params.set("tur", tur);
+  // Defterin tanıdığı hazır dönem adıyla taşınır (src/lib/ledger-periods.ts); ötekiler
+  // (ör. "Dün") defterde varsayılana dönmesin diye gün aralığı olarak.
+  const carried: DateRangeValue = isLedgerPreset(value.preset) ? { preset: value.preset } : { preset: "ozel", from: range.from, to: range.to };
+  // Defterin varsayılan dönemi role göre değişir (banko: Bugün); dönem her zaman açıkça yazılır.
+  writeDateRangeParams(params, carried, "ozel");
+  return `/muhasebe?${params.toString()}`;
 }
 
-function Line({ label, value, tone = "text-slate-900", hint, strong = false }: { label: string; value: string; tone?: string; hint?: string; strong?: boolean }) {
-  return (
-    <div className={`flex items-start justify-between gap-3 py-2 ${strong ? "" : "border-b border-slate-100"}`}>
-      <div>
-        <p className={strong ? "font-bold text-slate-900" : "text-sm text-slate-600"}>{label}</p>
-        {hint && <p className="text-xs text-slate-400">{hint}</p>}
-      </div>
-      <p className={`shrink-0 tabular-nums ${strong ? "text-lg font-extrabold" : "text-sm font-semibold"} ${tone}`}>{value}</p>
-    </div>
-  );
+function SectionLink({ href, children }: { href: string; children: ReactNode }) {
+  return <Button variant="ghost" size="sm" href={href} icon={ArrowRight} iconPosition="right">{children}</Button>;
 }
 
-function Bars({ rows, total, color }: { rows: { label: string; value: number; display: string }[]; total: number; color: string }) {
+/** Yatay çubuk listesi (tutar/adet dağılımı). */
+function BarList({ rows, tone = "primary" }: { rows: { label: string; value: number; display: string }[]; tone?: "primary" | "neutral" }) {
+  const max = Math.max(...rows.map((row) => row.value), 1);
   return (
     <ul className="space-y-2.5">
       {rows.map((row) => (
-        <li key={row.label} className="grid grid-cols-[minmax(0,8rem)_1fr_auto] items-center gap-3 text-sm">
-          <span className="truncate text-slate-600" title={row.label}>{row.label}</span>
-          <span className="h-2.5 overflow-hidden rounded-full bg-slate-100" aria-hidden="true">
-            <span className={`block h-full rounded-full ${color}`} style={{ width: `${Math.max(3, PCT(row.value, total))}%` }} />
+        <li key={row.label} className="grid grid-cols-[minmax(0,11rem)_1fr_auto] items-center gap-3 text-sm">
+          {/* Uzun gider/tedarikçi adı ("Doktor hakediş ödemesi") kesilmesin: en fazla iki satır. */}
+          <span className="line-clamp-2 break-words leading-snug text-slate-600" title={row.label}>{row.label}</span>
+          <span className="h-2 overflow-hidden rounded-full bg-slate-100" aria-hidden="true">
+            <span className={`block h-full rounded-full ${tone === "primary" ? "bg-primary" : "bg-slate-400"}`} style={{ width: `${Math.max(3, Math.round((row.value / max) * 100))}%` }} />
           </span>
           <span className="text-right font-semibold tabular-nums text-slate-800">{row.display}</span>
         </li>
@@ -110,240 +107,313 @@ function Bars({ rows, total, color }: { rows: { label: string; value: number; di
   );
 }
 
-export default function RaporPage() {
+function BarListSkeleton({ rows = 4 }: { rows?: number }) {
+  return (
+    <div className="space-y-3" aria-hidden="true">
+      {Array.from({ length: rows }).map((_, index) => (
+        <div key={index} className="grid grid-cols-[minmax(0,11rem)_1fr_auto] items-center gap-3">
+          <Skeleton className="h-3.5 w-24" />
+          <Skeleton className="h-2 w-full" />
+          <Skeleton className="h-3.5 w-16" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Etiket altında soluk açıklama ("Gider ve alım faturalarından"). */
+function HintLabel({ label, hint }: { label: string; hint: string }) {
+  return (
+    <span>
+      {label}
+      <span className="block font-normal text-slate-400">{hint}</span>
+    </span>
+  );
+}
+
+function RaporContent() {
+  const { can } = usePermissions();
+  const canExport = can("reports:export");
+  const canLedger = can("finance:center");
+  const canFinance = can("finance:read");
+  const canPaymentsList = canLedger && (can("payments:read") || canFinance);
   const startReportRequest = useLatestRequest();
   const [tab, setTab] = useTabParam<Tab>(TAB_KEYS, "genel");
-  const [period, setPeriod] = useState<Period>("ay");
-  const [customFrom, setCustomFrom] = useState(() => `${turkeyDateKey().slice(0, 7)}-01`);
-  const [customTo, setCustomTo] = useState(() => turkeyDateKey());
-  const [stats, setStats] = useState<Stats>(EMPTY);
+  // Dönem adres çubuğunda (?donem=…); varsayılan "Bu ay", bitiş bugünü geçemez.
+  const period = useDateRangeParam(DATE_PRESET_SETS.takvim, "ay");
+  // Rakamlar hangi döneme aitse o dönemle birlikte tutulur (etiket ve dışa aktarım ona göre).
+  const [data, setData] = useState<{ stats: Stats; range: DateRange } | null>(null);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState("");
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  const range = useMemo(() => {
-    if (period === "ozel") return { from: `${customFrom}T00:00`, to: `${customTo}T23:59` };
-    return reportQuickRange(period);
-  }, [customFrom, customTo, period]);
-  const rangeInvalid = period === "ozel" && (!customFrom || !customTo || customFrom > customTo);
-
+  const range = period.range;
   const load = useCallback(async () => {
-    if (rangeInvalid) { setLoadError("Başlangıç tarihi bitiş tarihinden sonra olamaz."); return; }
+    // Geçersiz aralıkta istek atılmaz; hata tarih alanlarının altında görünür.
+    if (period.error || !range) return;
     const request = startReportRequest();
     setLoading(true);
-    setLoadError("");
+    setLoadError(null);
     try {
-      const res = await fetch(`/api/reports?from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`, { signal: request.signal });
-      const data = await res.json();
+      const params = new URLSearchParams({ from: `${range.from}T00:00`, to: `${range.to}T23:59` });
+      const res = await fetch(`/api/reports?${params.toString()}`, { signal: request.signal });
+      const body = await res.json().catch(() => null);
       if (!request.isLatest()) return;
-      if (!res.ok) throw new Error(data?.message || "Rapor verileri yüklenemedi.");
-      setStats({ ...EMPTY, ...data });
+      if (!res.ok || !body) throw new Error(body?.message || "Rapor verileri yüklenemedi.");
+      setData({ stats: { ...EMPTY, ...body }, range });
     } catch (error) {
       if (isAbortError(error) || !request.isLatest()) return;
       setLoadError(error instanceof Error ? error.message : "Rapor verileri yüklenemedi.");
     } finally {
       if (request.isLatest()) setLoading(false);
     }
-  }, [range.from, range.to, rangeInvalid, startReportRequest]);
+  }, [period.error, range, startReportRequest]);
 
   useEffect(() => { void load(); }, [load]);
 
-  // Sekme rozeti açık kalan iş sayısıdır (lab, hasta takip, gecikmiş taksit).
-  const openChecks = (stats.dayClose?.checks || []).filter((check) => check.status !== "ok").length;
-  const dateFrom = range.from.slice(0, 10);
-  const dateTo = range.to.slice(0, 10);
-  const rangeText = dateFrom === dateTo ? shortDate(`${dateFrom}T12:00:00Z`) : `${shortDate(`${dateFrom}T12:00:00Z`)} – ${shortDate(`${dateTo}T12:00:00Z`)}`;
+  // Dönem değişirken eski rakamlar soluk kalır (yeni dönemin rakamı sanılmasın);
+  // ilk yüklemede iskelet. Bilinmeyen tutar hiçbir zaman ₺0 görünmez.
+  const firstLoad = !data;
+  const stale = Boolean(data) && (loading || Boolean(period.error));
+  const showError = Boolean(loadError) && !loading;
+  const stats = data?.stats ?? EMPTY;
+  const dataRange = data?.range ?? range;
+  const rangeLabel = formatRangeLabel(dataRange);
   const vatPayable = stats.netVAT >= 0;
+  const taxYear = Number((dataRange?.from || todayKey()).slice(0, 4));
+  // Sunucu yıllık kârı seçilen başlangıç tarihinin yılının tamamı için hesaplar.
+  const currentYear = taxYear === Number(todayKey().slice(0, 4));
+
+  const strip: StatItem[] = [
+    { key: "in", label: "Tahsilat", value: money(stats.totalRevenue), tone: stats.totalRevenue > 0 ? "success" : "neutral" },
+    { key: "out", label: "Gider", value: money(stats.totalExpenses), tone: stats.totalExpenses > 0 ? "critical" : "neutral", hint: "Hakediş, tedarikçi dahil" },
+    { key: "net", label: "Net", value: signed(stats.netCash), tone: stats.netCash < 0 ? "critical" : "neutral", hint: "Tahsilat − gider" },
+    { key: "patients", label: "Yeni hasta", value: count(stats.newPatients) },
+  ];
+
   const methodRows = [
     { key: "NAKIT", value: stats.cash },
     { key: "KREDI_KARTI", value: stats.card },
     { key: "HAVALE_EFT", value: stats.transfer },
     { key: "MAIL_ORDER", value: stats.mailOrder },
     { key: "DIGER", value: stats.other },
-  ].filter((row) => row.value > 0).map((row) => ({ label: METHOD_LABELS[row.key], value: row.value, display: money(row.value) }));
+  ].filter((row) => row.value > 0).map((row) => ({ label: METHOD_LABELS[row.key] || row.key, value: row.value, display: money(row.value) }));
   const cashNet = stats.dayClose?.cashNet ?? stats.cash;
+  const unpaidPatients = stats.dayClose?.unpaidTreatmentPatientCount ?? 0;
 
-  const headline = [
-    { label: "Tahsilat", value: money(stats.totalRevenue), tone: "text-emerald-700" },
-    { label: "Gider", value: money(stats.totalExpenses), tone: "text-red-700" },
-    { label: "Net nakit akışı", value: signed(stats.netCash), tone: stats.netCash >= 0 ? "text-slate-900" : "text-red-700" },
-    { label: vatPayable ? "Ödenecek KDV (tahmini)" : "Devreden KDV (tahmini)", value: money(Math.abs(stats.netVAT)), tone: "text-slate-900" },
+  const vatItems: DescriptionItem[] = [
+    { key: "out", label: <HintLabel label="Hesaplanan KDV" hint="KDV dahil tahsilatın içindeki %10" />, value: <span className="tabular-nums">{money(stats.outputVAT)}</span> },
+    { key: "in", label: <HintLabel label="İndirilecek KDV" hint="Gider ve alım faturalarından" />, value: <span className="tabular-nums">−{money(stats.inputVAT)}</span> },
+    { key: "net", emphasis: true, label: vatPayable ? "Ödenecek KDV" : "Devreden KDV (sonraki döneme)", value: <span className={`tabular-nums ${vatPayable ? "text-red-700" : "text-emerald-700"}`}>{money(Math.abs(stats.netVAT))}</span> },
   ];
+  const incomeTaxItems: DescriptionItem[] = [
+    { key: "period", label: <HintLabel label="Dönem kârı (KDV hariç)" hint="Tahsilat − gider" />, value: <span className={`tabular-nums ${stats.periodNetProfit < 0 ? "text-red-700" : ""}`}>{signed(stats.periodNetProfit)}</span> },
+    { key: "year", label: <HintLabel label={`${taxYear} yılı kârı`} hint={currentYear ? "Yıl başından bugüne" : "Yılın tamamı"} />, value: <span className={`tabular-nums ${stats.annualNetProfit < 0 ? "text-red-700" : ""}`}>{signed(stats.annualNetProfit)}</span> },
+    { key: "tax", emphasis: true, label: "Hesaplanan gelir vergisi", value: <span className="tabular-nums text-red-700">{money(stats.gelirVergisi)}</span> },
+  ];
+
+  // ── Dışa aktarma (reports:export): ekranda görünen özet, mali müşavire gönderilecek biçimde.
+  const exportRows = () => {
+    const rows: Array<{ Bölüm: string; Kalem: string; Değer: string }> = [];
+    const add = (section: string, label: string, value: string) => rows.push({ Bölüm: section, Kalem: label, Değer: value });
+    add("Özet", "Dönem", rangeLabel);
+    add("Özet", "Tahsilat", csvAmount(stats.totalRevenue));
+    add("Özet", "Gider", csvAmount(stats.totalExpenses));
+    add("Özet", "Net (tahsilat − gider)", csvAmount(stats.netCash));
+    add("Özet", "Yeni hasta", String(stats.newPatients));
+    add("Özet", "Tedavi kalemi", String(stats.totalExaminations));
+    for (const row of methodRows) add("Tahsilat yöntemleri", row.label, csvAmount(row.value));
+    add("Tahsilat yöntemleri", "Nakit değişimi", csvAmount(cashNet));
+    for (const row of stats.expenseByCategory) add("Giderler", row.category, csvAmount(row.amount));
+    for (const row of stats.firmaByName) add("Tedarikçi alım faturaları", row.name, csvAmount(row.amount));
+    if (stats.totalFirmaAlim > 0) add("Tedarikçi alım faturaları", "Toplam alım", csvAmount(stats.totalFirmaAlim));
+    if (stats.totalLabCost > 0) add("Tedarikçi alım faturaları", "Laboratuvar faturaları", csvAmount(stats.totalLabCost));
+    add("KDV (tahmini)", "Hesaplanan KDV", csvAmount(stats.outputVAT));
+    add("KDV (tahmini)", "İndirilecek KDV", csvAmount(stats.inputVAT));
+    add("KDV (tahmini)", vatPayable ? "Ödenecek KDV" : "Devreden KDV", csvAmount(Math.abs(stats.netVAT)));
+    add("Gelir vergisi (tahmini)", "Dönem kârı (KDV hariç)", csvAmount(stats.periodNetProfit));
+    add("Gelir vergisi (tahmini)", `${taxYear} yılı kârı`, csvAmount(stats.annualNetProfit));
+    add("Gelir vergisi (tahmini)", "Hesaplanan gelir vergisi", csvAmount(stats.gelirVergisi));
+    for (const row of stats.topExaminations) add("En çok yapılan tedaviler", row.treatmentName, String(row.count));
+    for (const row of stats.topTeeth) add("En çok işlem gören dişler", `Diş ${row.tooth}`, String(row.count));
+    return rows;
+  };
+  const fileBase = `rapor-${dataRange?.from || ""}-${dataRange?.to || ""}`;
+  const exportExcel = async () => {
+    const { downloadCsv } = await import("@/lib/csv-export");
+    downloadCsv(fileBase, exportRows());
+  };
+  const exportPdf = async () => {
+    const { addPdfSection, addPdfTitle, createPdfDoc, preparePdfFonts } = await import("@/lib/pdf-export");
+    // Türkçe yazı tipi oturumun ilk PDF'inde de yüklü olsun (yoksa harfler dönüştürülür).
+    await preparePdfFonts();
+    const rows = exportRows();
+    const doc = createPdfDoc();
+    addPdfTitle(doc, "Rapor", `${rangeLabel} · Tahmini KDV ve gelir vergisi; resmi beyan için mali müşavire danışın.`);
+    let y = 30;
+    for (const section of Array.from(new Set(rows.map((row) => row.Bölüm)))) {
+      y = addPdfSection(doc, y, section, ["Kalem", "Değer"], rows.filter((row) => row.Bölüm === section).map((row) => [row.Kalem, row.Değer]));
+    }
+    doc.save(`${fileBase}.pdf`);
+  };
+
+  const content = (() => {
+    const busy = firstLoad;
+    if (tab === "islemler") {
+      return (
+        <div className="grid gap-3 lg:grid-cols-2">
+          <Section title="En çok yapılan tedaviler" description={busy ? undefined : `Bu dönemde ${count(stats.totalExaminations)} tedavi kalemi işlendi.`}>
+            {busy ? <BarListSkeleton /> : stats.topExaminations.length > 0
+              ? <BarList rows={stats.topExaminations.map((row) => ({ label: row.treatmentName, value: row.count, display: `${count(row.count)} kez` }))} />
+              : <EmptyState title="Bu dönemde tedavi kaydı yok" compact />}
+          </Section>
+          <Section title="En çok işlem gören dişler">
+            {busy ? <BarListSkeleton /> : stats.topTeeth.length > 0
+              ? <BarList rows={stats.topTeeth.map((row) => ({ label: `Diş ${row.tooth}`, value: row.count, display: `${count(row.count)} kez` }))} />
+              : <EmptyState title="Bu dönemde diş kaydı yok" compact />}
+          </Section>
+        </div>
+      );
+    }
+    if (tab === "vergi") {
+      return (
+        <div className="space-y-3">
+          <Callout tone="neutral" role="note">Tahmini hesaplamadır. Resmi beyan için mali müşavirinize danışın.</Callout>
+          <div className="grid gap-3 lg:grid-cols-2">
+            <Section title="KDV">
+              {busy ? <BarListSkeleton rows={3} /> : <DescriptionList layout="rows" items={vatItems} />}
+            </Section>
+            <Section title={`Gelir vergisi (${taxYear})`}>
+              {busy ? <BarListSkeleton rows={3} /> : (
+                <div className="space-y-3">
+                  <DescriptionList layout="rows" items={incomeTaxItems} />
+                  <Disclosure title={`Vergi dilimleri (${stats.taxTariffYear ?? INCOME_TAX_TARIFF_YEAR} tarifesi)`}>
+                    <ul className="space-y-1 text-sm text-slate-600">
+                      {TAX_BRACKETS.map(([label, rate]) => (
+                        <li key={label} className="flex justify-between gap-3"><span>{label}</span><span className="font-semibold tabular-nums">{rate}</span></li>
+                      ))}
+                    </ul>
+                  </Disclosure>
+                </div>
+              )}
+            </Section>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div className="space-y-3">
+        <div className="grid gap-3 lg:grid-cols-2">
+          <Section
+            title="Tahsilat yöntemleri"
+            actions={canPaymentsList && range ? <SectionLink href={ledgerHref(period.value, range, "TAHSILAT")}>Tahsilatları listele</SectionLink> : undefined}
+            footer={busy ? undefined : (
+              <p className="flex flex-wrap items-baseline justify-between gap-2 text-sm text-slate-600">
+                <span>Nakit değişimi <span className="text-xs text-slate-400">(nakit tahsilat − nakit gider)</span></span>
+                <b className={`tabular-nums ${cashNet < 0 ? "text-red-700" : "text-slate-900"}`}>{signed(cashNet)}</b>
+              </p>
+            )}
+          >
+            {busy ? <BarListSkeleton /> : methodRows.length > 0
+              ? <BarList rows={methodRows} />
+              : <EmptyState title="Bu dönemde tahsilat yok" compact />}
+          </Section>
+
+          <Section
+            title="Gider türleri"
+            actions={canLedger && canFinance && range ? <SectionLink href={ledgerHref(period.value, range, "GIDER")}>Giderleri listele</SectionLink> : undefined}
+          >
+            {busy ? <BarListSkeleton /> : stats.expenseByCategory.length > 0
+              ? <BarList tone="neutral" rows={stats.expenseByCategory.map((row) => ({ label: row.category, value: row.amount, display: money(row.amount) }))} />
+              : <EmptyState title="Bu dönemde gider yok" compact />}
+          </Section>
+
+          <Section
+            title="Tedarikçi alım faturaları"
+            description="Faturadır; tedarikçiye ödendikçe giderlere yansır."
+            actions={canFinance ? <SectionLink href="/firma">Satın alma</SectionLink> : undefined}
+            footer={!busy && (stats.totalFirmaAlim > 0 || stats.totalLabCost > 0) ? (
+              // Dönemin toplam alım faturası başka hiçbir yerde yazmıyor (şeritteki Gider ödenen tutardır).
+              <div className="space-y-1.5">
+                {stats.totalFirmaAlim > 0 && (
+                  <p className="flex flex-wrap items-baseline justify-between gap-2 text-sm text-slate-600">
+                    <span>Toplam alım</span>
+                    <b className="tabular-nums text-slate-900">{money(stats.totalFirmaAlim)}</b>
+                  </p>
+                )}
+                {stats.totalLabCost > 0 && (
+                  <p className="flex flex-wrap items-baseline justify-between gap-2 text-sm text-slate-600">
+                    <span>Laboratuvar faturaları <span className="text-xs text-slate-400">(doktor hakedişinden düşülür)</span></span>
+                    <b className="tabular-nums text-slate-900">{money(stats.totalLabCost)}</b>
+                  </p>
+                )}
+              </div>
+            ) : undefined}
+          >
+            {busy ? <BarListSkeleton rows={3} /> : stats.firmaByName.length > 0
+              ? <BarList tone="neutral" rows={stats.firmaByName.map((row) => ({ label: row.name, value: row.amount, display: money(row.amount) }))} />
+              : <EmptyState title="Bu dönemde tedarikçi alımı yok" compact />}
+          </Section>
+        </div>
+
+        {!busy && unpaidPatients > 0 && (
+          <Callout
+            tone="info"
+            action={canLedger && canFinance ? <SectionLink href="/muhasebe?tab=alacaklar&gorunum=hastalar">Alacaklar</SectionLink> : undefined}
+          >
+            Bu dönemde tedavi görüp bugün itibarıyla borcu kalan <b>{count(unpaidPatients)}</b> hasta var.
+          </Callout>
+        )}
+      </div>
+    );
+  })();
 
   return (
     <section className="space-y-3">
-      <PageHeader icon="rapor" title="Raporlar" description="Seçili dönemin tahsilat, gider, vergi ve tedavi özeti." />
+      <PageHeader icon="rapor" title="Raporlar" />
 
       <Tabs
         ariaLabel="Rapor bölümleri"
         items={[
-          { key: "genel", label: "Genel bakış", count: openChecks || undefined, countTone: "warning" },
-          { key: "giderler", label: "Giderler ve vergi" },
-          { key: "islemler", label: "Tedavi analizi" },
+          { key: "genel", label: "Özet" },
+          { key: "islemler", label: "Tedaviler" },
+          { key: "vergi", label: "Vergi (tahmini)" },
         ]}
         value={tab}
         onChange={setTab}
       />
 
-      <Toolbar>
-        <Select aria-label="Dönem" size="sm" value={period} onChange={(event) => setPeriod(event.target.value as Period)} className="sm:w-auto">
-          {(Object.keys(PERIOD_LABELS) as Period[]).map((key) => <option key={key} value={key}>{PERIOD_LABELS[key]}</option>)}
-        </Select>
-        {period === "ozel" && (
-          <div className="flex flex-wrap items-center gap-2">
-            <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-600">
-              Başlangıç
-              <Input type="date" size="sm" value={customFrom} max={customTo || undefined} onChange={(event) => setCustomFrom(event.target.value)} className="w-auto" />
-            </label>
-            <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-600">
-              Bitiş
-              <Input type="date" size="sm" value={customTo} min={customFrom || undefined} onChange={(event) => setCustomTo(event.target.value)} className="w-auto" />
-            </label>
-          </div>
-        )}
-        <span className="text-xs text-slate-500">{loading ? "Hesaplanıyor…" : rangeText}</span>
+      <Toolbar
+        actions={canExport ? (
+          <ExportMenu
+            disabled={!data || loading || Boolean(period.error)}
+            disabledReason={period.error ? "Önce geçerli bir dönem seçin" : "Rapor hazırlanıyor"}
+            items={[
+              { key: "excel", label: "Excel (CSV)", icon: FileSpreadsheet, onSelect: exportExcel },
+              { key: "pdf", label: "PDF", icon: FileText, onSelect: exportPdf },
+            ]}
+          />
+        ) : undefined}
+      >
+        <DateRangeFilter {...period.filterProps} showRange />
       </Toolbar>
 
-      {loadError && <LoadErrorState message={loadError} onRetry={() => void load()} />}
-
-      <dl className="ui-surface grid grid-cols-2 divide-slate-100 sm:grid-cols-4 sm:divide-x">
-        {headline.map((item) => (
-          <div key={item.label} className="px-4 py-3">
-            <dt className="text-xs font-semibold text-slate-500">{item.label}</dt>
-            <dd className={`mt-0.5 text-lg font-extrabold tabular-nums ${item.tone}`}>{loading && stats === EMPTY ? "…" : item.value}</dd>
-          </div>
-        ))}
-      </dl>
-
-      {tab === "genel" && (
-        <div className="grid gap-3 lg:grid-cols-2">
-          <Card title="Açık kalan işler" action={<span className="text-xs text-slate-400">Seçili döneme göre</span>}>
-            {stats.dayClose ? (
-              <ul className="divide-y divide-slate-100">
-                {stats.dayClose.checks.map((check) => (
-                  <li key={check.key} className="flex items-start justify-between gap-3 py-2.5">
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-slate-800">{check.label}</p>
-                      <p className="text-xs text-slate-500">{check.detail}</p>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <Badge tone={STATUS[check.status].tone}>{STATUS[check.status].label}</Badge>
-                      {check.status !== "ok" && (
-                        <Link href={check.href} className="inline-flex items-center gap-0.5 text-xs font-semibold text-primary hover:underline">
-                          Aç <ArrowRight className="h-3 w-3" aria-hidden="true" />
-                        </Link>
-                      )}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="py-6 text-center text-sm text-slate-400">{loading ? "Hesaplanıyor…" : "Kontrol listesi yüklenemedi."}</p>
-            )}
-          </Card>
-
-          <Card
-            title="Kasa ve nakit akışı"
-            action={<Link href="/muhasebe?tab=defter&donem=bugun" className="text-xs font-semibold text-primary hover:underline">Bugünün hareketleri</Link>}
-          >
-            <Line label="Tahsilat" value={money(stats.totalRevenue)} tone="text-emerald-700" />
-            <Line label="Ödenen giderler" hint="Firma ödemeleri ve doktor hakediş ödemeleri dahil" value={`−${money(stats.totalExpenses)}`} tone="text-red-700" />
-            <Line label="Net nakit akışı" value={signed(stats.netCash)} tone={stats.netCash >= 0 ? "text-slate-900" : "text-red-700"} strong />
-            <p className="mt-1 text-xs text-slate-500">
-              Kasadaki nakit değişimi (nakit tahsilat − nakit gider): <b className="tabular-nums text-slate-700">{signed(cashNet)}</b>
-            </p>
-            {stats.totalFirmaAlim > 0 && (
-              <p className="mt-1 text-xs text-slate-500">
-                Bu dönemde firmalardan {money(stats.totalFirmaAlim)} alım faturası var; ödendikçe giderlere yansır.
-              </p>
-            )}
-          </Card>
-
-          <Card title="Tahsilatın ödeme yöntemine göre dağılımı">
-            {methodRows.length > 0
-              ? <Bars rows={methodRows} total={stats.totalRevenue} color="bg-primary" />
-              : <EmptyState title="Bu dönemde tahsilat yok" compact />}
-          </Card>
-
-          {stats.dayClose && (
-            <Card title="Tahsil edilmemiş tedaviler">
-              <p className="text-sm text-slate-600">
-                Bu dönemde tedavi görüp ödemesini tamamlamamış <b className="text-slate-900">{count(stats.dayClose.unpaidTreatmentPatientCount)}</b> hasta var.
-              </p>
-              <Link href="/muhasebe?tab=alacak" className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-primary hover:underline">
-                Hasta borçlarını aç <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-              </Link>
-            </Card>
-          )}
-        </div>
-      )}
-
-      {tab === "giderler" && (
-        <div className="grid gap-3 lg:grid-cols-2">
-          <Card
-            title="Gider türleri"
-            action={<Link href={`/muhasebe?tab=defter&tur=GIDER&from=${dateFrom}&to=${dateTo}`} className="text-xs font-semibold text-primary hover:underline">Giderleri listele</Link>}
-          >
-            {stats.expenseByCategory.length > 0 ? (
-              <>
-                <Bars rows={stats.expenseByCategory.map((row) => ({ label: row.category, value: row.amount, display: money(row.amount) }))} total={Math.max(...stats.expenseByCategory.map((row) => row.amount), 1)} color="bg-orange-400" />
-                <Line label="Toplam gider" value={money(stats.totalExpenses)} strong />
-              </>
-            ) : <EmptyState title="Bu dönemde gider yok" compact />}
-          </Card>
-
-          <Card title="Firma alımları (fatura)" action={<Link href="/firma" className="text-xs font-semibold text-primary hover:underline">Firmalar</Link>}>
-            {stats.firmaByName.length > 0 ? (
-              <>
-                <Bars rows={stats.firmaByName.map((row) => ({ label: row.name, value: row.amount, display: money(row.amount) }))} total={Math.max(...stats.firmaByName.map((row) => row.amount), 1)} color="bg-violet-400" />
-                <Line label="Toplam alım" value={money(stats.totalFirmaAlim)} strong />
-                <p className="text-xs text-slate-500">Alım faturasıdır; firmaya yapılan ödemeler giderlerde görünür.</p>
-              </>
-            ) : <EmptyState title="Bu dönemde firma alımı yok" compact />}
-            {stats.totalLabCost > 0 && <p className="mt-2 text-xs text-slate-500">Laboratuvar faturaları: {money(stats.totalLabCost)} (doktor hakedişinden düşülür).</p>}
-          </Card>
-
-          <Card title="KDV özeti (tahmini)">
-            <Line label="Hesaplanan KDV" hint="Tahsilatın %10'u" value={money(stats.outputVAT)} />
-            <Line label="İndirilecek KDV" hint="Gider ve alım faturalarından" value={`−${money(stats.inputVAT)}`} />
-            <Line label={vatPayable ? "Ödenecek KDV" : "Devreden KDV (sonraki döneme)"} value={money(Math.abs(stats.netVAT))} tone={vatPayable ? "text-red-700" : "text-emerald-700"} strong />
-          </Card>
-
-          <Card title="Gelir vergisi tahmini">
-            <Line label="Dönem kârı (KDV hariç)" hint="Tahsilat − gider" value={signed(stats.periodNetProfit)} tone={stats.periodNetProfit >= 0 ? "text-slate-900" : "text-red-700"} />
-            <Line label="Yıllık kâr (bu yıl şimdiye kadar)" value={signed(stats.annualNetProfit)} tone={stats.annualNetProfit >= 0 ? "text-slate-900" : "text-red-700"} />
-            <Line label="Hesaplanan gelir vergisi" value={money(stats.gelirVergisi)} tone="text-red-700" strong />
-            <details className="mt-1 text-xs text-slate-500">
-              <summary className="cursor-pointer font-semibold text-slate-600">Vergi dilimleri (2026)</summary>
-              <ul className="mt-1 space-y-0.5">
-                {[["0 – 190.000 TL", "%15"], ["190.001 – 400.000 TL", "%20"], ["400.001 – 1.500.000 TL", "%27"], ["1.500.001 – 5.300.000 TL", "%35"], ["5.300.001 TL üzeri", "%40"]].map(([label, rate]) => (
-                  <li key={label} className="flex justify-between"><span>{label}</span><span className="font-semibold">{rate}</span></li>
-                ))}
-              </ul>
-            </details>
-            <p className="mt-2 text-xs text-slate-400">Tahmini hesaplamadır. Resmi beyan için mali müşavirinize danışın.</p>
-          </Card>
-        </div>
-      )}
-
-      {tab === "islemler" && (
-        <div className="space-y-3">
-          <p className="text-sm text-slate-600">
-            Bu dönemde <b className="text-slate-900">{count(stats.totalExaminations)}</b> tedavi kalemi işlendi, <b className="text-slate-900">{count(stats.newPatients)}</b> yeni hasta kaydedildi.
-          </p>
-          <div className="grid gap-3 lg:grid-cols-2">
-            <Card title="En çok yapılan tedaviler">
-              {stats.topExaminations.length > 0
-                ? <Bars rows={stats.topExaminations.map((row) => ({ label: row.treatmentName, value: row.count, display: `${count(row.count)} kez` }))} total={stats.topExaminations[0]?.count || 1} color="bg-primary" />
-                : <EmptyState title="Bu dönemde tedavi kaydı yok" compact />}
-            </Card>
-            <Card title="En çok işlem gören dişler">
-              {stats.topTeeth.length > 0
-                ? <Bars rows={stats.topTeeth.map((row) => ({ label: `Diş ${row.tooth}`, value: row.count, display: `${count(row.count)} kez` }))} total={stats.topTeeth[0]?.count || 1} color="bg-teal-500" />
-                : <EmptyState title="Bu dönemde diş kaydı yok" compact />}
-            </Card>
-          </div>
+      {showError ? (
+        <LoadErrorState message={loadError || "Rapor verileri yüklenemedi."} onRetry={() => void load()} />
+      ) : firstLoad && period.error ? null : (
+        // Dönemin özeti tüm sekmelerde aynı yerde ve bir kez; sekmeler bu sayıları tekrar etmez.
+        <div className={`space-y-3 transition-opacity ${stale ? "opacity-50" : ""}`} aria-busy={loading || undefined}>
+          <StatStrip items={strip} loading={firstLoad} columns={4} aria-label="Dönem özeti" />
+          {content}
         </div>
       )}
     </section>
+  );
+}
+
+export default function RaporPage() {
+  return (
+    <Suspense fallback={<PageSkeleton headerAction={false} toolbar stats={4} tabs={3} body="cards" rows={4} columns={2} label="Raporlar yükleniyor" />}>
+      <RaporContent />
+    </Suspense>
   );
 }

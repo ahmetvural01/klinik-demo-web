@@ -8,6 +8,7 @@ import { findPurchasePayments, firmaIslemToken, purchasePaymentToken, sumPurchas
 import { rebuildFirmaPaymentAllocations } from "@/lib/firma-payment-allocation";
 import { requireActiveBranch } from "@/lib/branch-context";
 import { BusinessRuleError, publicErrorResponse } from "@/lib/public-error";
+import { BUSY_MESSAGE, PURCHASE_TX_OPTIONS, isTransientDbError, withProductName } from "../transaction-errors";
 
 function toPublicPurchase(purchase: any) {
   if (!purchase) return purchase;
@@ -42,11 +43,32 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ id: stri
     const purchase = await loadPurchase(params.id, auth.user.institutionId, branch.branchId);
     if (!purchase) return NextResponse.json({ error: "Satın alma bulunamadı" }, { status: 404 });
 
-    const payments = await findPurchasePayments(
-      prisma as any,
-      purchase.id,
-      purchase.firmaId,
-      purchase.firmaIslemId,
+    const itemIds = purchase.items.map((item: any) => item.id as string);
+    const [payments, usedLots] = await Promise.all([
+      findPurchasePayments(
+        prisma as any,
+        purchase.id,
+        purchase.firmaId,
+        purchase.firmaIslemId,
+      ),
+      // Partisinden çıkış yapılmış satır düzeltilemez/iptal edilemez
+      // (assertPurchaseItemLotEditable ile aynı kural); ekran bunu önceden göstersin.
+      itemIds.length
+        ? prisma.stockLot.findMany({
+            where: {
+              purchaseItemId: { in: itemIds },
+              status: { not: "IPTAL" },
+              branchId: branch.branchId,
+              ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+            },
+            select: { purchaseItemId: true, quantityReceived: true, quantityRemaining: true },
+          })
+        : Promise.resolve([]),
+    ]);
+    const consumedItemIds = new Set(
+      usedLots
+        .filter((lot) => Number(lot.quantityRemaining) < Number(lot.quantityReceived))
+        .map((lot) => lot.purchaseItemId),
     );
     const paidTotal = sumPurchasePayments(payments);
     const total = Math.round(
@@ -57,8 +79,10 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ id: stri
     ) / 100;
     const remaining = Math.round((total - paidTotal) * 100) / 100;
 
+    const publicPurchase = toPublicPurchase(purchase);
     return NextResponse.json({
-      ...toPublicPurchase(purchase),
+      ...publicPurchase,
+      items: (publicPurchase.items || []).map((item: any) => ({ ...item, consumed: consumedItemIds.has(item.id) })),
       paymentSummary: {
         total,
         paidTotal,
@@ -130,7 +154,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
       for (const existing of current.items) {
         if (incomingIdSet.has(existing.id)) continue;
         if (isReceived) {
-          await reversePurchaseItemStock({
+          await withProductName(existing.productName, () => reversePurchaseItemStock({
             tx,
             purchaseItemId: existing.id,
             stockItemId: existing.stockItemId,
@@ -138,7 +162,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
             branchId: branch.branchId,
             userId: auth.user.id,
             note: `Satın alma düzeltmesi: satır silindi (${existing.productName})`,
-          });
+          }));
         }
         await tx.purchaseItem.update({
           where: { id: existing.id },
@@ -212,7 +236,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
 
         if (productChanged) {
           if (isReceived) {
-            await reversePurchaseItemStock({
+            await withProductName(existing.productName, () => reversePurchaseItemStock({
               tx,
               purchaseItemId: existing.id,
               stockItemId: existing.stockItemId,
@@ -220,7 +244,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
               branchId: branch.branchId,
               userId: auth.user.id,
               note: `Satın alma düzeltmesi: ürün değiştirildi (${existing.productName} çıkarıldı)`,
-            });
+            }));
           }
           const resolved = resolvedIncoming || (await resolveOrCreateStockItem(tx, institutionId, branch.branchId, firma.name, incoming));
           const lineTotal = Math.round(incoming.quantity * incoming.unitPrice * 100) / 100;
@@ -276,7 +300,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
           || (incoming.lotNo || null) !== (existing.lotNo || null)
           || incomingExpiry !== existingExpiry;
         if (isReceived && stockDataChanged) {
-          await reversePurchaseItemStock({
+          await withProductName(existing.productName, () => reversePurchaseItemStock({
             tx,
             purchaseItemId: existing.id,
             stockItemId: existing.stockItemId,
@@ -284,7 +308,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
             branchId: branch.branchId,
             userId: auth.user.id,
             note: `Satın alma düzeltmesi: parti yeniden oluşturuldu (${existing.productName})`,
-          });
+          }));
         }
         const lineTotal = Math.round(incoming.quantity * incoming.unitPrice * 100) / 100;
         await tx.purchaseItem.update({
@@ -392,13 +416,15 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
         where: { id: current.id },
         include: { items: { where: { archivedAt: null } } },
       });
-    }, { isolationLevel: "Serializable" });
+    }, { isolationLevel: "Serializable", ...PURCHASE_TX_OPTIONS });
 
     await writeAudit(auth.user.id, "PURCHASE_UPDATE", `${purchase.firma.name} satın alması düzeltildi (${params.id})`);
 
     return NextResponse.json(toPublicPurchase(updated));
   } catch (e) {
     console.error("[purchases/:id PATCH]", e);
+    // Serializable işlemde yazma çakışması (P2034) ya da süre dolması: değişiklik geri alındı, yeniden denenebilir.
+    if (isTransientDbError(e)) return NextResponse.json({ error: BUSY_MESSAGE }, { status: 503 });
     const publicError = publicErrorResponse(e, "Satın alma düzeltilemedi. Lütfen tekrar deneyin.");
     return NextResponse.json({ error: publicError.message }, { status: publicError.status });
   }

@@ -8,46 +8,14 @@ export type CatalogPriceItem = {
 export const ACTIVE_PRICE_LIST_STORAGE_KEY = "klinikcep-active-price-list";
 export const LEGACY_ACTIVE_PRICE_LIST_STORAGE_KEY = "klinikmodern-active-price-list";
 
-export function activePriceListStorageKey(scopeKey: string) {
-  if (!scopeKey.trim()) throw new Error("Fiyat listesi için oturum kapsamı bulunamadı.");
-  return `${ACTIVE_PRICE_LIST_STORAGE_KEY}:${scopeKey}`;
-}
-
-export function readStoredActivePriceList(storage: Pick<Storage, "getItem" | "setItem" | "removeItem">, scopeKey: string) {
-  const scopedKey = activePriceListStorageKey(scopeKey);
-  const current = storage.getItem(scopedKey);
-  if (current === "standard" || current === "custom") return current;
-
-  const unscopedCurrent = storage.getItem(ACTIVE_PRICE_LIST_STORAGE_KEY);
-  if (unscopedCurrent === "standard" || unscopedCurrent === "custom") {
-    storage.setItem(scopedKey, unscopedCurrent);
-    storage.removeItem(ACTIVE_PRICE_LIST_STORAGE_KEY);
-    return unscopedCurrent;
-  }
-  const legacy = storage.getItem(LEGACY_ACTIVE_PRICE_LIST_STORAGE_KEY);
-  if (legacy === "standard" || legacy === "custom") {
-    storage.setItem(scopedKey, legacy);
-    storage.removeItem(LEGACY_ACTIVE_PRICE_LIST_STORAGE_KEY);
-    return legacy;
-  }
-  return null;
-}
-
 export const TDB_ACTIVE_CATALOG_YEAR = 2026;
 
 export function tdbOfficialTariffPdfUrl(year: number) {
   return `https://www.tdb.org.tr/tdb/v2/ekler/${year}_Yili_Rehber_Tarife_Kitapcigi.pdf`;
 }
 
-export async function detectLatestPublishedTdbTariffYear(maxYear = new Date().getFullYear() + 1) {
-  for (let year = Math.max(maxYear, TDB_ACTIVE_CATALOG_YEAR); year > TDB_ACTIVE_CATALOG_YEAR; year -= 1) {
-    try {
-      const response = await fetch(tdbOfficialTariffPdfUrl(year), { method: "HEAD", cache: "no-store" });
-      if (response.ok) return year;
-    } catch {}
-  }
-  return TDB_ACTIVE_CATALOG_YEAR;
-}
+// Yayımlanmış tarife yılı yalnız sunucuda (/api/prices) PDF içerik türüyle
+// doğrulanır; istemcideki eski "200 dönen her yanıt yayımlandı" denetimi kaldırıldı.
 
 export const TDB_2026_CORE_PRICE_CATALOG: CatalogPriceItem[] = [
   { id: "tdb-1-1", code: "1-1", treatment: "Dişhekimi Muayenesi", amount: 1650 },

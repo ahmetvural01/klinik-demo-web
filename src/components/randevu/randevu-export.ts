@@ -109,9 +109,13 @@ function openPrintWindow(title: string, bodyHtml: string, extraCss: string): boo
   return true;
 }
 
-/** Ayrıntılı çizelge (yönetim/arşiv için). */
+/**
+ * Ayrıntılı çizelge (günün iş listesi). İptal edilen randevular satır olarak
+ * basılmaz (canlı test: 6 satırın 3'ü iptaldi), özet satırında sayısı yazar.
+ * Excel dosyası kayıt amaçlı olduğu için iptalleri de içerir.
+ */
 export function printSchedule(appointments: Appointment[], treatments: TreatmentOption[], meta: ExportMeta): boolean {
-  const rows = toRows(appointments, treatments);
+  const rows = toRows(appointments.filter((item) => item.status !== "IPTAL"), treatments);
   const { counts, active } = summaryLine(appointments);
   const now = new Date().toLocaleString("tr-TR");
   const body = `<div class="page">

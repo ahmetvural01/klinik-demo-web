@@ -1,20 +1,22 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CalendarDays, CalendarPlus } from "lucide-react";
+import { CalendarDays, CalendarPlus, ExternalLink } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { DescriptionList } from "@/components/ui/DescriptionList";
 import { ListTable, EmptyValue, type ListTableColumn } from "@/components/ui/ListTable";
 import { Modal } from "@/components/ui/Modal";
 import { ChoiceCards } from "@/components/ui/ChoiceCards";
 import { formatDateText } from "@/components/ui/Money";
+import { patchAppointment } from "@/components/randevu/appointment-api";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
 import { canMarkNoShow, isStaleWaitingAppointment } from "@/lib/appointment-status";
 import { parseAppointmentNote } from "@/lib/appointment-follow-up";
 import { turkeyDateKey } from "@/lib/tz";
 import { usePatientFile } from "./PatientFileContext";
-import { appointmentStatusView, appointmentTypeLabel, errorMessageOf, type Appt } from "./patient-file-shared";
+import { appointmentStatusView, appointmentTypeLabel, type Appt } from "./patient-file-shared";
 
 // Ham durum → ekrandaki ad. Ham BEKLIYOR "Planlandı", ham GELDI "Bekliyor"
 // (hasta geldi, bekleme salonunda) yazar — kullanıcı geri bildirimiyle
@@ -26,6 +28,8 @@ const STATUS_OPTIONS = [
   { value: "GELMEDI", label: "Gelmedi" },
   { value: "IPTAL", label: "İptal" },
 ] as const;
+
+const PAST_PREVIEW = 10;
 
 const timeRange = (appointment: Appt) => `${formatDateText(appointment.startAt, "time")}–${formatDateText(appointment.endAt, "time")}`;
 
@@ -41,18 +45,26 @@ function StatusCell({ appointment }: { appointment: Appt }) {
   );
 }
 
+/**
+ * Hastanın randevuları. Yeni randevu Randevular sayfasında bu hasta seçili
+ * açılır; durum (geldi/gelmedi) satıra tıklayınca açılan pencereden değişir.
+ */
 export function AppointmentsTab() {
   const { data, reload, can, appointmentHref } = usePatientFile();
   const [selected, setSelected] = useState<Appt | null>(null);
   const [saving, setSaving] = useState(false);
+  const [showAllPast, setShowAllPast] = useState(false);
   const canWrite = can("appointments:write");
+  const canCancel = can("appointments:approve");
 
-  const { upcoming, past } = useMemo(() => {
+  const { upcoming, past, noShowCount } = useMemo(() => {
     const now = Date.now();
     const sorted = [...data.appointments].sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
+    const pastList = sorted.filter((appointment) => new Date(appointment.endAt || appointment.startAt).getTime() < now).reverse();
     return {
       upcoming: sorted.filter((appointment) => new Date(appointment.endAt || appointment.startAt).getTime() >= now),
-      past: sorted.filter((appointment) => new Date(appointment.endAt || appointment.startAt).getTime() < now).reverse(),
+      past: pastList,
+      noShowCount: pastList.filter((appointment) => appointment.status === "GELMEDI").length,
     };
   }, [data.appointments]);
 
@@ -84,51 +96,61 @@ export function AppointmentsTab() {
 
   const changeStatus = async (status: string) => {
     if (!selected || saving || status === selected.status) return;
-    if (status === "IPTAL" && !(await confirmDialog({ message: "Randevu iptal edilsin mi? Kayıt geçmişte görünmeye devam eder.", danger: true, confirmText: "Randevuyu iptal et" }))) return;
+    if (status === "IPTAL" && !(await confirmDialog({ title: "Randevu iptal edilsin mi?", message: "Kayıt geçmişte görünmeye devam eder.", danger: true, confirmText: "Randevuyu iptal et" }))) return;
     setSaving(true);
     try {
-      const response = await fetch(`/api/appointments/${selected.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
-      });
-      const body = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(errorMessageOf(body, "Randevu durumu güncellenemedi."));
+      // Takvimle aynı uç: iptal/Gelmedi randevu yeniden açılırken hekimin aynı
+      // saatte başka randevusu varsa sunucu onay ister (409); ileti hata gibi
+      // görünüyordu, artık "Yine de yeniden aç" diye sorulur.
+      const result = await patchAppointment(selected.id, { status });
+      if (!result.ok) {
+        // Boş ileti: kullanıcı çakışma onayını reddetti.
+        if (result.message) showToastSafe({ type: "error", message: result.message });
+        return;
+      }
       setSelected((current) => (current ? { ...current, status } : current));
       showToastSafe({ type: "success", icon: "calendar", message: `Randevu durumu: ${appointmentStatusView(status).label}.` });
       void reload(true);
-    } catch (saveError) {
-      showToastSafe({ type: "error", message: saveError instanceof Error ? saveError.message : "Randevu durumu güncellenemedi." });
     } finally {
       setSaving(false);
     }
   };
 
   const detailNote = selected ? (parseAppointmentNote(selected.note).detail || selected.note || "") : "";
+  // Randevu ileri bir günde mi (bugün değil)? Erken gelen hasta aynı gün
+  // "Bekliyor" yapılabilir; ileri günde "geldi" ya da "tamamlandı" denemez.
+  const futureDay = selected ? turkeyDateKey(new Date(selected.startAt)) > turkeyDateKey(new Date()) : false;
   const statusOptions = selected
     ? STATUS_OPTIONS.map((option) => {
         const futureNoShow = option.value === "GELMEDI" && !canMarkNoShow(selected.startAt);
+        const futureVisit = futureDay && (option.value === "GELDI" || option.value === "TAMAMLANDI");
         const fromCancelled = selected.status === "IPTAL" && option.value !== "IPTAL" && option.value !== "BEKLIYOR";
+        // İptal ayrı yetkidir (sunucu appointments:approve ister); seçenek
+        // yetkisiz kişide gerekçesiyle pasif görünür, onaydan sonra 403 almaz.
+        const cancelForbidden = option.value === "IPTAL" && selected.status !== "IPTAL" && !canCancel;
         return {
           value: option.value as string,
           label: option.label,
-          disabled: !canWrite || saving || futureNoShow || fromCancelled,
-          disabledReason: futureNoShow ? "Randevu saati henüz gelmedi" : fromCancelled ? "İptal edilen randevu önce Planlandı yapılmalı" : undefined,
+          disabled: !canWrite || saving || futureNoShow || futureVisit || fromCancelled || cancelForbidden,
+          disabledReason: futureNoShow
+            ? "Randevu saati henüz gelmedi"
+            : futureVisit
+              ? "Randevu günü henüz gelmedi"
+              : fromCancelled
+                ? "İptal edilen randevu önce Planlandı yapılmalı"
+                : cancelForbidden
+                  ? "Randevu iptali için yetkiniz yok"
+                  : undefined,
         };
       })
     : [];
+  const shownPast = showAllPast ? past : past.slice(0, PAST_PREVIEW);
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-slate-500">
-          {upcoming.length > 0 ? `${upcoming.length} yaklaşan, ${past.length} geçmiş randevu.` : past.length > 0 ? `İleri tarihli randevu yok · ${past.length} geçmiş randevu.` : "Bu hastanın randevusu yok."}
-        </p>
-        {canWrite && <Button variant="secondary" icon={CalendarPlus} href={appointmentHref}>Randevu ver</Button>}
-      </div>
-
       <ListTable
-        header={<h2 className="border-b border-slate-100 px-4 py-3 text-sm font-bold text-slate-800">Yaklaşan randevular</h2>}
+        title="Yaklaşan randevular"
+        actions={canWrite ? <Button size="sm" variant="secondary" icon={CalendarPlus} href={appointmentHref}>Yeni randevu</Button> : undefined}
         columns={columns}
         rows={upcoming}
         rowKey={(appointment) => appointment.id}
@@ -137,20 +159,26 @@ export function AppointmentsTab() {
         mobileCard={mobileCard}
         emptyIcon={CalendarDays}
         emptyText="Yaklaşan randevu yok"
-        emptyDescription={canWrite ? "Kontrol veya tedavi için randevu verebilirsiniz." : undefined}
-        emptyAction={canWrite ? <Button size="sm" variant="secondary" icon={CalendarPlus} href={appointmentHref}>Randevu ver</Button> : undefined}
       />
 
       {past.length > 0 && (
-        <ListTable
-          header={<h2 className="border-b border-slate-100 px-4 py-3 text-sm font-bold text-slate-800">Geçmiş randevular</h2>}
-          columns={columns}
-          rows={past}
-          rowKey={(appointment) => appointment.id}
-          onRowClick={setSelected}
-          getRowAriaLabel={(appointment) => `${formatDateText(appointment.startAt, "datetime")} randevusunun ayrıntısı`}
-          mobileCard={mobileCard}
-        />
+        <div className="space-y-2">
+          <ListTable
+            title="Geçmiş randevular"
+            subtitle={noShowCount > 0 ? `${noShowCount} kez gelmedi` : undefined}
+            columns={columns}
+            rows={shownPast}
+            rowKey={(appointment) => appointment.id}
+            onRowClick={setSelected}
+            getRowAriaLabel={(appointment) => `${formatDateText(appointment.startAt, "datetime")} randevusunun ayrıntısı`}
+            mobileCard={mobileCard}
+          />
+          {past.length > PAST_PREVIEW && (
+            <Button variant="ghost" size="sm" onClick={() => setShowAllPast((current) => !current)} aria-expanded={showAllPast}>
+              {showAllPast ? `Son ${PAST_PREVIEW} randevuyu göster` : `Tüm geçmiş randevular (${past.length})`}
+            </Button>
+          )}
+        </div>
       )}
 
       <Modal
@@ -162,34 +190,28 @@ export function AppointmentsTab() {
         size="md"
         trackFormChanges={false}
         footer={selected ? (
-          <>
-            <Button variant="secondary" href={`/randevu?date=${turkeyDateKey(new Date(selected.startAt))}&focusAppointmentId=${selected.id}`}>Takvimde aç</Button>
-            <Button variant="secondary" onClick={() => setSelected(null)}>Kapat</Button>
-          </>
+          <Button variant="secondary" icon={ExternalLink} href={`/randevu?date=${turkeyDateKey(new Date(selected.startAt))}&focusAppointmentId=${selected.id}`}>Takvimde aç</Button>
         ) : undefined}
       >
         {selected && (
           <div className="space-y-4">
-            <dl className="grid gap-x-4 gap-y-2 text-sm sm:grid-cols-2">
-              <div><dt className="text-xs text-slate-500">Hekim</dt><dd className="font-semibold text-slate-800">{selected.doctor?.fullName || "—"}</dd></div>
-              <div><dt className="text-xs text-slate-500">Tür</dt><dd className="font-semibold text-slate-800">{appointmentTypeLabel(selected.type)}</dd></div>
-              {selected.clinicUnit && (
-                <div><dt className="text-xs text-slate-500">Ünite</dt><dd className="font-semibold text-slate-800">{selected.clinicUnit.name}{selected.clinicUnit.code ? ` · ${selected.clinicUnit.code}` : ""}</dd></div>
-              )}
-              {detailNote && (
-                <div className="sm:col-span-2"><dt className="text-xs text-slate-500">Not</dt><dd className="whitespace-pre-wrap text-slate-700">{detailNote}</dd></div>
-              )}
-            </dl>
+            <DescriptionList
+              layout="rows"
+              items={[
+                { key: "doctor", label: "Hekim", value: selected.doctor?.fullName },
+                { key: "type", label: "Tür", value: appointmentTypeLabel(selected.type) },
+                { key: "unit", label: "Ünite", value: selected.clinicUnit ? `${selected.clinicUnit.name}${selected.clinicUnit.code ? ` · ${selected.clinicUnit.code}` : ""}` : null, hidden: !selected.clinicUnit },
+                { key: "note", label: "Not", value: detailNote ? <span className="whitespace-pre-wrap">{detailNote}</span> : null, hidden: !detailNote },
+              ]}
+            />
             <ChoiceCards
               label={canWrite ? "Durumu değiştir" : "Durum"}
               variant="pills"
               options={statusOptions}
               value={selected.status}
               onChange={(value) => void changeStatus(value)}
+              hint="Bekliyor: hasta geldi, bekleme salonunda. Saat ya da hekim değişikliği takvimden yapılır."
             />
-            <p className="text-xs text-slate-500">
-              Hasta kliniğe geldiğinde <b>Bekliyor</b> seçin (hasta bekleme salonunda demektir). Saati veya hekimi değiştirmek için <b>Takvimde aç</b>.
-            </p>
           </div>
         )}
       </Modal>

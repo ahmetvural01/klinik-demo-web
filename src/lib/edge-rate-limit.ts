@@ -1,9 +1,20 @@
 type Bucket = { count: number; resetAt: number };
 
 const buckets = new Map<string, Bucket>();
+// Süresi dolan kovalar hiç silinmiyordu; her IP/kullanıcı anahtarı süreç
+// boyunca bellekte kalıyordu. Tablo büyüyünce süresi dolanlar toplu silinir
+// (amortize maliyet; sayım davranışı değişmez).
+const SWEEP_THRESHOLD = 5000;
+
+function sweepExpired(now: number) {
+  for (const [key, bucket] of buckets) {
+    if (bucket.resetAt <= now) buckets.delete(key);
+  }
+}
 
 export function checkLocalRateLimit(key: string, limit: number, windowMs: number) {
   const now = Date.now();
+  if (buckets.size >= SWEEP_THRESHOLD) sweepExpired(now);
   const bucket = buckets.get(key);
   if (!bucket || bucket.resetAt <= now) {
     buckets.set(key, { count: 1, resetAt: now + windowMs });

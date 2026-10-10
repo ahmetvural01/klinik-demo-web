@@ -12,13 +12,18 @@ export function reportQuickRange(period: "bugun" | "hafta" | "ay" | "yil", now =
   return { from: `${first}T00:00`, to: `${today}T23:59` };
 }
 
-/** Report input values are Turkey local time. The selected last minute is inclusive. */
+/**
+ * Report input values are Turkey local time. The selected last minute is inclusive.
+ * Saatsiz bitiş ("?to=2026-10-10") günün sonu sayılır (23:59:59.999): önceden
+ * 00:00 + 59 sn alınıyor, son gün rapordan düşüyordu (defter o günü sayıyordu).
+ */
 export function parseReportDateInput(value: string | null, endOfMinute = false): Date | undefined {
   if (!value) return undefined;
   const match = /^(\d{4}-\d{2}-\d{2})(?:T(\d{2}):(\d{2}))?$/.exec(value);
   if (!match || !isValidDateKey(match[1]) || Number(match[2] || 0) > 23 || Number(match[3] || 0) > 59) {
     throw new Error("Geçerli bir rapor tarih aralığı seçiniz.");
   }
-  const date = turkeyLocalDateTimeToUtc(match[1], `${match[2] || "00"}:${match[3] || "00"}`);
+  const hasTime = match[2] !== undefined;
+  const date = turkeyLocalDateTimeToUtc(match[1], hasTime ? `${match[2]}:${match[3]}` : endOfMinute ? "23:59" : "00:00");
   return endOfMinute ? new Date(date.getTime() + 59_999) : date;
 }

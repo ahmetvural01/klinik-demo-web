@@ -67,6 +67,16 @@
   --shadow-popover: 0 10px 28px rgb(15 23 42 / 0.14), 0 3px 8px rgb(15 23 42 / 0.07);
   --shadow-floating: 0 26px 64px rgb(15 23 42 / 0.2), 0 7px 18px rgb(15 23 42 / 0.09);
   --ease-product: cubic-bezier(0.2, 0, 0, 1);
+  /* Katman sırası (z-index) — ortak bileşenler bu belirteçleri kullanır;
+     sayfada yeni katman sayısı yazılmaz. */
+  --z-drawer: 280;
+  --z-modal: 300;
+  --z-menu: 320;
+  --z-popover: 330;
+  --z-hint: 340;
+  --z-confirm: 350;
+  --z-toast: 360;
+  --z-tooltip: 400;
 }
 
 /* Sayfa başlıkları (<h1>) uygulama genelinde aktif temanın başlık yazı
@@ -111,238 +121,10 @@ body {
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.72), inset 0 -1px 0 rgb(15 23 42 / 0.018), var(--shadow-rest);
 }
 
-/* Giriş ekranları panel kabuğundan bağımsızdır; aynı yüzey, alan ve aksiyon
-   dili burada da korunur ki kullanıcı ürüne ilk anda yabancı bir arayüzle
-   karşılaşmasın. */
-.auth-shell {
-  background:
-    linear-gradient(135deg, rgb(var(--app-bg)), rgb(var(--color-primary-50) / 0.7) 56%, rgb(var(--app-bg)));
-  color: rgb(var(--app-text));
-}
-
-.auth-shell-dark {
-  background: linear-gradient(135deg, rgb(8 22 34), rgb(12 42 50) 58%, rgb(8 22 34));
-}
-
-.auth-panel {
-  position: relative;
-  overflow: hidden;
-  border: 1px solid rgb(var(--app-border));
-  border-radius: 0.875rem;
-  background: rgb(var(--app-surface) / 0.96);
-  box-shadow: var(--shadow-floating);
-}
-
-.auth-panel::before {
-  content: "";
-  position: absolute;
-  inset: 0 25% auto 0;
-  height: 2px;
-  background: linear-gradient(90deg, rgb(var(--app-primary) / 0.8), rgb(var(--color-warning) / 0.3), transparent);
-}
-
-.auth-panel-dark {
-  border-color: rgb(255 255 255 / 0.13);
-  background: rgb(15 32 43 / 0.82);
-  box-shadow: 0 28px 70px rgb(0 0 0 / 0.28), inset 0 1px 0 rgb(255 255 255 / 0.08);
-  backdrop-filter: blur(18px);
-}
-
-.auth-brand-row,
-.auth-panel-heading {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.75rem;
-}
-
-.auth-panel-icon {
-  display: inline-flex;
-  min-height: 38px;
-  min-width: 38px;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid rgb(var(--app-primary) / 0.16);
-  border-radius: 0.625rem;
-  background: rgb(var(--app-primary) / 0.08);
-  color: rgb(var(--app-primary));
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.78), 0 3px 9px rgb(var(--app-primary) / 0.08);
-}
-
-.auth-panel-icon-dark {
-  border-color: rgb(94 234 212 / 0.22);
-  background: rgb(20 184 166 / 0.13);
-  color: rgb(94 234 212);
-}
-
-.auth-eyebrow {
-  color: rgb(var(--app-primary));
-  font-size: 0.625rem;
-  font-weight: 800;
-  letter-spacing: 0.14em;
-  line-height: 1.2;
-  text-transform: uppercase;
-}
-
-.auth-eyebrow-dark { color: rgb(94 234 212); }
-
-.auth-label { color: rgb(var(--color-slate-700)); }
-.auth-label-dark { color: rgb(226 232 240); }
-
-.auth-input {
-  border: 1px solid rgb(var(--app-border));
-  border-radius: var(--radius-control);
-  background: rgb(255 255 255 / 0.92);
-  color: rgb(var(--app-text));
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.85), 0 1px 2px rgb(15 23 42 / 0.035);
-  outline: none;
-  transition: border-color 160ms var(--ease-product), box-shadow 160ms var(--ease-product), background-color 160ms var(--ease-product);
-}
-
-.auth-input::placeholder { color: rgb(var(--color-slate-400)); }
-.auth-input:focus { border-color: rgb(var(--app-primary)); box-shadow: 0 0 0 3px rgb(var(--app-primary) / 0.12), 0 3px 8px rgb(var(--app-primary) / 0.08); }
-.auth-input-dark { border-color: rgb(255 255 255 / 0.18); background: rgb(255 255 255 / 0.06); color: white; }
-.auth-input-dark:focus { border-color: rgb(94 234 212); box-shadow: 0 0 0 3px rgb(45 212 191 / 0.16); }
-.auth-input-dark::placeholder { color: rgb(148 163 184); }
-
-.auth-icon-button { color: rgb(var(--color-slate-500)); transition: background-color 150ms var(--ease-product), color 150ms var(--ease-product); }
-.auth-icon-button:hover { background: rgb(var(--color-slate-100)); color: rgb(var(--color-slate-900)); }
-
-.auth-status { border-radius: var(--radius-control); }
-.auth-status-error { border: 1px solid rgb(var(--color-danger) / 0.22); background: rgb(var(--color-danger) / 0.06); color: rgb(var(--color-danger)); }
-.auth-status-error-dark { color: rgb(253 164 175); }
-.auth-submit-dark { background: rgb(45 212 191) !important; color: rgb(8 22 34) !important; }
-.auth-submit-dark:hover { background: rgb(94 234 212) !important; }
-.auth-back-dark { color: rgb(148 163 184) !important; }
-.auth-back-dark:hover { background: rgb(255 255 255 / 0.07) !important; color: white !important; }
-
-/* Dashboard'ın operasyonel verisi görünür bir renk hiyerarşisi taşısın.
-   Kartlar yalnızca renkli değil; hover, giriş ve canlı durum sinyaliyle
-   kullanıcıya hangi yüzeyin takip edilebilir olduğunu anlatır. */
-.ui-dashboard-vivid {
-  --dashboard-blue: 14 116 218;
-  --dashboard-amber: 245 158 11;
-  --dashboard-emerald: 16 185 129;
-  --dashboard-red: 244 63 94;
-}
-
-.ui-dashboard-hero {
-  position: relative;
-  isolation: isolate;
-  border-color: rgb(13 125 111 / 0.28);
-  background: linear-gradient(120deg, rgb(7 64 57), rgb(13 125 111) 55%, rgb(56 189 168));
-  box-shadow: 0 12px 28px rgb(13 125 111 / 0.18), inset 0 1px 0 rgb(255 255 255 / 0.24);
-}
-
-.ui-dashboard-hero::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(115deg, transparent 18%, rgb(255 255 255 / 0.18) 42%, transparent 58%);
-  transform: translateX(-125%);
-}
-
-.ui-dashboard-hero::after {
-  content: "";
-  position: absolute;
-  right: 8%;
-  bottom: -24px;
-  width: 44%;
-  height: 70px;
-  border-top: 1px solid rgb(255 255 255 / 0.22);
-  border-radius: 50%;
-  transform: rotate(-4deg);
-  opacity: 0.55;
-  pointer-events: none;
-}
-
-.ui-dashboard-hero > * { position: relative; z-index: 1; }
-.ui-dashboard-hero-eyebrow { color: rgb(204 251 241); }
-.ui-dashboard-hero-title { color: white; text-shadow: 0 1px 2px rgb(0 0 0 / 0.16); }
-.ui-dashboard-hero-date,
-.ui-dashboard-hero-meta { color: rgb(209 250 241 / 0.9); }
-.ui-dashboard-hero-meta { display: inline-flex; align-items: center; gap: 0.45rem; }
-
-.ui-dashboard-live-dot {
-  display: inline-block;
-  width: 0.45rem;
-  height: 0.45rem;
-  border-radius: 999px;
-  background: rgb(167 243 208);
-  box-shadow: 0 0 0 4px rgb(167 243 208 / 0.16);
-}
-
-.ui-dashboard-kpi {
-  isolation: isolate;
-  border-color: rgb(var(--dashboard-tone) / 0.25);
-  background: linear-gradient(135deg, rgb(var(--dashboard-tone) / 0.12), rgb(255 255 255 / 0.98) 76%);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.82), 0 7px 18px rgb(var(--dashboard-tone) / 0.08);
-  transition: border-color 180ms var(--ease-product), box-shadow 180ms var(--ease-product), transform 180ms var(--ease-product), background-color 180ms var(--ease-product);
-}
-
-.ui-dashboard-kpi[data-tone="blue"] { --dashboard-tone: var(--dashboard-blue); }
-.ui-dashboard-kpi[data-tone="amber"] { --dashboard-tone: var(--dashboard-amber); }
-.ui-dashboard-kpi[data-tone="emerald"] { --dashboard-tone: var(--dashboard-emerald); }
-.ui-dashboard-kpi[data-tone="red"] { --dashboard-tone: var(--dashboard-red); }
-
-.ui-dashboard-kpi::before {
-  content: "";
-  position: absolute;
-  inset: 0 0 auto;
-  height: 3px;
-  background: linear-gradient(90deg, rgb(var(--dashboard-tone)), rgb(var(--dashboard-tone) / 0.12));
-  opacity: 0.92;
-}
-
-.ui-dashboard-kpi::after {
-  content: "";
-  position: absolute;
-  inset: -40% auto -40% -18%;
-  width: 18%;
-  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.5), transparent);
-  transform: rotate(18deg) translateX(-160%);
-  pointer-events: none;
-}
-
-.ui-dashboard-kpi:hover {
-  border-color: rgb(var(--dashboard-tone) / 0.48);
-  background: linear-gradient(135deg, rgb(var(--dashboard-tone) / 0.19), rgb(255 255 255 / 0.98) 76%);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.92), 0 13px 26px rgb(var(--dashboard-tone) / 0.15);
-}
-
-.ui-dashboard-kpi-caption { display: flex; align-items: center; gap: 0.2rem; margin-top: 0.65rem; color: rgb(var(--dashboard-tone)); font-size: 0.6875rem; font-weight: 800; opacity: 0.75; }
-.ui-dashboard-panel { position: relative; }
-.ui-dashboard-panel::before { content: ""; position: absolute; inset: 0 18% auto; height: 2px; background: linear-gradient(90deg, rgb(var(--app-primary) / 0.55), transparent); opacity: 0.8; pointer-events: none; }
-
-@keyframes ui-dashboard-hero-sweep { 0%, 62% { transform: translateX(-125%); opacity: 0; } 70% { opacity: 1; } 84%, 100% { transform: translateX(500%); opacity: 0; } }
-@keyframes ui-dashboard-kpi-shine { from { transform: rotate(18deg) translateX(-160%); } to { transform: rotate(18deg) translateX(720%); } }
-@keyframes ui-dashboard-live-pulse { 0%, 100% { opacity: 0.72; box-shadow: 0 0 0 4px rgb(167 243 208 / 0.14); } 50% { opacity: 1; box-shadow: 0 0 0 7px rgb(167 243 208 / 0.03); } }
-@keyframes ui-dashboard-icon-float { 0%, 100% { transform: translateY(0) rotate(0deg); } 50% { transform: translateY(-2px) rotate(-2deg); } }
 @keyframes ui-page-icon-drift { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-1.5px) scale(1.03); } }
 
-/* Randevu ekranı yüksek bilgi yoğunluğunu korurken üst araç çubuğu ve doktor
-   başlıkları renkli bir yön bulma katmanı taşır. */
-.panel-content .randevu-page .randevu-toolbar {
-  position: relative;
-  overflow: hidden;
-  border-color: rgb(var(--app-primary) / 0.2);
-  background: rgb(var(--app-surface));
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.82), var(--shadow-surface);
-}
-
-.panel-content .randevu-page .randevu-toolbar::before {
-  content: "";
-  position: absolute;
-  inset: 0 auto 0 -20%;
-  width: 15%;
-  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.58), transparent);
-  transform: skewX(-18deg);
-  pointer-events: none;
-}
-
-.panel-content .randevu-page .randevu-toolbar > * { position: relative; z-index: 1; }
-
+/* Randevu ekranı yüksek bilgi yoğunluğunu korurken doktor başlıkları
+   renkli bir yön bulma katmanı taşır. */
 .panel-content .randevu-page table.randevu-grid thead th {
   background: linear-gradient(180deg, rgb(var(--app-primary) / 0.075), rgb(var(--app-surface)) 72%);
   border-top-color: rgb(var(--app-primary) / 0.14);
@@ -353,21 +135,9 @@ body {
   color: rgb(var(--color-slate-900));
 }
 
-.panel-content .randevu-page table.randevu-grid th.calendar-doctor-heading::after {
-  content: "";
-  position: absolute;
-  inset: auto 24% 0;
-  height: 3px;
-  border-radius: 999px 999px 0 0;
-  background: linear-gradient(90deg, rgb(var(--app-primary)), rgb(var(--color-warning)));
-  opacity: 0.7;
-}
-
 .panel-content .randevu-page .randevu-appt-card {
   filter: saturate(1.04);
 }
-
-@keyframes ui-toolbar-sweep { 0%, 64% { transform: translateX(0) skewX(-18deg); opacity: 0; } 70% { opacity: 1; } 82%, 100% { transform: translateX(820%) skewX(-18deg); opacity: 0; } }
 
 .ui-surface-raised {
   border: 1px solid rgb(var(--app-border));
@@ -397,31 +167,6 @@ body {
   transition: border-color 140ms var(--ease-product), box-shadow 140ms var(--ease-product), transform 140ms var(--ease-product);
 }
 
-/* Marketing / tab content transitions and CTA improvements */
-.tab-content {
-  opacity: 0;
-  transform: translateY(6px);
-  transition: opacity 280ms var(--ease-product), transform 280ms var(--ease-product);
-}
-.tab-content[data-visible="true"] {
-  opacity: 1;
-  transform: translateY(0);
-}
-
-.marketing-cta {
-  transition: transform 180ms var(--ease-product), box-shadow 180ms var(--ease-product);
-}
-.marketing-cta:focus {
-  outline: 3px solid rgb(var(--color-primary-200) / 0.28);
-  outline-offset: 2px;
-}
-.marketing-cta:hover { transform: translateY(-3px); }
-
-/* Accessible reduced-motion fallback */
-@media (prefers-reduced-motion: reduce) {
-  .tab-content { transition: none !important; transform: none !important; }
-  .marketing-cta { transition: none !important; }
-}
 @media (hover: hover) and (pointer: fine) {
   .ui-surface-interactive:hover {
     border-color: rgb(var(--app-primary) / 0.3);
@@ -576,13 +321,9 @@ body {
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.82), 0 4px 10px rgb(15 23 42 / 0.08);
 }
 
-@media (hover: hover) and (pointer: fine) {
-  .ui-icon-button-premium:hover::before {
-  }
-  .ui-icon-button-premium:hover > svg {
-    filter: drop-shadow(0 2px 2px rgb(var(--app-primary) / 0.18));
-  }
-}
+/* Sözleşme §6: hover'da parlama yok — ikon düğmesindeki ikona hover'da
+   verilen renkli gölge (drop-shadow) kaldırıldı; geri bildirim kenarlık ve
+   zemin değişimidir. */
 
 .ui-badge-premium {
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.55), 0 1px 2px rgb(15 23 42 / 0.04);
@@ -690,27 +431,21 @@ body {
   transition: transform 180ms var(--ease-product), filter 180ms var(--ease-product), background-color 180ms var(--ease-product), border-color 180ms var(--ease-product), box-shadow 180ms var(--ease-product);
 }
 
+/* Üstteki ince ışık çizgisi iç gölge olarak çizilir (köşeye kendiliğinden
+   uyar). Önceden ::before + overflow:hidden + çocuklara z-index:1 ile
+   çiziliyordu: araç çubuğundaki açılır menüler (Muhasebe "Dışa aktar")
+   kırpılıyor, açılan liste alttaki tablonun yapışkan eylem sütununun altında
+   kalıyordu. Çocuklar konumlu kalır (içlerindeki mutlak öğeler kaymasın). */
 .ui-toolbar {
   position: relative;
-  overflow: hidden;
   border: 1px solid rgb(var(--app-border));
   border-radius: var(--radius-surface);
   background: rgb(var(--app-surface));
-  box-shadow: var(--shadow-rest);
-}
-
-.ui-toolbar::before {
-  content: "";
-  position: absolute;
-  inset: 0 0 auto;
-  height: 1px;
-  background: rgb(255 255 255 / 0.8);
-  pointer-events: none;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.8), var(--shadow-rest);
 }
 
 .ui-toolbar > * {
   position: relative;
-  z-index: 1;
 }
 
 .ui-form-field input:not([type="checkbox"]):not([type="radio"]),
@@ -729,35 +464,18 @@ body {
   letter-spacing: 0;
 }
 
+/* Sözleşme §6: süs gradyan şeridi yok. FormSection'ın üstündeki renkli şerit
+   ve onu köşede kırpmak için konan overflow:hidden kaldırıldı — bölüm
+   içindeki açılır listeler (SearchSelect, PatientPicker) kırpılmasın. */
 .ui-form-section {
   position: relative;
-  overflow: hidden;
 }
 
-.ui-form-section::before {
-  content: "";
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 2px;
-  background: linear-gradient(90deg, rgb(var(--app-primary) / 0.55), rgb(var(--color-warning) / 0.28), transparent);
-  opacity: 0.8;
-}
-
-.ui-error-banner {
-  box-shadow: inset 3px 0 0 rgb(var(--color-danger));
-}
-
+/* Sözleşme §6: her pencerenin başlığındaki renkli gradyan şerit kaldırıldı;
+   pencere kenarlığı ve başlık çizgisi katmanı zaten ayırıyor. */
 .ui-modal-header {
   position: relative;
   overflow: hidden;
-}
-
-.ui-modal-header::before {
-  content: "";
-  position: absolute;
-  inset: 0 28% auto 0;
-  height: 2px;
-  background: linear-gradient(90deg, rgb(var(--app-primary) / 0.72), rgb(var(--color-warning) / 0.26), transparent);
 }
 
 .ui-modal-module-icon {
@@ -789,19 +507,12 @@ body {
   animation: ui-modal-backdrop-in 140ms var(--ease-product);
 }
 
+/* Onay penceresi de Modal gibi şeritsiz (sözleşme §6). */
 .ui-confirm-panel {
   position: relative;
   overflow: hidden;
   box-shadow: var(--shadow-floating);
   animation: ui-modal-panel-in 170ms var(--ease-product);
-}
-
-.ui-confirm-panel::before {
-  content: "";
-  position: absolute;
-  inset: 0 26% auto 0;
-  height: 2px;
-  background: linear-gradient(90deg, rgb(var(--app-primary) / 0.72), rgb(var(--color-warning) / 0.28), transparent);
 }
 
 .ui-confirm-actions {
@@ -1090,9 +801,8 @@ body {
   .group:hover .module-icon[data-active="true"] {
     background: rgb(var(--app-primary) / 0.16);
   }
-  .group:hover .module-icon-img {
-    filter: saturate(1.32) drop-shadow(0 3px 5px rgb(15 23 42 / 0.2));
-  }
+  /* Sözleşme §6: hover'da ikon parlamaz/büyüyen gölge almaz; geri bildirim
+     yalnız yukarıdaki zemin tonudur. */
   .group:hover .module-icon::after,
   a:hover .module-icon::after,
   button:hover .module-icon::after {
@@ -1118,10 +828,15 @@ button:focus-visible .module-icon {
   100% { opacity: 0; transform: translateX(120%); }
 }
 
+/* Kapalı balon display:none: saydam ama yerleşimdeki balon sağ kenardaki
+   ikon düğmesinde sayfayı 16–29 px yatay taşırıyordu. Açılınca ekran
+   kenarına taşıyorsa Tooltip.tsx --ui-tooltip-shift ile içeri kaydırır. */
 .ui-tooltip {
   pointer-events: none;
   position: absolute;
-  z-index: 400;
+  z-index: var(--z-tooltip);
+  display: none;
+  margin-left: var(--ui-tooltip-shift, 0px);
   max-width: 15rem;
   white-space: nowrap;
   border: 1px solid rgb(var(--color-slate-700));
@@ -1133,24 +848,40 @@ button:focus-visible .module-icon {
   font-size: 0.6875rem;
   font-weight: 650;
   line-height: 1rem;
-  opacity: 0;
-  transform: translateY(3px) scale(0.96);
-  transition: opacity 120ms var(--ease-product), transform 120ms var(--ease-product);
 }
 
-/* Hover'da kısa, tutarlı bir gecikme sonrası belirir (yanlışlıkla üzerinden
-   geçilen her ikonda anında tooltip patlamasını önler) — klavye ile
-   focus'ta ise GECİKME YOK (klavye kullanıcısı için anında geri bildirim
-   erişilebilirlik açısından önemli). */
-@media (hover: hover) and (pointer: fine) {
+/* Görünme animasyonu: transform yerine bağımsız translate/scale — transform,
+   Tooltip.tsx'teki -translate-x-1/2 konumlamasını eziyordu. */
+@keyframes ui-tooltip-in {
+  from { opacity: 0; translate: 0 3px; scale: 0.96; }
+  to { opacity: 1; translate: 0 0; scale: 1; }
+}
+
+/* Fareyle kısa, tutarlı bir gecikme sonrası belirir (yanlışlıkla üzerinden
+   geçilen her ikonda anında balon patlamasın). Yalnız üzerine gelinebilen
+   cihazda: dokunmatikte dokunuş :hover'ı takılı bırakıp balonu açık tutuyordu. */
+@media (hover: hover) {
   .ui-tooltip-trigger:hover .ui-tooltip {
-    transition-delay: 350ms;
+    display: block;
+    animation: ui-tooltip-in 120ms var(--ease-product) 350ms both;
   }
 }
-.ui-tooltip-trigger:hover .ui-tooltip,
-.ui-tooltip-trigger:focus-within .ui-tooltip {
-  opacity: 1;
-  transform: translateY(0) scale(1);
+/* Klavye odağında GECİKME YOK (anında geri bildirim). :focus-visible —
+   fareyle ya da dokunarak basılan düğmede balon açılmaz. */
+.ui-tooltip-trigger:has(:focus-visible) .ui-tooltip {
+  display: block;
+  animation: ui-tooltip-in 120ms var(--ease-product) both;
+}
+/* Esc ile kapatılan balon, fare ayrılana ya da odak çıkana kadar gizli kalır
+   (WCAG 1.4.13; Tooltip.tsx data-tip-dismissed). */
+.ui-tooltip-trigger[data-tip-dismissed] .ui-tooltip {
+  display: none;
+}
+/* Tetikleyicinin açtığı pencere/menü açıkken (ör. üst bardaki zil, bekleme
+   salonu) balon gösterilmez: fare üzerinde kalınca açık pencerenin üstüne
+   biniyordu. */
+.ui-tooltip-trigger:has([aria-expanded="true"]) .ui-tooltip {
+  display: none;
 }
 
 /* Panel readability floor: eski sayfalardaki çok küçük yazı ve dar kontrolleri
@@ -1162,6 +893,8 @@ button:focus-visible .module-icon {
   line-height: 1rem !important;
 }
 
+/* Dokunma hedefi tabanı. Kendi ölçüsünü taşıyan ortak kompakt kontrollerin
+   istisnaları dosyanın sonunda ("Kendi ölçüsünü taşıyan..."). */
 .panel-content button,
 .panel-content [role="button"] {
   min-height: 36px;
@@ -1182,8 +915,10 @@ button:focus-visible .module-icon {
 /* Dokunmatikte rahat hedef alanı — metin/select/textarea input'ları en az
    40px yükseklikte olsun (ör. text-xs kompakt filtre inputları hariç
    tutulmasın diye min-height, height değil — mevcut daha büyük inputları
-   küçültmez, yalnız çok küçük olanları büyütür). */
-.panel-content input:not([type="checkbox"]):not([type="radio"]),
+   küçültmez, yalnız çok küçük olanları büyütür). Kaydırıcı, renk, dosya ve
+   gizli alan metin kutusu değildir (bkz. dosya sonundaki genel kural);
+   :where() özgüllüğü artırmaz. */
+.panel-content input:not([type="checkbox"]):not([type="radio"]):where(:not([type="range"], [type="color"], [type="file"], [type="hidden"])),
 .panel-content select {
   min-height: 40px;
 }
@@ -1248,6 +983,13 @@ button:focus-visible .module-icon {
   opacity: 0.5;
 }
 
+/* Kurum rengi panel dışında da geçerli: pencere/yan panel (gövdeye çizilir),
+   giriş ekranı. Önceden ListTable'ın seçim kutusu pencerede tarayıcı mavisiyle
+   görünüyordu. Özgüllük yalnız `input` — accent-* sınıfları yine ezer. */
+input:where([type="checkbox"], [type="radio"], [type="range"]) {
+  accent-color: rgb(var(--app-primary));
+}
+
 /* FormField `success` durumu — kısa, sakin bir onay hissi. */
 .panel-content input[data-success="true"],
 .panel-content select[data-success="true"],
@@ -1269,13 +1011,44 @@ button:focus-visible .module-icon {
   animation: ui-field-message-in 160ms var(--ease-product);
 }
 
-.panel-content table {
+/* ListTable yapışkan eylem sütunu (md+): hücre opaktır (yatay kayan içerik
+   altından görünmez) ve satırın zeminini aynen taşır — üzerine gelme,
+   seçim, odak ve rowClassName vurgusu (ör. geciken satırın kırmızısı)
+   hücrede kesilmez. Katmanlar: ::before opak yüzey, ::after satırın
+   (yarı saydam) zemini; ikisi de içeriğin altında. */
+@media (min-width: 768px) {
+  .ui-list-table td.ui-list-sticky-cell {
+    background-color: inherit;
+  }
+  .ui-list-table td.ui-list-sticky-cell::before,
+  .ui-list-table td.ui-list-sticky-cell::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+  }
+  .ui-list-table td.ui-list-sticky-cell::before {
+    background: rgb(var(--app-surface));
+  }
+  .ui-list-table td.ui-list-sticky-cell::after {
+    background-color: inherit;
+  }
+}
+
+/* Tablo tabanı ListTable'a (.ui-list-table) da bağlı: pencere ve yan panel
+   gövdeye (portal) çizildiği için .panel-content dışında kalıyor, aynı liste
+   pencerede 14px koyu başlıkla (sıralanabilir sütun ise büyük harfle) farklı
+   görünüyordu. Sayfada iki seçici aynı değeri verir; görünüm değişmez. */
+.panel-content table,
+.ui-list-table table {
   width: 100%;
   line-height: 1.5;
   font-size: 0.8125rem;
 }
 
-.panel-content thead {
+.panel-content thead,
+.ui-list-table thead {
   background: transparent;
 }
 
@@ -1288,7 +1061,8 @@ button:focus-visible .module-icon {
    calendar-time-heading gibi özel sınıflar (bu kuraldan sonra tanımlı,
    dolayısıyla hâlâ kazanıyor) randevu ızgarasında bilerek büyük harf
    kullanmaz. */
-.panel-content th {
+.panel-content th,
+.ui-list-table th {
   color: rgb(var(--color-slate-500));
   font-size: 0.6875rem;
   font-weight: 700;
@@ -1296,7 +1070,8 @@ button:focus-visible .module-icon {
   text-transform: uppercase;
 }
 
-.panel-content td {
+.panel-content td,
+.ui-list-table td {
   color: rgb(var(--color-slate-700));
 }
 
@@ -1308,20 +1083,12 @@ button:focus-visible .module-icon {
   text-transform: none;
 }
 
-.panel-content .calendar-time-heading,
-.panel-content .calendar-time-cell {
+.panel-content .calendar-time-heading {
   color: rgb(var(--color-slate-800));
   font-size: 0.8125rem;
   font-weight: 700;
   letter-spacing: 0;
   text-transform: none;
-}
-
-/* Sol saat sütunu, randevu ızgarasından hafifçe ayrışan kendi yüzeyini
-   taşısın — önceden diğer hücrelerle aynı düz beyazdı, gözle takip
-   etmeyi zorlaştırıyordu (bkz. kullanıcı geri bildirimi). */
-.panel-content .calendar-time-cell {
-  background: rgb(var(--color-slate-50) / 0.7) !important;
 }
 
 .panel-content th,
@@ -1408,7 +1175,9 @@ button:focus-visible .module-icon {
   border-color: rgb(var(--color-slate-200));
 }
 
-.panel-content .randevu-page table {
+/* Yalnız takvim ızgarası sabit sütunlu; sayfadaki liste görünümü (ListTable)
+   eşit sütunlara zorlanmasın. */
+.panel-content .randevu-page table.randevu-grid {
   table-layout: fixed;
 }
 
@@ -1426,134 +1195,6 @@ button:focus-visible .module-icon {
 
 .panel-content .randevu-page td button {
   min-height: 24px;
-}
-
-.panel-content .randevu-page .randevu-toolbar button,
-.panel-content .randevu-page .randevu-toolbar [role="button"],
-.panel-content .randevu-page .randevu-toolbar summary {
-  min-height: 32px;
-}
-
-/* Boş randevu slotları her satırda tekrar eden metinlerle doldurulmaz.
-   Hücreye gelindiğinde nazik bir eylem belirir; klavye odağında da aynıdır. */
-.panel-content .randevu-page .randevu-slot-create {
-  display: inline-flex;
-  min-height: 24px;
-  width: 100%;
-  align-items: center;
-  justify-content: center;
-  gap: 0;
-  border: 1px dashed transparent;
-  border-radius: 0.375rem;
-  background: transparent;
-  color: rgb(var(--color-slate-400));
-  opacity: 0;
-}
-
-.panel-content .randevu-page td:hover .randevu-slot-create,
-.panel-content .randevu-page .randevu-slot-create:focus-visible {
-  gap: 0.375rem;
-  border-color: rgb(var(--app-primary) / 0.3);
-  background: rgb(var(--app-primary) / 0.06);
-  color: rgb(var(--app-primary));
-  opacity: 1;
-}
-
-.panel-content .randevu-page .randevu-slot-create-label {
-  max-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  opacity: 0;
-  transition: max-width 150ms ease, opacity 120ms ease;
-}
-
-.panel-content .randevu-page td:hover .randevu-slot-create-label,
-.panel-content .randevu-page .randevu-slot-create:focus-visible .randevu-slot-create-label {
-  max-width: 120px;
-  opacity: 1;
-}
-
-/* Dokunmatik cihazlarda hover olayı hiç tetiklenmez — boş slot butonu
-   görünmeden dokunmak zorunda kalınır ve 24px yükseklik ~40px önerilen
-   dokunma hedefinin altında kalır (bkz. denetim raporu). */
-@media (hover: none) and (pointer: coarse) {
-  .panel-content .randevu-page .randevu-slot-create {
-    min-height: 40px;
-    opacity: 0.55;
-  }
-
-  .panel-content .randevu-page .randevu-slot-create-label {
-    max-width: 120px;
-    opacity: 1;
-  }
-}
-
-.panel-content .randevu-page .randevu-slot-create-icon {
-  font-size: 1rem;
-  font-weight: 700;
-  line-height: 1;
-}
-
-.panel-content .randevu-page .randevu-appt-card-spanning {
-  margin-bottom: 0;
-  overflow: hidden;
-}
-
-.panel-content .randevu-page .randevu-appt-card-spanning .randevu-appt-time {
-  display: none;
-}
-
-.panel-content .randevu-page .randevu-appt-card-compact {
-  padding-left: 0.375rem;
-  padding-right: 0.375rem;
-}
-
-.panel-content .randevu-page .randevu-appt-card-compact .randevu-appt-patient {
-  font-weight: 750;
-}
-
-.panel-content .randevu-page .randevu-appt-card-compact .randevu-appt-treatment {
-  padding-left: 0;
-}
-
-.panel-content .randevu-page .randevu-slot-create-floating {
-  position: relative;
-  z-index: 30;
-  width: auto;
-  min-width: 24px;
-  margin-left: auto;
-  padding-left: 0.375rem;
-  padding-right: 0.375rem;
-}
-
-.panel-content .randevu-page .randevu-slot-add-mini {
-  position: absolute;
-  top: 3px;
-  right: 3px;
-  z-index: 40;
-  display: inline-flex;
-  min-height: 22px;
-  width: 22px;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid rgb(var(--app-primary) / 0.28);
-  border-radius: 9999px;
-  background: rgb(var(--color-white, 255 255 255) / 0.96);
-  color: rgb(var(--app-primary));
-  font-size: 0.875rem;
-  font-weight: 800;
-  line-height: 1;
-  box-shadow: 0 1px 4px rgb(15 23 42 / 0.12);
-  opacity: 0.88;
-  transition: transform 120ms var(--ease-product), opacity 120ms var(--ease-product),
-    box-shadow 120ms var(--ease-product), border-color 120ms var(--ease-product);
-}
-
-.panel-content .randevu-page .randevu-slot-add-mini:hover,
-.panel-content .randevu-page .randevu-slot-add-mini:focus-visible {
-  border-color: rgb(var(--app-primary) / 0.55);
-  box-shadow: 0 4px 10px rgb(var(--app-primary) / 0.18);
-  opacity: 1;
 }
 
 /* İnce fakat fare ve dokunmatik yüzeyle rahat tutulabilen kaydırma çubuğu. */
@@ -1585,8 +1226,12 @@ textarea,
   transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
 }
 
-button:not(:disabled):active,
-[role="button"]:not([aria-disabled="true"]):active {
+/* Basınca 1px iner. Özgüllük sıfır (:where): kendi transform'unu taşıyan
+   düğme bu kuralla ezilmez. Önceden arama kutusundaki temizle (×) ve giriş
+   ekranındaki "şifreyi göster" düğmesi -translate-y-1/2 ile ortalandığı için
+   basılı tutulunca yarı boyu kadar aşağı sıçrıyordu. Button/IconButton kendi
+   active:translate-y-px sınıfını kullanır. */
+:where(button:not(:disabled):active, [role="button"]:not([aria-disabled="true"]):active) {
   transform: translateY(1px);
 }
 
@@ -1616,7 +1261,13 @@ textarea:disabled {
   cursor: not-allowed;
 }
 
-input,
+/* Metin girişleri en az 40px (dokunma hedefi). Onay kutusu, radyo,
+   kaydırıcı, renk, dosya ve gizli alan metin kutusu değildir: 40px'e
+   zorlanınca onay kutusu 16×40 görünmez bir kutu oluyor, yanındaki etiketle
+   hizası ve seçimli tablo satırlarının yüksekliği bozuluyordu (Checkbox
+   bileşeni bunu !min-h-0 ile aşıyordu). :where() özgüllüğü artırmaz —
+   sayfalardaki min-h-* sınıfları eskisi gibi bu kuralı ezer. */
+input:where(:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="hidden"])),
 select,
 textarea {
   min-height: 40px;
@@ -1800,47 +1451,7 @@ th {
   transform: scale(0.985);
 }
 
-/* Duyurular küçük bir editoryal kart gibi davranır: üzerinde durunca
-   başlık ağırlaşmaz, yalnızca ikon ve kenar ışığı kısa bir tepki verir. */
-.ui-announcement-item {
-  position: relative;
-  overflow: hidden;
-  transition: border-color 160ms var(--ease-product), box-shadow 160ms var(--ease-product), transform 160ms var(--ease-product), background-color 160ms var(--ease-product);
-}
-.ui-announcement-item::after {
-  content: "";
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 2px;
-  background: linear-gradient(180deg, rgb(245 158 11), rgb(14 165 233));
-  opacity: 0;
-  transform: scaleY(0.4);
-  transition: opacity 160ms var(--ease-product), transform 160ms var(--ease-product);
-}
-.ui-announcement-mark {
-  transition: transform 180ms var(--ease-product), background-color 180ms var(--ease-product), box-shadow 180ms var(--ease-product);
-}
-@media (hover: hover) and (pointer: fine) {
-  .ui-announcement-item:hover {
-    border-color: rgb(245 158 11 / 0.28);
-    background: linear-gradient(105deg, rgb(255 251 235 / 0.78), rgb(255 255 255));
-    box-shadow: 0 5px 14px rgb(245 158 11 / 0.08);
-  }
-  .ui-announcement-item:hover::after {
-    opacity: 0.9;
-    transform: scaleY(1);
-  }
-  .ui-announcement-item:hover .ui-announcement-mark {
-    background: rgb(254 243 199);
-    box-shadow: 0 3px 8px rgb(245 158 11 / 0.16);
-  }
-}
-
-/* Randevu takvimi: boş slot reveal'ı artık anlık değil, yumuşak geçişli. */
-.panel-content .randevu-page .randevu-slot-create {
-  transition: opacity 140ms var(--ease-product), border-color 140ms var(--ease-product),
-    background-color 140ms var(--ease-product), color 140ms var(--ease-product);
-}
+/* Randevu takvimi: randevu kartı basılınca kısa tepki verir. */
 .panel-content .randevu-page .randevu-appt-card {
   transition: transform 140ms var(--ease-product), box-shadow 140ms var(--ease-product);
 }
@@ -2056,12 +1667,8 @@ th {
   body {
     background: rgb(var(--app-bg));
   }
-
-  input,
-  select,
-  textarea {
-    font-size: 16px;
-  }
+  /* Giriş alanlarının mobil 16px yazı tabanı dosyanın sonunda (ortak
+     kontrol sınıflarından sonra gelmesi gerekiyor). */
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -2108,6 +1715,7 @@ th {
 .ui-search-input::-webkit-search-cancel-button { display: none; }
 
 .ui-tabs {
+  position: relative;
   display: flex;
   width: fit-content;
   max-width: 100%;
@@ -2116,7 +1724,12 @@ th {
   scrollbar-width: none;
   border: 1px solid rgb(var(--color-slate-200) / 0.8);
   border-radius: 0.625rem;
-  background: rgb(var(--color-slate-100));
+  background:
+    linear-gradient(to right, rgb(var(--color-slate-100)) 30%, rgb(var(--color-slate-100) / 0)) left center / 24px 100% no-repeat local,
+    linear-gradient(to left, rgb(var(--color-slate-100)) 30%, rgb(var(--color-slate-100) / 0)) right center / 24px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, rgb(15 23 42 / 0.16), transparent) left center / 10px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, rgb(15 23 42 / 0.16), transparent) right center / 10px 100% no-repeat scroll,
+    rgb(var(--color-slate-100));
   padding: 0.25rem;
 }
 .ui-tabs::-webkit-scrollbar { display: none; }
@@ -2140,8 +1753,9 @@ th {
   color: rgb(var(--app-primary));
   box-shadow: 0 1px 2px rgb(15 23 42 / 0.08), 0 1px 1px rgb(15 23 42 / 0.04);
 }
-.ui-tab:focus-visible { outline: 2px solid rgb(var(--app-primary) / 0.5); outline-offset: 1px; }
-.ui-tab:disabled { cursor: not-allowed; opacity: 0.45; }
+/* Odak halkası tam marka rengi: %50'si gri zeminde ~2:1 kalıyordu (WCAG 1.4.11 en az 3:1). */
+.ui-tab:focus-visible { outline: 2px solid rgb(var(--app-primary)); outline-offset: 1px; }
+.ui-tab:disabled { cursor: not-allowed; opacity: 0.5; }
 .ui-tab-count {
   display: inline-flex;
   min-width: 1.25rem;
@@ -2158,6 +1772,78 @@ th {
 }
 .panel-content .ui-tabs-sm .ui-tab { min-height: 32px; }
 
-/* Switch: .panel-content button'ın 36px alt yükseklik kuralı anahtarı
-   bozmasın (anahtarın kendi 24px yüksekliği var; etiketi tıklanabilir). */
-.panel-content .ui-switch { min-height: 0; }
+/* Input/Select/SearchInput size="sm": `.panel-content input { font-size }`
+   (daha özgül) küçük boyutu panelde 14px'e geri çekiyordu; pencerede 13px,
+   panelde 14px görünüyordu. */
+.panel-content .ui-control-sm { font-size: 0.8125rem; }
+
+/* Kendi ölçüsünü taşıyan ortak kompakt kontroller: `.panel-content button
+   { min-height: 36px }` tabanı bunları bozmasın.
+   - .ui-switch: anahtarın kendi 24px yüksekliği var; etiketi tıklanabilir.
+   - .ui-icon-button-premium: IconButton ve ActionMenu "…" — kare kalır
+     (önceden 28×36 / 34×36 dik dikdörtgendi).
+   - .ui-search-clear: arama kutusundaki temizle (×), 28px.
+   - .ui-table-sort-button: ListTable'da sıralanabilir sütun başlığı; taban
+     başlık satırını ~20px şişiriyordu. Yazı kalınlığı da diğer başlıklarla
+     aynı olsun (th: 700; panel düğme kuralı 600 veriyordu).
+   Yeni kompakt bileşenler bunun yerine kendi sınıfında !min-h-0 kullanır. */
+.panel-content .ui-switch,
+.panel-content .ui-icon-button-premium,
+.panel-content .ui-search-clear,
+.panel-content .ui-table-sort-button {
+  min-height: 0;
+}
+.panel-content .ui-table-sort-button { font-weight: inherit; }
+
+/* Dokunmatik ekranda görünüm aynı kalır; dokunma alanı görünmez bir kenarla
+   genişler. inset iç kenardan (padding kutusu) ölçülür: 1px kenarlıklı 28px
+   ikon düğmesi -5px ile 36px olur; kenarlıksız temizle (×) -4px ile 36px;
+   sıralama başlığı başlık hücresinin yüksekliğine yayılır. */
+/* Pencere ve çekmece gövdeye (portal) çizildiği için .panel-content dışında
+   kalır; dokunma alanı genişletmesi orada da geçerli olsun diye seçiciler
+   panelle sınırlanmaz.
+   .ui-touch-target: görünüşü 36px'ten küçük kalması gereken kontrol (sm çip,
+   sm sekme, şerit içi "Yeniden dene", bildirim kapat ×) — dokunma alanı
+   ortalanmış en az 36×36px olur, yan öğeye taşmaz (aradaki boşluk ≥ 4px). */
+@media (pointer: coarse) {
+  .ui-icon-button-premium::after,
+  .ui-search-clear::after,
+  .ui-table-sort-button::after,
+  .ui-switch::after {
+    content: "";
+    position: absolute;
+  }
+  .ui-icon-button-premium::after { inset: -5px; }
+  .ui-search-clear::after { inset: -4px; }
+  .ui-table-sort-button { position: relative; }
+  .ui-table-sort-button::after { inset: -10px -4px; }
+  /* Anahtar 24px; satırda etiketi olmadan (SettingsRow) da 36px dokunma alanı. */
+  .ui-switch::after { inset: -7px -2px; }
+  .ui-touch-target { position: relative; }
+  .ui-touch-target::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 100%;
+    height: 100%;
+    min-width: 36px;
+    min-height: 36px;
+    transform: translate(-50%, -50%);
+  }
+}
+
+/* iOS Safari 16px'ten küçük yazılı alana odaklanınca sayfayı yakınlaştırır.
+   Bu taban önceden de vardı ama `.ui-control`, `.panel-content input` ve
+   text-sm gibi daha özgül sınıflara yeniliyordu (etkisizdi); :root ile
+   özgüllüğü yükseltildi ve ortak kontrol sınıflarından sonraya alındı.
+   Kural bir ALT sınırdır: 16px'ten büyük yazılı alan (doğrulama kodu
+   text-lg) küçültülmez. :where() özgüllüğü artırmaz. */
+@media (max-width: 640px) {
+  :root input:where(:not(.text-lg, .text-xl, .text-2xl, .text-3xl)),
+  :root select:where(:not(.text-lg, .text-xl, .text-2xl, .text-3xl)),
+  :root textarea:where(:not(.text-lg, .text-xl, .text-2xl, .text-3xl)),
+  :root .ui-control:where(:not(.text-lg, .text-xl, .text-2xl, .text-3xl)) {
+    font-size: 16px;
+  }
+}

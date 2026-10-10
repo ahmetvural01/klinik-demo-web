@@ -76,6 +76,10 @@ export async function PUT(
     updateData.mustChangePassword = false;
     updateData.tokenVersion = { increment: 1 };
   }
+  // Rol oturum belirtecinde taşınır; rol değişince açık oturumlar kapanır ki
+  // yetkisi düşürülen kişi eski rolüyle çalışmaya devam etmesin.
+  const roleChanged = Boolean(body.role) && body.role !== existingUser.role;
+  if (roleChanged) updateData.tokenVersion = { increment: 1 };
 
   let updated;
   try {
@@ -137,7 +141,7 @@ export async function PUT(
     throw error;
   }
 
-  if (body.password || (existingUser.isActive && body.isActive === false)) {
+  if (body.password || roleChanged || (existingUser.isActive && body.isActive === false)) {
     invalidateUserSessionCache(params.userId);
   }
 

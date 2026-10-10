@@ -5,6 +5,7 @@ import { dispatchPatientMessage } from "@/lib/notification-dispatch";
 import { requireActiveBranch } from "@/lib/branch-context";
 import { maskPatientName } from "@/lib/audit-mask";
 import { canMessageOnWhatsapp } from "@/lib/whatsapp-consent";
+import { CONSENT_PREFERENCE_SELECT, deriveSmsConsent, latestConsentTokens } from "../_lib/consent-status";
 
 function renderTemplate(template: string, vars: Record<string, string>) {
   return template.replace(/{{\s*(\w+)\s*}}/g, (_, key: string) => vars[key] ?? "");
@@ -27,14 +28,19 @@ export async function GET(request: NextRequest) {
   const [patient, institution] = await Promise.all([
     prisma.patient.findFirst({
       where: { id: patientId, institutionId: auth.user.institutionId, homeBranchId: activeBranch.branchId, archivedAt: null },
-      select: { id: true, phone: true, whatsappOptInAt: true, whatsappOptOutAt: true, smsPreference: { select: { status: true } } },
+      select: { id: true, phone: true, whatsappOptInAt: true, whatsappOptOutAt: true, smsPreference: CONSENT_PREFERENCE_SELECT },
     }),
     prisma.institution.findUnique({ where: { id: auth.user.institutionId }, select: { smsBalance: true } }),
   ]);
   if (!patient) return NextResponse.json({ message: "Hasta bulunamadı." }, { status: 404 });
+  // Ekranda hasta dosyası ve izin özetiyle aynı ad görünsün: hiç gitmemiş
+  // izin SMS'i "Onay bekliyor" değil "İzin SMS'i gitmedi" olarak döner.
+  const tokens = patient.smsPreference?.status === "PENDING"
+    ? await latestConsentTokens(auth.user.institutionId, [patient.id])
+    : null;
   return NextResponse.json({
     hasPhone: Boolean(patient.phone),
-    smsConsent: patient.smsPreference?.status || "NONE",
+    smsConsent: deriveSmsConsent(patient.smsPreference, tokens?.get(patient.id)),
     whatsappConsent: canMessageOnWhatsapp(patient),
     smsBalance: institution?.smsBalance ?? 0,
   });

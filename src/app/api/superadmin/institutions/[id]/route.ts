@@ -52,30 +52,43 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ id: stri
     prisma.invoice.findMany({
       where: { institutionId: params.id, status: { in: ["PENDING", "OVERDUE"] } },
       orderBy: [{ dueDate: "asc" }, { createdAt: "asc" }],
-      include: { reminders: { select: { sentAt: true }, orderBy: { sentAt: "desc" }, take: 1 } },
+      include: { reminders: { select: { sentAt: true, status: true }, orderBy: { sentAt: "desc" }, take: 1 } },
     }),
     prisma.invoice.findMany({
       where: { institutionId: params.id, status: { in: ["PAID", "CANCELLED"] } },
       orderBy: { createdAt: "desc" },
       take: 20,
     }),
-    prisma.invoiceReminder.groupBy({ by: ["invoiceId"], where: { institutionId: params.id }, _count: { _all: true } }),
+    prisma.invoiceReminder.groupBy({ by: ["invoiceId", "status"], where: { institutionId: params.id }, _count: { _all: true } }),
   ]);
   const summary = summarizeInvoices(allInvoices, now);
-  const reminderCountById = new Map(reminderCounts.map((row) => [row.invoiceId, row._count._all]));
+  // Hatırlatma sayısı yalnız ULAŞAN (SENT) gönderimleri sayar. Önceden SMTP
+  // kapalıyken 24 başarısız deneme "24 hatırlatma" görünüyor, kliniğe hiç
+  // ulaşmamış hatırlatma ulaşmış sanılıyordu (canlı test H3).
+  const sentById = new Map<string, number>();
+  const failedById = new Map<string, number>();
+  for (const row of reminderCounts) {
+    const target = row.status === "SENT" ? sentById : failedById;
+    target.set(row.invoiceId, (target.get(row.invoiceId) ?? 0) + row._count._all);
+  }
   const invoices = [
-    ...openInvoices.map(({ reminders, ...invoice }) => ({ ...invoice, lastReminderAt: reminders[0]?.sentAt ?? null })),
-    ...closedInvoices.map((invoice) => ({ ...invoice, lastReminderAt: null })),
+    ...openInvoices.map(({ reminders, ...invoice }) => ({ ...invoice, lastReminderAt: reminders[0]?.sentAt ?? null, lastReminderStatus: reminders[0]?.status ?? null })),
+    ...closedInvoices.map((invoice) => ({ ...invoice, lastReminderAt: null, lastReminderStatus: null })),
   ].map((invoice) => ({
     ...invoice,
     amount: Number(invoice.amount),
     status: deriveInvoiceStatus(invoice, now),
-    reminderCount: reminderCountById.get(invoice.id) ?? 0,
+    reminderCount: sentById.get(invoice.id) ?? 0,
+    failedReminderCount: failedById.get(invoice.id) ?? 0,
   }));
 
+  // WhatsApp durumu SMS Yönetimi › WhatsApp listesiyle AYNI kuraldan okunur:
+  // QR ile bağlanan kendi numara (WHATSAPP_WEB) ya da resmi Meta bağlantısı,
+  // en son güncellenen. Önceden yalnız META_EMBEDDED aranıyordu; QR ile bağlı
+  // klinik burada "Bağlanmadı", WhatsApp sekmesinde "Bağlı" görünüyordu.
   const whatsappProvider = await prisma.whatsappProviderConfig.findFirst({
-    where: { institutionId: params.id, code: "META_EMBEDDED" },
-    orderBy: [{ isActive: "desc" }, { priority: "asc" }, { createdAt: "asc" }],
+    where: { institutionId: params.id, code: { in: ["WHATSAPP_WEB", "META_EMBEDDED"] } },
+    orderBy: { updatedAt: "desc" },
     select: {
       id: true,
       code: true,
@@ -90,9 +103,19 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ id: stri
   });
 
   const activeUsers = institution.users.filter((user) => user.isActive);
+  // Klinik listesindeki "yetkili" ile aynı kural: sahip yoksa ilk aktif klinik
+  // yöneticisi. Önceden liste "AYŞE FATMA", dosya "Klinik yöneticisi
+  // atanmamış" diyordu (canlı test H5).
+  const firstManager = activeUsers.find((user) => user.role === "YONETICI");
+  const contact = institution.owner
+    ? { fullName: institution.owner.fullName, email: institution.owner.email, isOwner: true }
+    : firstManager
+      ? { fullName: firstManager.fullName, email: firstManager.email, isOwner: false }
+      : null;
 
   return NextResponse.json({
     ...institution,
+    contact,
     invoices,
     // Prisma Decimal JSON'da metin olarak gider; ekranda tutar ve gerçek SMS
     // adedi (paket × adet) gösterilir.

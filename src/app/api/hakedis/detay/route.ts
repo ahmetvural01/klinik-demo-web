@@ -25,47 +25,61 @@ export const GET = withApiTiming("hakedis-detay", async function GET(req: NextRe
     return NextResponse.json({ message: "Bu işlem için yetkiniz yok." }, { status: 403 });
   }
 
-  const doctor = await findEligibleDoctor({ doctorId, institutionId: auth.user.institutionId, branchId: branch.branchId });
-  if (!doctor) {
-    return NextResponse.json({ message: "Doktor bulunamadı" }, { status: 404 });
+  try {
+    const doctor = await findEligibleDoctor({ doctorId, institutionId: auth.user.institutionId, branchId: branch.branchId });
+    if (!doctor) {
+      return NextResponse.json({ message: "Doktor bulunamadı" }, { status: 404 });
+    }
+
+    // Fallback: doktorun GÜNCEL oranı — sadece bu ay için hiç oran geçmişi
+    // yoksa kullanılır. Aksi halde breakdown, o ayda gerçekte geçerli olan
+    // orana göre hesaplanır (bkz. getDoctorRatesForMonth).
+    const currentRates = {
+      kkYuzde: Number(doctor.kkYuzde ?? 3),
+      genelYuzde: Number(doctor.genelYuzde ?? 15),
+      maasYuzde: Number(doctor.maasYuzde ?? 40),
+    };
+    const { start, end } = monthRangeUtc(year, month);
+    // Hakediş ay kapandıktan sonra ödenir: o aya etiketlenen ödeme sonraki
+    // aylarda kaydedilir. Ödenen, ayın sonunda değil bugün kesilirse "Ödenen"
+    // ödenmiş ayda da ₺0 görünüyordu (liste aynı ayı "Ödendi" gösterirken).
+    const paidUntil = new Date(Math.max(end.getTime(), Date.now()));
+
+    const [hakedisRows, odenenMap] = await Promise.all([
+      computeDoctorMonthlyHakedis({ doctorId, institutionId: auth.user.institutionId, branchId: branch.branchId, rates: currentRates, rangeStart: start, rangeEnd: end }),
+      computeDoctorMonthlyOdenen({ doctorId, institutionId: auth.user.institutionId, branchId: branch.branchId, rangeStart: start, rangeEnd: paidUntil }),
+    ]);
+    const monthRow = hakedisRows.find((r) => r.year === year && r.month === month);
+    // Satırlar ay hesabının seçtiği kuralla listelenir (kural değişmeden önce
+    // ödenmiş ayda planlanan/iptal tedaviler de); döküm ile satırlar uyuşsun.
+    const detail = await getDoctorMonthDetail({
+      doctorId, institutionId: auth.user.institutionId, branchId: branch.branchId, year, month,
+      legacyRule: monthRow?.rule === "legacy",
+    });
+
+    const hakedilen = monthRow?.hakedilen ?? 0;
+    const odenen = Math.round((odenenMap.get(`${year}-${String(month).padStart(2, "0")}`) || 0) * 100) / 100;
+    const breakdown = monthRow?.breakdown ?? {
+      ciro: 0, kk: 0, kkMasraf: 0, genelMasraf: 0, labCost: 0, toplamGider: 0, brut: 0, hakedilen: 0,
+      kkYuzde: currentRates.kkYuzde, genelYuzde: currentRates.genelYuzde, maasYuzde: currentRates.maasYuzde,
+    };
+    // O ay için gerçekte uygulanan oran (breakdown içine gömülü) — UI'da
+    // "bugünkü" değil "o ayki" oranı göstermek için rates yerine bunu kullanıyoruz.
+    const rates = {
+      kkYuzde: breakdown.kkYuzde,
+      genelYuzde: breakdown.genelYuzde,
+      maasYuzde: breakdown.maasYuzde,
+    };
+
+    return NextResponse.json({
+      doctor: { id: doctor.id, fullName: doctor.fullName },
+      year, month, rates,
+      summary: { hakedilen, odenen, kalan: Math.round((hakedilen - odenen) * 100) / 100 },
+      breakdown,
+      ...detail,
+    });
+  } catch (error) {
+    console.error("[hakedis-detay] fallback:", error);
+    return NextResponse.json({ message: "Hakediş ayrıntısı hesaplanamadı. Lütfen biraz sonra yeniden deneyin." }, { status: 503 });
   }
-
-  // Fallback: doktorun GÜNCEL oranı — sadece bu ay için hiç oran geçmişi
-  // yoksa kullanılır. Aksi halde breakdown, o ayda gerçekte geçerli olan
-  // orana göre hesaplanır (bkz. getDoctorRatesForMonth).
-  const currentRates = {
-    kkYuzde: Number(doctor.kkYuzde ?? 3),
-    genelYuzde: Number(doctor.genelYuzde ?? 15),
-    maasYuzde: Number(doctor.maasYuzde ?? 40),
-  };
-  const { start, end } = monthRangeUtc(year, month);
-
-  const [detail, hakedisRows, odenenMap] = await Promise.all([
-    getDoctorMonthDetail({ doctorId, institutionId: auth.user.institutionId, branchId: branch.branchId, year, month }),
-    computeDoctorMonthlyHakedis({ doctorId, institutionId: auth.user.institutionId, branchId: branch.branchId, rates: currentRates, rangeStart: start, rangeEnd: end }),
-    computeDoctorMonthlyOdenen({ doctorId, institutionId: auth.user.institutionId, branchId: branch.branchId, rangeStart: start, rangeEnd: end }),
-  ]);
-
-  const monthRow = hakedisRows.find((r) => r.year === year && r.month === month);
-  const hakedilen = monthRow?.hakedilen ?? 0;
-  const odenen = Math.round((odenenMap.get(`${year}-${String(month).padStart(2, "0")}`) || 0) * 100) / 100;
-  const breakdown = monthRow?.breakdown ?? {
-    ciro: 0, kk: 0, kkMasraf: 0, genelMasraf: 0, labCost: 0, toplamGider: 0, brut: 0, hakedilen: 0,
-    kkYuzde: currentRates.kkYuzde, genelYuzde: currentRates.genelYuzde, maasYuzde: currentRates.maasYuzde,
-  };
-  // O ay için gerçekte uygulanan oran (breakdown içine gömülü) — UI'da
-  // "bugünkü" değil "o ayki" oranı göstermek için rates yerine bunu kullanıyoruz.
-  const rates = {
-    kkYuzde: breakdown.kkYuzde,
-    genelYuzde: breakdown.genelYuzde,
-    maasYuzde: breakdown.maasYuzde,
-  };
-
-  return NextResponse.json({
-    doctor: { id: doctor.id, fullName: doctor.fullName },
-    year, month, rates,
-    summary: { hakedilen, odenen, kalan: Math.round((hakedilen - odenen) * 100) / 100 },
-    breakdown,
-    ...detail,
-  });
 });

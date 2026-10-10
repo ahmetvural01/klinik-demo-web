@@ -6,37 +6,42 @@
 import { formatCurrency } from "@/lib/format";
 import { getDisplayAppointmentStatus, APPOINTMENT_DISPLAY_STATUS_LABELS, APPOINTMENT_DISPLAY_STATUS_TONE } from "@/lib/appointment-status";
 import { examStatusKind, isChargeableExamStatus } from "@/lib/examination-status";
+import { patientAge } from "@/lib/patient-display";
 import type { BadgeTone } from "@/components/ui/Badge";
 
 /**
- * Sekmeler. "notlar" ayrı sekme değil: notlar Özet'te tek yerde tutulur
- * (önceden aynı not kutusu hem Özet'te hem Notlar sekmesinde vardı). Eski
- * `?tab=notlar` bağlantıları Özet'e açılır.
+ * Sekmeler. "notlar" ve "gorevler" ayrı sekme değil: notlar ve hastaya bağlı
+ * görevler Özet'te tek yerde tutulur (bir hastanın açık görevi genelde 0-3
+ * tanedir; ayrı sekme telefonda diğer sekmeleri ekran dışına itiyordu). Eski
+ * `?tab=notlar` / `?tab=gorevler` bağlantıları Özet'e açılır. Sıra kullanım
+ * sıklığına göredir: hekimin işi (Tedavi) ve bankonun işi (Hesap) önde.
  */
-export type TabKey = "bilgi" | "tedavi" | "odeme" | "randevular" | "lab" | "recete" | "gorevler" | "belgeler";
+export type TabKey = "bilgi" | "tedavi" | "odeme" | "randevular" | "lab" | "recete" | "belgeler";
 
-export const TAB_ORDER: TabKey[] = ["bilgi", "tedavi", "odeme", "randevular", "lab", "recete", "gorevler", "belgeler"];
+export const TAB_ORDER: TabKey[] = ["bilgi", "tedavi", "odeme", "randevular", "recete", "lab", "belgeler"];
 
 export const TAB_LABELS: Record<TabKey, string> = {
   bilgi: "Özet",
   tedavi: "Tedavi",
-  odeme: "Tahsilat",
+  // Sekme yalnız tahsilat değil: borç özeti, tahsilatlar ve taksit planları.
+  // "Tahsilat (2)" sayacı "2 tahsilat" gibi okunuyordu.
+  odeme: "Hesap",
   randevular: "Randevular",
   lab: "Laboratuvar",
   recete: "Reçete",
-  gorevler: "Görevler",
-  belgeler: "Belgeler ve onam",
+  belgeler: "Belgeler",
 };
 
 export const TAB_PERMISSIONS: Record<TabKey, string[]> = {
   bilgi: ["patients:read"],
   randevular: ["appointments:read"],
-  gorevler: ["clinictasks:read"],
   tedavi: ["examinations:read", "treatment:read"],
   odeme: ["payments:read", "installments:read", "finance:read"],
   recete: ["prescriptions:read"],
   lab: ["lab:read"],
-  belgeler: ["documents:read"],
+  // Röntgen/fotoğraf okuma yetkisi (xray:read) olan da sekmeyi açabilmeli;
+  // belge türleri sekme içinde ayrıca yetkiye göre süzülür (sunucu da süzer).
+  belgeler: ["documents:read", "xray:read"],
 };
 
 export type PatientDocument = {
@@ -101,7 +106,8 @@ export type TaksitPlan = {
   status: string;
   notes?: string | null;
   createdAt: string;
-  doctor?: { fullName: string } | null;
+  /** Plan hekimi: tahsilat taksitlere yalnız bu hekim adına alınırsa işlenir. */
+  doctor?: { id?: string; fullName: string } | null;
   taksitler: TaksitItem[];
 };
 
@@ -181,6 +187,8 @@ export type ClinicTask = {
   assignees?: Array<{ userId: string; user: { id: string; fullName: string; role: string; isActive?: boolean } }>;
   createdBy?: { id: string; fullName: string } | null;
   createdAt: string;
+  completedAt?: string | null;
+  patient?: { id: string; fullName: string } | null;
 };
 
 export type TreatmentPlanLite = {
@@ -234,39 +242,12 @@ export type DoctorOption = { id: string; fullName: string; role: string; isActiv
 
 // ── Sözcükler ─────────────────────────────────────────────────────────────
 
-export const PAYMENT_METHOD_LABELS: Record<string, string> = {
-  NAKIT: "Nakit",
-  KREDI_KARTI: "Kredi kartı",
-  HAVALE_EFT: "Havale/EFT",
-  MAIL_ORDER: "Mail order",
-  DIGER: "Diğer",
-};
+// Ödeme yöntemi adları uygulama genelindeki tek sözlükten (Muhasebe ile aynı).
+export { PAYMENT_METHOD_LABELS, paymentMethodLabel } from "@/lib/payment-methods";
 
-export const paymentMethodLabel = (method: string) => PAYMENT_METHOD_LABELS[method] || method;
-
-export const TASK_TYPE_LABELS: Record<ClinicTask["type"], string> = {
-  PARCA_SIPARIS: "Parça sipariş",
-  LAB: "Laboratuvar",
-  ARAMA: "Arama",
-  EVRAK: "Evrak",
-  DIGER: "Diğer",
-};
-
-export const TASK_STATUS_LABELS: Record<ClinicTask["status"], string> = {
-  ACIK: "Açık",
-  BEKLEMEDE: "Beklemede",
-  TAMAMLANDI: "Tamamlandı",
-  IPTAL: "İptal",
-};
-
-export const TASK_STATUS_TONE: Record<ClinicTask["status"], BadgeTone> = {
-  ACIK: "info",
-  BEKLEMEDE: "warning",
-  TAMAMLANDI: "success",
-  IPTAL: "neutral",
-};
-
-export const TASK_PRIORITY_LABELS: Record<number, string> = { 1: "Düşük", 2: "Orta", 3: "Yüksek" };
+// Görev türü/durum adları burada ayrıca tutulmaz: hasta dosyası Görevler
+// sayfasıyla aynı haritayı kullanır (components/takip/TaskFormModal). Önceden
+// aynı durum burada "Açık", Görevler'de "Yapılacak" yazıyordu.
 
 export const TAKSIT_PLAN_STATUS_LABELS: Record<string, string> = {
   AKTIF: "Aktif",
@@ -360,6 +341,12 @@ export type PatientBalance = {
   totalDebt: number;
 };
 
+/**
+ * İstemcide bakiye hesabı — YALNIZ YEDEK: hasta dosyası bakiyeyi sunucudan
+ * (/api/patients/[id]/balance, Decimal ile) alır; bu hesap yalnız o yanıt
+ * gelmezse kullanılır (kayan nokta yuvarlaması yarım kuruşta 1 kuruş farklı
+ * çıkabilir).
+ */
 export function computeBalance(data: Pick<PatientDetailData, "examinations" | "payments" | "discountRate">): PatientBalance {
   const totalCharged = roundMoney(data.examinations.filter(isChargeableExam).reduce((sum, e) => sum + toNumber(e.amount), 0));
   const discountRate = toNumber(data.discountRate);
@@ -416,22 +403,14 @@ export const healthFlagsOf = (data: Pick<PatientDetailData, "hasAllergy" | "hasH
   ["Bulaşıcı hastalık", data.hasContagiousDisease],
 ] as [string, boolean][]).filter(([, value]) => value).map(([label]) => label);
 
-export const genderLabel = (gender: string | null | undefined) => {
-  const g = String(gender || "").toLocaleUpperCase("tr-TR");
-  if (g === "ERKEK" || g === "E") return "Erkek";
-  if (g === "KADIN" || g === "K") return "Kadın";
-  return "";
-};
+// Cinsiyet ve yaş Hastalar listesi, hasta seçici ve hasta formuyla aynı
+// yardımcıdan (lib/patient-display): önceki kopya "DIGER"i boş yazıyor, yaşı
+// tarayıcının saat dilimine göre hesaplıyordu (Türkiye gece yarısı saklanan
+// doğum gününde bir gün kayabiliyordu).
+export { genderLabel } from "@/lib/patient-display";
 
 export function ageFrom(birthDate?: string | null) {
-  if (!birthDate) return null;
-  const birth = new Date(birthDate);
-  if (Number.isNaN(birth.getTime())) return null;
-  const now = new Date();
-  let age = now.getFullYear() - birth.getFullYear();
-  const beforeBirthday = now.getMonth() < birth.getMonth() || (now.getMonth() === birth.getMonth() && now.getDate() < birth.getDate());
-  if (beforeBirthday) age -= 1;
-  return age >= 0 && age < 130 ? age : null;
+  return patientAge(birthDate);
 }
 
 export const newIdempotencyKey = (prefix = "hd") =>
@@ -449,13 +428,19 @@ export function errorMessageOf(body: unknown, fallback: string) {
   return fallback;
 }
 
-/** Türkçe para girişi: "1.250,50" / "1250.5" / "1250" → 1250.5 (geçersizse NaN). */
-export function parseMoneyInput(value: string) {
-  const trimmed = String(value || "").replace(/\s/g, "").replace(/₺|TL/gi, "");
-  if (!trimmed) return NaN;
-  const normalized = trimmed.includes(",")
-    ? trimmed.replace(/\./g, "").replace(",", ".")
-    : trimmed;
-  const amount = Number(normalized);
-  return Number.isFinite(amount) ? amount : NaN;
+// Tutar girişi burada ayrıştırılmaz: bütün tutar alanları ui/MoneyInput +
+// lib/money-input kullanır. Önceki yerel ayrıştırıcı virgülsüz "1.000"ü
+// Number("1.000") ile 1 TL'ye çeviriyordu (canlı testte ₺1.000 tahsilat ₺1,00
+// olarak kaydedildi, tedavi tutarı "1.250" ₺1,25 göründü).
+
+/**
+ * Normalize tutar ("1250.50") × adet → normalize tutar; kuruş hassasiyetinde,
+ * kayan nokta hesabı olmadan (çok dişli tedavi kaydının toplamı).
+ */
+export function multiplyMoney(normalized: string, count: number): string {
+  const match = /^(-?)(\d+)\.(\d{2})$/.exec(normalized);
+  if (!match || !Number.isInteger(count) || count < 0) return "0.00";
+  const cents = BigInt(`${match[2]}${match[3]}`) * BigInt(count);
+  const digits = cents.toString().padStart(3, "0");
+  return `${match[1] && cents > BigInt(0) ? "-" : ""}${digits.slice(0, -2)}.${digits.slice(-2)}`;
 }

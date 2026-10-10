@@ -1,15 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CheckCircle2, Send, XCircle } from "lucide-react";
+import { Send } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { Callout } from "@/components/ui/Callout";
+import { Section } from "@/components/ui/Section";
 import { Input } from "@/components/ui/Input";
 import { FormErrorBanner, FormField } from "@/components/ui/FormField";
 import { Switch } from "@/components/ui/Switch";
 import { LoadErrorState } from "@/components/ui/LoadErrorState";
-import { ListRowSkeleton } from "@/components/ui/ListSkeleton";
-import { clientMutation } from "@/lib/client-mutation";
+import { FormSkeleton } from "@/components/ui/PageSkeleton";
 import { showToastSafe } from "@/lib/toast-client";
+import { errorMessage, saGet, saSend } from "@/components/superadmin/sa-fetch";
 
 type SmtpConfig = {
   host?: string;
@@ -40,16 +42,17 @@ export default function EpostaTab() {
   const [testing, setTesting] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  // Sunucudaki (kaydedilmiş) açık/kapalı durumu: uyarı yalnız kayıtlı ayara göre gösterilir.
+  const [savedActive, setSavedActive] = useState(true);
 
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
     setLoading(true);
     setLoadError(null);
-    fetch("/api/superadmin/smtp", { cache: "no-store" })
-      .then(async (response) => {
-        const data = (await response.json().catch(() => null)) as SmtpConfig | null;
-        if (!response.ok || !data) throw new Error(data?.message || "E-posta ayarları yüklenemedi.");
-        if (cancelled) return;
+    saGet<SmtpConfig>("/api/superadmin/smtp", "E-posta ayarları yüklenemedi.", controller.signal)
+      .then((data) => {
+        if (!data) throw new Error("E-posta ayarları yüklenemedi.");
+        setSavedActive(data.isActive ?? false);
         setForm({
           host: data.host ?? "",
           port: String(data.port ?? 587),
@@ -62,14 +65,12 @@ export default function EpostaTab() {
         });
       })
       .catch((error) => {
-        if (!cancelled) setLoadError(error instanceof Error ? error.message : "E-posta ayarları yüklenemedi.");
+        if (!controller.signal.aborted) setLoadError(errorMessage(error, "E-posta ayarları yüklenemedi."));
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       });
-    return () => {
-      cancelled = true;
-    };
+    return () => controller.abort();
   }, [reloadKey]);
 
   const set = <K extends keyof typeof EMPTY>(key: K, value: (typeof EMPTY)[K]) => setForm((current) => ({ ...current, [key]: value }));
@@ -78,14 +79,11 @@ export default function EpostaTab() {
     setSaving(true);
     setSaveError(null);
     try {
-      await clientMutation(
-        "/api/superadmin/smtp",
-        { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...form, port: Number.parseInt(form.port, 10) }) },
-        "E-posta ayarları kaydedilemedi.",
-      );
+      await saSend("/api/superadmin/smtp", "PUT", { ...form, port: Number.parseInt(form.port, 10) }, "E-posta ayarları kaydedilemedi.");
+      setSavedActive(form.isActive);
       showToastSafe({ type: "success", message: "E-posta ayarları kaydedildi.", icon: "settings" });
     } catch (error) {
-      setSaveError(error instanceof Error ? error.message : "E-posta ayarları kaydedilemedi.");
+      setSaveError(errorMessage(error, "E-posta ayarları kaydedilemedi."));
     } finally {
       setSaving(false);
     }
@@ -99,29 +97,26 @@ export default function EpostaTab() {
     setTesting(true);
     setTestResult(null);
     try {
-      const res = await fetch("/api/superadmin/smtp", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "test", ...form, port: Number.parseInt(form.port, 10), testTo: testTo.trim() }),
-      });
-      const data = await res.json().catch(() => null);
-      setTestResult(res.ok ? { ok: true, message: data?.message ?? "Deneme e-postası gönderildi." } : { ok: false, message: data?.message ?? "Deneme e-postası gönderilemedi." });
-    } catch {
-      setTestResult({ ok: false, message: "Bağlantı kurulamadı." });
+      const data = await saSend<{ message?: string }>("/api/superadmin/smtp", "POST", { action: "test", ...form, port: Number.parseInt(form.port, 10), testTo: testTo.trim() }, "Deneme e-postası gönderilemedi.");
+      setTestResult({ ok: true, message: data?.message ?? "Deneme e-postası gönderildi." });
+    } catch (error) {
+      setTestResult({ ok: false, message: errorMessage(error, "Deneme e-postası gönderilemedi.") });
     } finally {
       setTesting(false);
     }
   };
 
-  if (loading) return <div className="ui-surface"><ListRowSkeleton rows={4} /></div>;
+  if (loading) return <FormSkeleton fields={7} columns={2} />;
   if (loadError) return <LoadErrorState message={loadError} onRetry={() => setReloadKey((value) => value + 1)} />;
 
   return (
-    <section className="ui-surface max-w-3xl space-y-5 p-4 sm:p-5">
-      <div>
-        <h2 className="text-base font-bold text-slate-900">E-posta gönderimi (SMTP)</h2>
-        <p className="text-sm text-slate-500">Fatura hatırlatmaları ve sistem e-postaları bu sunucu üzerinden gönderilir.</p>
-      </div>
+    <Section title="E-posta gönderimi (SMTP)" description="Fatura hatırlatmaları ve sistem e-postaları bu sunucu üzerinden gönderilir." className="max-w-3xl">
+      <div className="space-y-5">
+      {!savedActive && (
+        <Callout tone="warning" title="E-posta gönderimi kapalı">
+          Fatura hatırlatmaları e-postayla gitmiyor; ayarları girip “E-postalar bu sunucuyla gönderilsin”i açın.
+        </Callout>
+      )}
       <FormErrorBanner message={saveError} />
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="sm:col-span-2">
@@ -166,12 +161,12 @@ export default function EpostaTab() {
           <Button variant="secondary" icon={Send} loading={testing} onClick={() => void test()}>Deneme gönder</Button>
         </div>
         {testResult && (
-          <p role="status" className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium ${testResult.ok ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-700"}`}>
-            {testResult.ok ? <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" /> : <XCircle className="h-4 w-4 shrink-0" aria-hidden="true" />}
+          <Callout tone={testResult.ok ? "success" : "critical"} role={testResult.ok ? "status" : "alert"} compact>
             {testResult.message}
-          </p>
+          </Callout>
         )}
       </div>
-    </section>
+      </div>
+    </Section>
   );
 }

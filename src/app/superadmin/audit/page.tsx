@@ -1,20 +1,23 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Copy, Download } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { ActiveFilters, Toolbar } from "@/components/ui/Toolbar";
 import { SearchInput } from "@/components/ui/SearchInput";
-import { Input, Select } from "@/components/ui/Input";
+import { Select } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
+import { DateRangeFilter } from "@/components/ui/DateRangeFilter";
+import { DescriptionList } from "@/components/ui/DescriptionList";
 import { EmptyValue, ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { showToastSafe } from "@/lib/toast-client";
-import { roleLabel } from "@/lib/staff-roles";
-import { auditActionLabel } from "@/components/superadmin/sa-labels";
+import type { DatePresetKey } from "@/lib/date-presets";
+import { useDateRangeParam } from "@/lib/use-date-range-param";
+import { auditActionLabel, auditWho, type AuditPerson } from "@/components/superadmin/sa-labels";
 import { dateTime } from "@/components/superadmin/sa-format";
 import { errorMessage, isAbort, saGet } from "@/components/superadmin/sa-fetch";
 
@@ -25,7 +28,9 @@ type AuditEntry = {
   ip?: string | null;
   actorRole?: string | null;
   isGhost?: boolean;
-  user?: { fullName: string; role?: string; institution?: { id: string; name: string } | null } | null;
+  user?: { fullName: string; role: string; institution?: { id: string; name: string } | null } | null;
+  /** İşlemi gerçekten yapan kişi (gizli girişte platform yöneticisi); kullanıcıdan farklıysa dolu. */
+  actor?: AuditPerson;
   createdAt: string;
 };
 
@@ -48,11 +53,14 @@ const ACTORS: Record<string, string> = {
   klinik: "Klinik kullanıcıları",
 };
 
+// Kayıt listesi için geriye kayan dönemler; varsayılan tarih süzgeci yok.
+const PERIODS: readonly DatePresetKey[] = ["tum", "bugun", "7", "30", "90", "ozel"];
+
 function entryText(log: AuditEntry): string {
   return [
     `Tarih: ${dateTime(log.createdAt)}`,
     `İşlem: ${auditActionLabel(log.action, log.detail)} (${log.action})`,
-    `Kullanıcı: ${log.user?.fullName ?? "—"} (${roleLabel(log.actorRole ?? log.user?.role ?? "") || "—"})`,
+    `Kim: ${auditWho({ user: log.user, actor: log.actor, isGhost: log.isGhost })}`,
     `Klinik: ${log.user?.institution?.name ?? "—"}`,
     `Gizli giriş: ${log.isGhost ? "Evet" : "Hayır"}`,
     `IP: ${log.ip ?? "—"}`,
@@ -61,13 +69,21 @@ function entryText(log: AuditEntry): string {
 }
 
 /**
- * Denetim Günlüğü — "bu klinikte kim, ne zaman, ne yaptı?". Filtreler:
- * klinik, işlem grubu, kim yaptı, Türkiye saatine göre tarih aralığı. İşlem
- * kodları Türkçe adla görünür; IP ve kopyala yalnız ayrıntı penceresinde.
- * Klinik dosyasındaki "Bu kliniğin işlem kayıtları" ?institutionId= ile gelir.
+ * Denetim Günlüğü — "bu klinikte kim, ne zaman, ne yaptı?". Gizli girişte
+ * gerçek kişi (platform yöneticisi) ve hangi klinik hesabıyla girdiği ayrı
+ * yazılır; önceden yalnız klinik kullanıcısının adı platform rolüyle
+ * birleşip görünüyordu. Süzgeçler (klinik, işlem grubu, kim, dönem) adres
+ * çubuğundadır: yenileyince/geri dönünce kaybolmaz. Telefonda "Süzgeçler"
+ * düğmesinin arkasında katlanır. Dönem ortak seçiciyle.
  */
 export default function AuditPage() {
+  const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
+  const institutionId = searchParams.get("institutionId") || "";
+  const group = searchParams.get("group") || "";
+  const actor = searchParams.get("actor") || "";
+  const period = useDateRangeParam(PERIODS, "tum");
   const [logs, setLogs] = useState<AuditEntry[]>([]);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
@@ -77,25 +93,33 @@ export default function AuditPage() {
   const [reloadKey, setReloadKey] = useState(0);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [institutionId, setInstitutionId] = useState(searchParams.get("institutionId") || "");
-  const [group, setGroup] = useState(searchParams.get("group") || "");
-  const [actor, setActor] = useState(searchParams.get("actor") || "");
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
   const [clinics, setClinics] = useState<Clinic[]>([]);
   const [detailEntry, setDetailEntry] = useState<AuditEntry | null>(null);
+
+  const setParams = useCallback((changes: Record<string, string | null>) => {
+    const next = new URLSearchParams(searchParams.toString());
+    for (const [key, value] of Object.entries(changes)) {
+      if (value) next.set(key, value);
+      else next.delete(key);
+    }
+    const query = next.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  }, [pathname, router, searchParams]);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search.trim()), 350);
     return () => clearTimeout(timer);
   }, [search]);
 
-  useEffect(() => { setPage(1); }, [debouncedSearch, institutionId, group, actor, startDate, endDate]);
+  const range = period.range;
+  useEffect(() => { setPage(1); }, [debouncedSearch, institutionId, group, actor, range]);
 
   useEffect(() => {
-    saGet<Clinic[]>("/api/superadmin/institutions", "")
+    const controller = new AbortController();
+    saGet<Clinic[]>("/api/superadmin/institutions?fields=basic", "", controller.signal)
       .then((data) => setClinics((Array.isArray(data) ? data : []).map((item) => ({ id: item.id, name: item.name })).sort((a, b) => a.name.localeCompare(b.name, "tr"))))
       .catch(() => undefined);
+    return () => controller.abort();
   }, []);
 
   const params = useMemo(() => {
@@ -104,12 +128,16 @@ export default function AuditPage() {
     if (institutionId) next.set("institutionId", institutionId);
     if (group) next.set("group", group);
     if (actor) next.set("actor", actor);
-    if (startDate) next.set("startDate", startDate);
-    if (endDate) next.set("endDate", endDate);
+    if (range) {
+      next.set("startDate", range.from);
+      next.set("endDate", range.to);
+    }
     return next;
-  }, [debouncedSearch, institutionId, group, actor, startDate, endDate]);
+  }, [debouncedSearch, institutionId, group, actor, range]);
 
   useEffect(() => {
+    // Geçersiz özel aralıkta istek atılmaz; hata tarih alanlarının altında görünür.
+    if (period.error) return;
     const controller = new AbortController();
     setLoading(true);
     setLoadError(null);
@@ -128,7 +156,7 @@ export default function AuditPage() {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [params, page, reloadKey]);
+  }, [params, page, reloadKey, period.error]);
 
   const copyEntry = async (log: AuditEntry) => {
     try {
@@ -141,17 +169,16 @@ export default function AuditPage() {
 
   const clinicName = clinics.find((item) => item.id === institutionId)?.name;
   const filters = [
-    ...(institutionId ? [{ key: "clinic", label: `Klinik: ${clinicName || "seçili"}`, onRemove: () => setInstitutionId("") }] : []),
-    ...(group ? [{ key: "group", label: GROUPS[group] || group, onRemove: () => setGroup("") }] : []),
-    ...(actor ? [{ key: "actor", label: ACTORS[actor] || actor, onRemove: () => setActor("") }] : []),
-    ...(startDate ? [{ key: "start", label: `Başlangıç: ${startDate.split("-").reverse().join(".")}`, onRemove: () => setStartDate("") }] : []),
-    ...(endDate ? [{ key: "end", label: `Bitiş: ${endDate.split("-").reverse().join(".")}`, onRemove: () => setEndDate("") }] : []),
+    ...(institutionId ? [{ key: "clinic", label: `Klinik: ${clinicName || "seçili"}`, onRemove: () => setParams({ institutionId: null }) }] : []),
+    ...(group ? [{ key: "group", label: GROUPS[group] || group, onRemove: () => setParams({ group: null }) }] : []),
+    ...(actor ? [{ key: "actor", label: ACTORS[actor] || actor, onRemove: () => setParams({ actor: null }) }] : []),
+    ...(period.activeFilter ? [period.activeFilter] : []),
   ];
+  const clearAll = () => setParams({ institutionId: null, group: null, actor: null, donem: null, from: null, to: null });
 
   const who = (log: AuditEntry) => (
     <span className="inline-flex flex-wrap items-center gap-1.5">
-      <span className="text-slate-800">{log.user?.fullName ?? "Sistem"}</span>
-      <span className="text-xs text-slate-500">{roleLabel(log.actorRole ?? log.user?.role ?? "")}</span>
+      <span className="text-slate-800">{auditWho({ user: log.user, actor: log.actor, isGhost: log.isGhost })}</span>
       {log.isGhost && <Badge tone="warning">Gizli giriş</Badge>}
     </span>
   );
@@ -181,42 +208,40 @@ export default function AuditPage() {
   return (
     <section className="space-y-4">
       <PageHeader
-        icon="log"
+        icon="sa-audit"
         title="Denetim Günlüğü"
         description="Klinik kullanıcılarının ve platform yöneticilerinin yaptığı işlemler."
-        stats={[{ label: "Kayıt", value: total.toLocaleString("tr-TR") }]}
-        actions={<Button variant="secondary" icon={Download} onClick={() => window.open(`/api/superadmin/audit/export?${params.toString()}`, "_blank")}>Excel&apos;e aktar</Button>}
+        actions={<Button variant="secondary" icon={Download} disabled={Boolean(period.error)} onClick={() => window.open(`/api/superadmin/audit/export?${params.toString()}`, "_blank")}>Dışa aktar (CSV)</Button>}
       />
 
       <ListTable<AuditEntry>
         header={
           <>
-            <Toolbar>
-              <SearchInput value={search} onChange={setSearch} placeholder="İşlem metninde ara (ör. fatura, hasta adı)" wrapperClassName="flex-1 min-w-[220px]" />
-              <Select aria-label="Klinik" value={institutionId} onChange={(event) => setInstitutionId(event.target.value)} className="sm:w-48">
-                <option value="">Tüm klinikler</option>
-                {clinics.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-              </Select>
-              <Select aria-label="İşlem grubu" value={group} onChange={(event) => setGroup(event.target.value)} className="sm:w-44">
-                <option value="">Tüm işlemler</option>
-                {Object.entries(GROUPS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-              </Select>
-              <Select aria-label="Kim yaptı" value={actor} onChange={(event) => setActor(event.target.value)} className="sm:w-44">
-                <option value="">Herkes</option>
-                {Object.entries(ACTORS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-              </Select>
-              <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-600">
-                Başlangıç
-                <Input type="date" value={startDate} max={endDate || undefined} onChange={(event) => setStartDate(event.target.value)} className="w-auto" />
-              </label>
-              <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-600">
-                Bitiş
-                <Input type="date" value={endDate} min={startDate || undefined} onChange={(event) => setEndDate(event.target.value)} className="w-auto" />
-              </label>
+            <Toolbar
+              filters={(
+                <>
+                  <Select aria-label="Klinik" value={institutionId} onChange={(event) => setParams({ institutionId: event.target.value || null })} className="sm:w-48">
+                    <option value="">Tüm klinikler</option>
+                    {clinics.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                  </Select>
+                  <Select aria-label="İşlem grubu" value={group} onChange={(event) => setParams({ group: event.target.value || null })} className="sm:w-44">
+                    <option value="">Tüm işlemler</option>
+                    {Object.entries(GROUPS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                  </Select>
+                  <Select aria-label="Kim yaptı" value={actor} onChange={(event) => setParams({ actor: event.target.value || null })} className="sm:w-44">
+                    <option value="">Herkes</option>
+                    {Object.entries(ACTORS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                  </Select>
+                  <DateRangeFilter {...period.filterProps} />
+                </>
+              )}
+              filterCount={filters.length}
+            >
+              <SearchInput value={search} onChange={setSearch} placeholder="İşlem metninde ara (ör. fatura, klinik adı)" slashShortcut wrapperClassName="flex-1 min-w-[220px]" />
             </Toolbar>
             {filters.length > 0 && (
               <div className="px-3 pb-2.5">
-                <ActiveFilters filters={filters} onClearAll={() => { setInstitutionId(""); setGroup(""); setActor(""); setStartDate(""); setEndDate(""); }} />
+                <ActiveFilters filters={filters} onClearAll={clearAll} />
               </div>
             )}
           </>
@@ -225,9 +250,11 @@ export default function AuditPage() {
         rows={logs}
         rowKey={(log) => log.id}
         loading={loading}
-        error={loadError}
+        // Sayfa/süzgeç değişirken istek başarısız olursa eldeki kayıtlar kaybolmaz.
+        error={logs.length ? null : loadError}
+        staleError={logs.length ? loadError : null}
         onRetry={() => setReloadKey((value) => value + 1)}
-        emptyText={filters.length || debouncedSearch ? "Bu filtrelere uyan kayıt yok" : "Henüz kayıt yok"}
+        emptyText={filters.length || debouncedSearch ? "Bu süzgeçlere uyan kayıt yok" : "Henüz kayıt yok"}
         onRowClick={setDetailEntry}
         getRowAriaLabel={(log) => `${auditActionLabel(log.action, log.detail)} ayrıntısı`}
         pager={{ page, pageCount: totalPages, pageSize: PAGE_SIZE, total, onPageChange: setPage, loading }}
@@ -257,26 +284,24 @@ export default function AuditPage() {
         }
       >
         {detailEntry && (
-          <dl className="space-y-2 text-sm">
-            {([
-              ["Tarih", dateTime(detailEntry.createdAt)],
-              ["İşlem", auditActionLabel(detailEntry.action, detailEntry.detail)],
-              ["Kim", `${detailEntry.user?.fullName ?? "Sistem"}${detailEntry.user ? ` (${roleLabel(detailEntry.actorRole ?? detailEntry.user.role ?? "")})` : ""}`],
-              ["Klinik", detailEntry.user?.institution?.name ?? "—"],
-              ["Gizli giriş", detailEntry.isGhost ? "Evet — platform yöneticisi klinik hesabıyla işlem yaptı" : "Hayır"],
-              ["IP adresi", detailEntry.ip ?? "—"],
-              ["Sistem kodu", detailEntry.action],
-            ] as const).map(([label, value]) => (
-              <div key={label} className="flex items-start justify-between gap-3 border-b border-slate-100 pb-2">
-                <dt className="shrink-0 font-semibold text-slate-500">{label}</dt>
-                <dd className="text-right text-slate-800">{value}</dd>
-              </div>
-            ))}
+          <div className="space-y-3">
+            <DescriptionList
+              layout="rows"
+              items={[
+                { key: "date", label: "Tarih", value: dateTime(detailEntry.createdAt) },
+                { key: "action", label: "İşlem", value: auditActionLabel(detailEntry.action, detailEntry.detail) },
+                { key: "who", label: "Kim", value: auditWho({ user: detailEntry.user, actor: detailEntry.actor, isGhost: detailEntry.isGhost }) },
+                { key: "clinic", label: "Klinik", value: detailEntry.user?.institution?.name },
+                { key: "ghost", label: "Gizli giriş", value: detailEntry.isGhost ? "Evet — platform yöneticisi klinik hesabıyla işlem yaptı" : "Hayır" },
+                { key: "ip", label: "IP adresi", value: detailEntry.ip },
+                { key: "code", label: "Sistem kodu", value: <code className="text-xs">{detailEntry.action}</code> },
+              ]}
+            />
             <div>
-              <dt className="mb-1 font-semibold text-slate-500">Ayrıntı</dt>
-              <dd className="whitespace-pre-wrap break-words rounded-lg bg-slate-50 p-3 text-slate-700">{detailEntry.detail ?? "—"}</dd>
+              <p className="mb-1 text-xs font-semibold text-slate-500">Ayrıntı</p>
+              <p className="whitespace-pre-wrap break-words rounded-lg bg-slate-50 p-3 text-sm text-slate-700">{detailEntry.detail ?? "—"}</p>
             </div>
-          </dl>
+          </div>
         )}
       </Modal>
     </section>

@@ -1,108 +1,75 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState, type FocusEvent, type PointerEvent, type TouchEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Archive, CalendarPlus, Pencil, Percent, Phone, ShieldAlert, UserPlus } from "lucide-react";
-import { confirmDialog } from "@/lib/confirm-client";
-import { clientMutation } from "@/lib/client-mutation";
-import { showToastSafe } from "@/lib/toast-client";
-import { formatCurrency, formatPhoneNumber } from "@/lib/format";
+import { Archive, CalendarPlus, MessageSquare, Pencil, Phone, ShieldAlert, UserPlus } from "lucide-react";
 import { usePermissions } from "@/components/auth/PermissionProvider";
-import { PatientFormModal } from "@/components/patient/PatientFormModal";
+import { ArchivePatientModal } from "@/components/patient/ArchivePatientModal";
+import { PatientFormModal, type PatientFormInitialValues } from "@/components/patient/PatientFormModal";
+import { smsConsentOf } from "@/components/sms/communication-labels";
 import { DoctorSelect } from "@/components/staff/DoctorSelect";
+import { ActionMenu, type ActionMenuItem } from "@/components/ui/ActionMenu";
 import { Badge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
-import { EmptyValue, ListTable, type ListSort, type ListTableColumn } from "@/components/ui/ListTable";
+import { Select } from "@/components/ui/Input";
+import { EmptyValue, ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { formatDateText } from "@/components/ui/Money";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SearchInput } from "@/components/ui/SearchInput";
+import { StatusPage } from "@/components/ui/StatusPage";
 import { ActiveFilters, Toolbar, type ActiveFilter } from "@/components/ui/Toolbar";
+import { cachedGet } from "@/lib/client-cache";
+import { formatCurrency } from "@/lib/format";
+import { formatPatientPhone, healthFlagLabels, maskedIdentityLabel, patientFacts, patientTelHref, type HealthFlagKey } from "@/lib/patient-display";
+import type { StaffLike } from "@/lib/staff-roles";
+import { showToastSafe } from "@/lib/toast-client";
+import { rememberPatientListAddress } from "@/components/patient/patient-list-address";
+import { preloadHastaDosyasi } from "../hasta-detay/preload";
+import { HastaListesiIskelet } from "./_components/HastaListesiIskelet";
 
 type Patient = {
   id: string;
-  tcNo: string;
+  tcNo: string | null;
+  isForeigner?: boolean;
   fullName: string;
   phone: string;
+  phoneCountryCode?: string | null;
   gender: string;
   birthDate?: string | null;
   insurance?: string | null;
-  discountRate?: number | null;
-  hasContagiousDisease?: boolean;
-  contagiousDiseaseNote?: string | null;
   hasMedicalRisk?: boolean;
   // GET /api/patients?extras=1 — yalnız ilgili yetkisi olan role gelir;
   // yetki yoksa alan hiç gelmez (undefined), sütun da gösterilmez.
   lastVisitAt?: string | null;
   nextAppointment?: { startAt: string; doctorName: string | null } | null;
   balance?: number | null;
-};
+} & Partial<Record<HealthFlagKey, boolean>>;
 
-type PatientResponse = {
-  patients: Patient[];
-  total: number;
-  pageCount: number;
-  summary?: { total: number; newThisMonth: number };
-  message?: string;
-};
-
-type SortKey = "fullName" | "createdAt";
-
+const LIST_PATH = "/hasta";
 const PAGE_SIZES = [15, 25, 50, 100];
+const DEFAULT_PAGE_SIZE = 25;
+const SMS_CONSENT_CODES = new Set(["ENABLED", "DISABLED", "PENDING", "EXPIRED", "SEND_FAILED"]);
+/** Klinikteki her kayıt değişikliğinde liste en çok 10 sn'de bir, yalnız sekme görünürken yenilenir. */
+const REALTIME_MIN_INTERVAL_MS = 10_000;
 
-const SMS_CONSENT_FILTER_LABELS: Record<string, string> = {
-  ENABLED: "SMS izni: Onaylandı",
-  DISABLED: "SMS izni: Reddedildi",
-  PENDING: "SMS izni: Onay bekliyor",
-  EXPIRED: "SMS izni: Süresi doldu",
-  SEND_FAILED: "SMS izni: Onay SMS'i gönderilemedi",
-};
-
-// Veritabanında cinsiyet hem "ERKEK/KADIN" hem eski kayıtlarda "E/K" olarak duruyor;
-// ekranda ham kod görünmesin.
-function genderLabel(value?: string | null) {
-  const code = (value || "").trim().toUpperCase();
-  if (code === "ERKEK" || code === "E") return "Erkek";
-  if (code === "KADIN" || code === "K") return "Kadın";
-  return "";
+/** "SMS izni: Onay bekliyor" — İletişim sayfasıyla aynı sözcükler (communication-labels). */
+function smsConsentFilterLabel(code: string) {
+  const label = smsConsentOf(code).label;
+  return code === "ENABLED" ? label : `SMS izni: ${label}`;
 }
 
-function calculateAge(value?: string | null) {
-  if (!value) return null;
-  const birth = new Date(value);
-  if (Number.isNaN(birth.getTime())) return null;
-  const today = new Date();
-  let age = today.getFullYear() - birth.getFullYear();
-  const monthDiff = today.getMonth() - birth.getMonth();
-  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) age -= 1;
-  return age >= 0 && age < 130 ? age : null;
-}
-
-/** "41 yaş · Kadın" — boş parçalar yazılmaz. */
-function patientFacts(patient: Patient) {
-  const age = calculateAge(patient.birthDate);
-  return [age !== null ? `${age} yaş` : "", genderLabel(patient.gender)].filter(Boolean).join(" · ");
-}
-
-function telHref(phone: string) {
-  const digits = phone.replace(/\D/g, "");
-  return digits ? `tel:${digits.startsWith("0") ? digits : `0${digits}`}` : "";
-}
-
-function appointmentText(next: NonNullable<Patient["nextAppointment"]>) {
-  return formatDateText(next.startAt, "datetime");
-}
-
-function PatientBadges({ patient }: { patient: Patient }) {
-  if (!patient.hasContagiousDisease && !patient.hasMedicalRisk && !patient.discountRate) return null;
-  return (
-    <div className="mt-1 flex flex-wrap gap-1">
-      {patient.hasContagiousDisease && (
-        <Badge tone="critical" solid icon={ShieldAlert} title={patient.contagiousDiseaseNote || undefined}>Bulaşıcı hastalık</Badge>
-      )}
-      {patient.hasMedicalRisk && <Badge tone="critical" icon={ShieldAlert}>Medikal uyarı</Badge>}
-      {patient.discountRate ? <Badge tone="warning" icon={Percent}>%{patient.discountRate} indirim</Badge> : null}
-    </div>
-  );
+/** Arama boş sonuç verince "Yeni hasta olarak kaydet" formu yazılanla dolu açılır. */
+function initialValuesFromQuery(query: string): PatientFormInitialValues | undefined {
+  const text = query.trim();
+  if (!text) return undefined;
+  if (/^[\d\s()+\-.]+$/.test(text)) {
+    const digits = text.replace(/\D/g, "");
+    // TC kimlik no 0 ile başlamaz; 0 ile başlayan 11 hane telefondur.
+    if (digits.length === 11 && !digits.startsWith("0")) return { tcNo: digits };
+    if (digits.length >= 10) return { phone: digits };
+    return undefined;
+  }
+  return { fullName: text };
 }
 
 /** Pozitif bakiye = hastanın borcu (kırmızı); negatif = hastanın avansı (yeşil). */
@@ -112,214 +79,379 @@ function BalanceText({ value }: { value: number | null | undefined }) {
   return <span className="tabular-nums text-emerald-700">{formatCurrency(Math.abs(value))} avans</span>;
 }
 
+/**
+ * Satırdaki sağlık işaretleri. Bulaşıcı hastalık enfeksiyon kontrolü için
+ * ayrı ve belirgin kalır (notu listeye gelmez); diğer uyarılar tek rozette,
+ * hangi uyarı olduğu üzerine gelince görünür. "% indirim" rozeti kaldırıldı:
+ * uyarı değil, hasta dosyasında ve Muhasebe'de görünüyor.
+ */
+function RiskBadges({ patient }: { patient: Patient }) {
+  const labels = healthFlagLabels(patient).filter((label) => label !== "Bulaşıcı hastalık");
+  const hasRisk = labels.length > 0 || Boolean(patient.hasMedicalRisk);
+  if (!patient.hasContagiousDisease && !hasRisk) return null;
+  return (
+    <div className="mt-1 flex flex-wrap gap-1">
+      {patient.hasContagiousDisease && <Badge tone="critical" solid icon={ShieldAlert}>Bulaşıcı hastalık</Badge>}
+      {hasRisk && (
+        <Badge tone="critical" icon={ShieldAlert} title={labels.length > 0 ? labels.join(", ") : "İlaç, ameliyat ya da hastalık notu var"}>
+          Sağlık uyarısı
+        </Badge>
+      )}
+    </div>
+  );
+}
+
 function HastaContent() {
   const { can } = usePermissions();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const loadSequenceRef = useRef(0);
-  const summaryLoadedRef = useRef(false);
 
-  const [query, setQuery] = useState(searchParams.get("q") || "");
-  const [debouncedQuery, setDebouncedQuery] = useState(searchParams.get("q") || "");
+  // ── Adres çubuğundaki liste durumu: geri tuşu ve yenilemede arama, sayfa,
+  // doktor ve sıralama korunur (önceden hasta dosyasından geri gelince
+  // arama ve sayfa kayboluyordu — denetim A1).
+  const urlQuery = (searchParams.get("q") || "").trim();
+  const page = Math.max(1, Number.parseInt(searchParams.get("sayfa") || "1", 10) || 1);
+  const sizeParam = Number.parseInt(searchParams.get("boyut") || "", 10);
+  const pageSize = PAGE_SIZES.includes(sizeParam) ? sizeParam : DEFAULT_PAGE_SIZE;
+  const doctorId = searchParams.get("doktor") || "";
+  // "ad" = A–Z, "ad-za" = Z–A (eski başlık tıklamasındaki ters sıra korunur), boş = son eklenen.
+  const sortParam = searchParams.get("sirala") || "";
+  const sortByName = sortParam === "ad" || sortParam === "ad-za";
+  const sortNameDesc = sortParam === "ad-za";
+  const smsParam = (searchParams.get("smsConsent") || "").toUpperCase();
+  const smsConsent = SMS_CONSENT_CODES.has(smsParam) ? smsParam : "";
+  const wantsCreate = searchParams.get("yeni") === "1";
+
+  const [query, setQuery] = useState(urlQuery);
   const [patients, setPatients] = useState<Patient[]>([]);
-  const [summary, setSummary] = useState<PatientResponse["summary"]>();
   const [total, setTotal] = useState(0);
   const [pageCount, setPageCount] = useState(1);
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
-  const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "createdAt", dir: "desc" });
-  const [doctorId, setDoctorId] = useState("");
-  const [doctorName, setDoctorName] = useState("");
-  const [smsConsentFilter, setSmsConsentFilter] = useState(searchParams.get("smsConsent") || "");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [forbidden, setForbidden] = useState(false);
+  const [staleError, setStaleError] = useState<string | null>(null);
+  const [forbidden, setForbidden] = useState<string | null>(null);
+  const [doctorName, setDoctorName] = useState("");
   const [showCreate, setShowCreate] = useState(false);
+  const [createInitial, setCreateInitial] = useState<PatientFormInitialValues | undefined>();
   const [editPatientId, setEditPatientId] = useState<string | null>(null);
+  const [archiveTarget, setArchiveTarget] = useState<{ id: string; fullName: string } | null>(null);
+
+  const requestRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
+  const hasDataRef = useRef(false);
+  const lastLoadAtRef = useRef(0);
+  const ignoreRealtimeUntilRef = useRef(0);
+  const listTopRef = useRef<HTMLDivElement>(null);
 
   const hidePhone = !can("patients:phone");
   const canWritePatients = can("patients:write");
   const canDeletePatients = can("patients:delete");
-  const canBookAppointments = can("appointments:write");
+  // Randevular sayfası appointments:read ister; formu açmak appointments:write.
+  const canBookAppointments = can("appointments:write") && can("appointments:read");
+  // İletişim sayfası sms:read ister, tek hastaya gönderim sms:write; ikisi yoksa bağlantı ölü olur.
+  const canMessage = can("sms:write") && can("sms:read");
 
-  // Üst bardaki "Yeni > Hasta" ve diğer ekranlardan gelen ?yeni=1 formu açar.
+  /**
+   * Liste durumu adres çubuğuna yazılır; sunucuya gidilmez (anında değişir).
+   * Başka sayfaya geçilmişse (ör. arama gecikmesi dolmadan hasta dosyası
+   * açıldıysa) yeni sayfanın adresine dokunulmaz.
+   */
+  const setParams = useCallback((changes: Record<string, string | null>) => {
+    if (window.location.pathname !== LIST_PATH) return;
+    const params = new URLSearchParams(window.location.search);
+    for (const [key, value] of Object.entries(changes)) {
+      if (value) params.set(key, value);
+      else params.delete(key);
+    }
+    const next = params.toString();
+    window.history.replaceState(null, "", `${window.location.pathname}${next ? `?${next}` : ""}`);
+  }, []);
+
+  // Liste durumu her değiştiğinde son adres saklanır: hasta dosyasındaki
+  // "Hastalar" geri bağlantısı aynı arama/süzgeç/sayfaya döner.
   useEffect(() => {
-    if (searchParams.get("yeni") === "1" && canWritePatients) setShowCreate(true);
-  }, [searchParams, canWritePatients]);
-
-  const closeCreate = () => {
-    setShowCreate(false);
-    if (searchParams.get("yeni") === "1") window.history.replaceState(null, "", "/hasta");
-  };
+    if (window.location.pathname === LIST_PATH) rememberPatientListAddress(window.location.search);
+  }, [urlQuery, page, pageSize, doctorId, sortParam, smsConsent]);
 
   // Üst bardaki aramadan ya da başka ekrandan /hasta?q=… ile gelindiğinde
-  // sayfa açıkken de arama kutusu ve liste güncellenir (denetim X-HL-01).
-  const urlQuery = searchParams.get("q") || "";
+  // sayfa açıkken de arama kutusu güncellenir (denetim X-HL-01).
   useEffect(() => {
-    setQuery(urlQuery);
+    setQuery((current) => (current.trim() === urlQuery ? current : urlQuery));
   }, [urlQuery]);
 
+  // Yazarken her tuşta istek atılmaz: 300 ms sonra adrese yazılır, liste ondan yüklenir.
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedQuery(query.trim());
-      setPage(1);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [query]);
+    const trimmed = query.trim();
+    if (trimmed === urlQuery) return;
+    const timer = window.setTimeout(() => setParams({ q: trimmed || null, sayfa: null }), 300);
+    return () => window.clearTimeout(timer);
+  }, [query, urlQuery, setParams]);
 
-  const load = useCallback(async (force = false) => {
-    const requestId = ++loadSequenceRef.current;
-    setLoading(true);
-    setError(null);
-    setForbidden(false);
+  // Üst bardaki "Yeni > Hasta" ve diğer ekranlardan gelen ?yeni=1 formu açar (tek seferlik).
+  useEffect(() => {
+    if (!wantsCreate || window.location.pathname !== LIST_PATH) return;
+    setParams({ yeni: null });
+    if (canWritePatients) {
+      setCreateInitial(undefined);
+      setShowCreate(true);
+    }
+  }, [wantsCreate, canWritePatients, setParams]);
+
+  // Adresten gelen doktor filtresinin adı (etikette). Doktor seçiciyle aynı
+  // önbellekli istek kullanılır; ayrıca ağ isteği atılmaz.
+  useEffect(() => {
+    if (!doctorId) {
+      setDoctorName("");
+      return;
+    }
+    if (doctorName) return;
+    let active = true;
+    cachedGet<StaffLike[]>("/api/staff", 60_000, { throwOnError: true })
+      .then((staff) => { if (active) setDoctorName(staff?.find((person) => person.id === doctorId)?.fullName || ""); })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [doctorId, doctorName]);
+
+  /**
+   * mode "user": arama/filtre/sayfa değişti — hata olursa liste yerine hata
+   * gösterilir (eski satırlar yeni filtreye ait değil). mode "silent": arka
+   * plan yenilemesi — hata olursa liste yerinde kalır, üstte ince şerit
+   * çıkar (önceden geçici bir kopukta liste hata kutusuyla değişiyordu).
+   */
+  const load = useCallback(async (mode: "user" | "silent" = "user") => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const requestId = ++requestRef.current;
+    if (mode === "user") setLoading(true);
     const params = new URLSearchParams({
-      q: debouncedQuery,
+      q: urlQuery,
       page: String(page),
       take: String(pageSize),
-      sortBy: sort.key,
-      sortDir: sort.dir,
+      sortBy: sortByName ? "fullName" : "createdAt",
+      sortDir: sortByName && !sortNameDesc ? "asc" : "desc",
       extras: "1",
+      summary: "false",
     });
     if (doctorId) params.set("doctorId", doctorId);
-    if (smsConsentFilter) params.set("smsConsent", smsConsentFilter);
-    // Üstteki "Bu ay yeni" sayısı filtreden bağımsızdır; yalnız ilk açılışta
-    // ve kayıt değişince (force) istenir.
-    if (summaryLoadedRef.current && !force) params.set("summary", "false");
+    if (smsConsent) params.set("smsConsent", smsConsent);
 
     try {
       // cachedGet kasıtlı kullanılmıyor: 403'ü "kayıt yok"tan ayırmak gerekir.
-      const res = await fetch(`/api/patients?${params.toString()}`, { cache: "no-store" });
-      if (requestId !== loadSequenceRef.current) return;
+      const res = await fetch(`/api/patients?${params.toString()}`, { cache: "no-store", signal: controller.signal });
+      const json = await res.json().catch(() => null);
+      if (requestId !== requestRef.current) return;
       if (res.status === 401 || res.status === 403) {
-        setForbidden(true);
+        setForbidden(typeof json?.message === "string" && json.message ? json.message : "Hasta listesini görme izniniz yok.");
         setPatients([]);
-        setTotal(0);
-        setPageCount(1);
+        hasDataRef.current = false;
         return;
       }
-      const json: PatientResponse = await res.json().catch(() => ({ patients: [], total: 0, pageCount: 1 }));
-      if (!res.ok) throw new Error(json.message || "Hasta listesi yüklenemedi.");
-      if (requestId !== loadSequenceRef.current) return;
-      const nextPageCount = Math.max(1, Number(json.pageCount || 1));
+      if (!res.ok) throw new Error(json?.message || "Hasta listesi yüklenemedi.");
+      const nextPageCount = Math.max(1, Number(json?.pageCount || 1));
       if (page > nextPageCount) {
-        setPageCount(nextPageCount);
-        setPage(nextPageCount);
+        setParams({ sayfa: nextPageCount > 1 ? String(nextPageCount) : null });
         return;
       }
-      setPatients(Array.isArray(json.patients) ? json.patients : []);
-      setTotal(Number(json.total || 0));
+      setForbidden(null);
+      setPatients(Array.isArray(json?.patients) ? json.patients : []);
+      setTotal(Number(json?.total || 0));
       setPageCount(nextPageCount);
-      if (json.summary) {
-        summaryLoadedRef.current = true;
-        setSummary(json.summary);
-      }
+      setError(null);
+      setStaleError(null);
+      hasDataRef.current = true;
+      lastLoadAtRef.current = Date.now();
     } catch (err) {
-      if (requestId !== loadSequenceRef.current) return;
-      setError(err instanceof Error ? err.message : "Hasta listesi yüklenemedi.");
+      if (controller.signal.aborted || requestId !== requestRef.current) return;
+      const message = err instanceof Error && err.message !== "Failed to fetch"
+        ? err.message
+        : "Bağlantı kurulamadı. İnternet bağlantınızı kontrol edin.";
+      if (mode === "silent" && hasDataRef.current) {
+        setStaleError(message);
+      } else {
+        setError(message);
+        setPatients([]);
+        hasDataRef.current = false;
+      }
     } finally {
-      if (requestId === loadSequenceRef.current) setLoading(false);
+      if (requestId === requestRef.current) setLoading(false);
     }
-  }, [debouncedQuery, doctorId, smsConsentFilter, page, pageSize, sort]);
+  }, [urlQuery, page, pageSize, sortByName, sortNameDesc, doctorId, smsConsent, setParams]);
 
   useEffect(() => {
-    void load();
+    void load("user");
   }, [load]);
 
+  useEffect(() => () => abortRef.current?.abort(), []);
+
+  // Gerçek zamanlı yenileme: klinikteki her değişiklikte 300 ms'de bir değil,
+  // en çok 10 sn'de bir ve yalnız sekme görünürken (gizliyken birikir,
+  // görünür olunca bir kez). Kendi kaydımızın yankısı yok sayılır.
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let pendingWhileHidden = false;
+    const schedule = (delay: number) => {
+      if (timer) return;
+      timer = setTimeout(() => {
+        timer = null;
+        if (document.hidden) {
+          pendingWhileHidden = true;
+          return;
+        }
+        void load("silent");
+      }, delay);
+    };
     const onRealtime = () => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => void load(true), 300);
+      if (Date.now() < ignoreRealtimeUntilRef.current) return;
+      if (document.hidden) {
+        pendingWhileHidden = true;
+        return;
+      }
+      schedule(Math.max(500, REALTIME_MIN_INTERVAL_MS - (Date.now() - lastLoadAtRef.current)));
+    };
+    const onVisibility = () => {
+      if (document.hidden || !pendingWhileHidden) return;
+      pendingWhileHidden = false;
+      schedule(300);
     };
     window.addEventListener("ks:realtime-sync", onRealtime);
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       if (timer) clearTimeout(timer);
       window.removeEventListener("ks:realtime-sync", onRealtime);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [load]);
 
-  const archive = async (patient: Patient) => {
-    const confirmed = await confirmDialog({
-      title: `"${patient.fullName}" arşivlensin mi?`,
-      message: "Hasta aktif listeden kaldırılır. Tedavi, ödeme, laboratuvar ve yasal kayıt geçmişi korunur; ileri tarihli randevuları iptal edilir.",
-      danger: true,
-      confirmText: "Arşivle",
-    });
-    if (!confirmed) return;
-    try {
-      await clientMutation(`/api/patients/${patient.id}`, { method: "DELETE" }, "Hasta arşivlenemedi.");
-      showToastSafe({ title: "Hasta arşivlendi", message: `${patient.fullName} aktif listeden kaldırıldı.`, type: "success" });
-      void load(true);
-    } catch (archiveError) {
-      showToastSafe({ title: "Hasta arşivlenemedi", message: archiveError instanceof Error ? archiveError.message : "Lütfen tekrar deneyin.", type: "error" });
-    }
+  /** Kendi kaydımızdan sonra hemen yenile; ardından gelen gerçek zamanlı yankıyı yok say. */
+  const reloadAfterOwnChange = () => {
+    ignoreRealtimeUntilRef.current = Date.now() + 3_000;
+    void load("silent");
   };
 
-  const bookAppointment = (patient: Patient) => {
-    router.push(`/randevu?newPatientId=${patient.id}&newPatientName=${encodeURIComponent(patient.fullName)}`);
+  // ── Hasta dosyasına hızlı geçiş: imleç satırda durunca (150 ms) ya da
+  // satıra dokununca/odaklanınca dosya sayfası önceden hazırlanır.
+  const prefetchedRef = useRef(new Set<string>());
+  const hoverRef = useRef<{ id: string | null; timer: number | null }>({ id: null, timer: null });
+  const prefetchPatient = useCallback((id: string) => {
+    if (prefetchedRef.current.has(id)) return;
+    prefetchedRef.current.add(id);
+    router.prefetch(`/hasta-detay?id=${encodeURIComponent(id)}`);
+    // router.prefetch tarayıcıda çizilen (ssr:false) dosya içeriğinin kodunu
+    // ısıtmaz; içerik parçası da indirilir. Hasta verisi istenmez (KVKK
+    // erişim kaydı ancak dosya gerçekten açılınca yazılır).
+    preloadHastaDosyasi();
+  }, [router]);
+  const rowPatientId = (target: EventTarget | null) => {
+    const row = target instanceof Element ? target.closest("[role='button']") : null;
+    return row?.querySelector<HTMLElement>("[data-patient-id]")?.dataset.patientId || null;
+  };
+  const onListPointerOver = (event: PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType !== "mouse") return;
+    const id = rowPatientId(event.target);
+    if (id === hoverRef.current.id) return;
+    if (hoverRef.current.timer) window.clearTimeout(hoverRef.current.timer);
+    hoverRef.current = { id, timer: id ? window.setTimeout(() => prefetchPatient(id), 150) : null };
+  };
+  const onListFocus = (event: FocusEvent<HTMLDivElement>) => {
+    const id = rowPatientId(event.target);
+    if (id) prefetchPatient(id);
+  };
+  const onListTouchStart = (event: TouchEvent<HTMLDivElement>) => {
+    const id = rowPatientId(event.target);
+    if (id) prefetchPatient(id);
+  };
+  useEffect(() => () => {
+    if (hoverRef.current.timer) window.clearTimeout(hoverRef.current.timer);
+  }, []);
+
+  const openCreate = (initial?: PatientFormInitialValues) => {
+    setCreateInitial(initial);
+    setShowCreate(true);
   };
 
-  const openPatient = (patient: Patient) => router.push(`/hasta-detay?id=${patient.id}`);
+  const appointmentHref = (patient: { id: string; fullName: string }) =>
+    `/randevu?yeni=1&patientId=${encodeURIComponent(patient.id)}&patientName=${encodeURIComponent(patient.fullName)}`;
 
-  const clearSmsFilter = () => {
-    setSmsConsentFilter("");
-    setPage(1);
-    window.history.replaceState(null, "", "/hasta");
+  const openPatient = (patient: Patient) => router.push(`/hasta-detay?id=${encodeURIComponent(patient.id)}`);
+
+  const changePage = (nextPage: number) => {
+    setParams({ sayfa: nextPage > 1 ? String(nextPage) : null });
+    const top = listTopRef.current?.getBoundingClientRect().top;
+    if (top !== undefined && top < 0) listTopRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
   };
 
-  const resetFilters = () => {
+  const clearFilters = () => setParams({ doktor: null, smsConsent: null, sayfa: null });
+  const clearSearch = () => {
     setQuery("");
-    setDebouncedQuery("");
-    setDoctorId("");
-    setDoctorName("");
-    if (smsConsentFilter) clearSmsFilter();
-    setPage(1);
+    setParams({ q: null, sayfa: null });
   };
 
   const activeFilters: ActiveFilter[] = [
     ...(doctorId ? [{
       key: "doctor",
-      label: `Doktorun hastaları: ${doctorName || "Seçili doktor"}`,
-      onRemove: () => { setDoctorId(""); setDoctorName(""); setPage(1); },
+      label: `Doktorun hastaları: ${doctorName || "seçili doktor"}`,
+      onRemove: () => setParams({ doktor: null, sayfa: null }),
     }] : []),
-    ...(smsConsentFilter ? [{
+    ...(smsConsent ? [{
       key: "sms",
-      label: SMS_CONSENT_FILTER_LABELS[smsConsentFilter] || "SMS izni",
-      onRemove: clearSmsFilter,
+      label: smsConsentFilterLabel(smsConsent),
+      onRemove: () => setParams({ smsConsent: null, sayfa: null }),
     }] : []),
   ];
-  const isFiltered = Boolean(debouncedQuery || doctorId || smsConsentFilter);
+  const hasFilters = activeFilters.length > 0;
 
   // Yetkiye göre gelen ek alanlar: yetki yoksa API alanı hiç göndermez.
   const showVisits = patients.some((patient) => patient.nextAppointment !== undefined);
   const showBalance = patients.some((patient) => patient.balance !== undefined);
 
+  const menuItems = (patient: Patient): ActionMenuItem[] => {
+    const items: ActionMenuItem[] = [];
+    if (canWritePatients) items.push({ key: "edit", label: "Bilgileri düzenle", icon: Pencil, onSelect: () => setEditPatientId(patient.id) });
+    if (canMessage) {
+      items.push({
+        key: "sms",
+        label: "Mesaj gönder",
+        icon: MessageSquare,
+        href: `/sms?tab=gonder&patientId=${encodeURIComponent(patient.id)}&patientName=${encodeURIComponent(patient.fullName)}`,
+      });
+    }
+    if (canDeletePatients) {
+      items.push({
+        key: "archive",
+        label: "Arşivle",
+        icon: Archive,
+        danger: true,
+        separatorBefore: items.length > 0,
+        onSelect: () => setArchiveTarget({ id: patient.id, fullName: patient.fullName }),
+      });
+    }
+    return items;
+  };
+
+  // Satırda en sık eylem görünür (randevu ver); düzenleme, mesaj ve nadir
+  // arşivleme "…" menüsünde. Önceden her satırda kırmızı arşiv düğmesi vardı.
   const rowActions = (patient: Patient) => (
     <div className="flex items-center justify-end gap-1.5">
       {canBookAppointments && (
-        <IconButton icon={CalendarPlus} title="Randevu ver" tone="primary" onClick={() => bookAppointment(patient)} />
+        <IconButton icon={CalendarPlus} title="Randevu ver" tone="primary" href={appointmentHref(patient)} />
       )}
-      {canWritePatients && (
-        <IconButton icon={Pencil} title="Bilgileri düzenle" onClick={() => setEditPatientId(patient.id)} />
-      )}
-      {canDeletePatients && (
-        <IconButton icon={Archive} title={`${patient.fullName} hastasını arşivle`} tone="danger" onClick={() => void archive(patient)} />
-      )}
+      <ActionMenu items={menuItems(patient)} label={`${patient.fullName} için diğer işlemler`} />
     </div>
   );
+
+  const factsLine = (patient: Patient) =>
+    [patientFacts(patient), maskedIdentityLabel(patient)].filter(Boolean).join(" · ");
 
   const columns: ListTableColumn<Patient>[] = [
     {
       key: "fullName",
       header: "Hasta",
-      sortKey: "fullName",
       render: (patient) => (
-        <div className="min-w-0">
+        <div className="min-w-0" data-patient-id={patient.id}>
           <p className="font-bold text-slate-900">{patient.fullName}</p>
-          <p className="text-xs text-slate-500">
-            {[patientFacts(patient), !hidePhone && patient.tcNo ? `TC ${patient.tcNo}` : ""].filter(Boolean).join(" · ") || "—"}
-          </p>
-          <PatientBadges patient={patient} />
+          <p className="text-xs text-slate-500">{factsLine(patient) || "—"}</p>
+          <RiskBadges patient={patient} />
         </div>
       ),
     },
@@ -327,15 +459,15 @@ function HastaContent() {
       key: "phone",
       header: "Telefon",
       cellClassName: "whitespace-nowrap",
-      render: (patient: Patient) => patient.phone ? (
-        <a href={telHref(patient.phone)} className="tabular-nums text-slate-700 hover:text-primary hover:underline">{formatPhoneNumber(patient.phone)}</a>
-      ) : <EmptyValue />,
+      render: (patient: Patient) => {
+        const text = formatPatientPhone(patient.phone, patient.phoneCountryCode);
+        const href = patientTelHref(patient.phone, patient.phoneCountryCode);
+        if (!text) return <EmptyValue />;
+        return href
+          ? <a href={href} className="tabular-nums text-slate-700 hover:text-primary hover:underline">{text}</a>
+          : <span className="tabular-nums text-slate-700">{text}</span>;
+      },
     }] : []),
-    {
-      key: "insurance",
-      header: "Anlaşmalı kurum",
-      render: (patient) => patient.insurance?.trim() ? <Badge tone="neutral">{patient.insurance}</Badge> : <EmptyValue />,
-    },
     ...(showVisits ? [{
       key: "lastVisit",
       header: "Son ziyaret",
@@ -348,7 +480,7 @@ function HastaContent() {
       header: "Sonraki randevu",
       render: (patient: Patient) => patient.nextAppointment ? (
         <div className="whitespace-nowrap">
-          <p className="font-semibold tabular-nums text-slate-800">{appointmentText(patient.nextAppointment)}</p>
+          <p className="font-semibold tabular-nums text-slate-800">{formatDateText(patient.nextAppointment.startAt, "datetime")}</p>
           {patient.nextAppointment.doctorName && <p className="text-xs text-slate-500">{patient.nextAppointment.doctorName}</p>}
         </div>
       ) : <EmptyValue />,
@@ -368,111 +500,161 @@ function HastaContent() {
     },
   ];
 
-  const mobileCard = (patient: Patient) => (
-    <div className="space-y-1.5">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="font-bold text-slate-900">{patient.fullName}</p>
-          <p className="text-xs text-slate-500">
-            {[patientFacts(patient), patient.insurance?.trim() || ""].filter(Boolean).join(" · ") || "—"}
-          </p>
+  const mobileCard = (patient: Patient) => {
+    const phoneText = formatPatientPhone(patient.phone, patient.phoneCountryCode);
+    const phoneHref = patientTelHref(patient.phone, patient.phoneCountryCode);
+    return (
+      <div className="space-y-1.5" data-patient-id={patient.id}>
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="font-bold text-slate-900">{patient.fullName}</p>
+            <p className="text-xs text-slate-500">{patientFacts(patient) || "—"}</p>
+          </div>
+          {/* Kartta etiketsiz "—" anlam taşımaz: yalnız borç ya da avans varsa yazılır. */}
+          {typeof patient.balance === "number" && Math.abs(patient.balance) >= 0.005 && (
+            <span className="shrink-0 text-sm"><BalanceText value={patient.balance} /></span>
+          )}
         </div>
-        <BalanceBadge value={patient.balance} />
+        <RiskBadges patient={patient} />
+        {patient.nextAppointment && (
+          <p className="text-xs text-slate-600">
+            Sonraki randevu: <span className="font-semibold tabular-nums text-slate-800">{formatDateText(patient.nextAppointment.startAt, "datetime")}</span>
+            {patient.nextAppointment.doctorName ? ` · ${patient.nextAppointment.doctorName}` : ""}
+          </p>
+        )}
+        <div className="flex items-center gap-1.5">
+          {!hidePhone && phoneText ? (
+            phoneHref ? (
+              <a href={phoneHref} className="inline-flex min-h-9 items-center gap-1.5 text-sm font-semibold tabular-nums text-primary">
+                <Phone className="h-4 w-4" aria-hidden="true" />
+                {phoneText}
+              </a>
+            ) : <span className="text-sm tabular-nums text-slate-700">{phoneText}</span>
+          ) : null}
+          <span className="flex-1" />
+          {rowActions(patient)}
+        </div>
       </div>
-      <PatientBadges patient={patient} />
-      {patient.nextAppointment && (
-        <p className="text-xs text-slate-600">
-          Sonraki randevu: <span className="font-semibold tabular-nums text-slate-800">{appointmentText(patient.nextAppointment)}</span>
-          {patient.nextAppointment.doctorName ? ` · ${patient.nextAppointment.doctorName}` : ""}
-        </p>
-      )}
-      <div className="flex items-center gap-1.5">
-        {!hidePhone && patient.phone ? (
-          <a href={telHref(patient.phone)} className="inline-flex min-h-9 items-center gap-1.5 text-sm font-semibold tabular-nums text-primary">
-            <Phone className="h-4 w-4" aria-hidden="true" />
-            {formatPhoneNumber(patient.phone)}
-          </a>
-        ) : null}
-        <span className="flex-1" />
-        {canBookAppointments && <IconButton icon={CalendarPlus} title="Randevu ver" tone="primary" onClick={() => bookAppointment(patient)} />}
-        {canWritePatients && <IconButton icon={Pencil} title="Bilgileri düzenle" onClick={() => setEditPatientId(patient.id)} />}
-        {canDeletePatients && <IconButton icon={Archive} title={`${patient.fullName} hastasını arşivle`} tone="danger" onClick={() => void archive(patient)} />}
-      </div>
-    </div>
-  );
+    );
+  };
 
-  const emptyAction = (
+  if (forbidden) {
+    return (
+      <section className="space-y-4">
+        <PageHeader icon="users" title="Hastalar" />
+        <StatusPage kind="forbidden" headingAs="h2" title="Hasta listesini görme izniniz yok" description={forbidden} />
+      </section>
+    );
+  }
+
+  const searchEmpty = Boolean(urlQuery);
+  const emptyAction = searchEmpty || hasFilters ? (
     <div className="flex flex-wrap justify-center gap-2">
-      {canWritePatients && <Button size="sm" icon={UserPlus} onClick={() => setShowCreate(true)}>Yeni hasta kaydet</Button>}
-      {isFiltered && <Button size="sm" variant="secondary" onClick={resetFilters}>Aramayı temizle</Button>}
+      {searchEmpty && canWritePatients && (
+        <Button size="sm" variant="secondary" icon={UserPlus} onClick={() => openCreate(initialValuesFromQuery(urlQuery))}>
+          Yeni hasta olarak kaydet
+        </Button>
+      )}
+      {searchEmpty
+        ? <Button size="sm" variant="ghost" onClick={clearSearch}>Aramayı temizle</Button>
+        : <Button size="sm" variant="ghost" onClick={clearFilters}>Filtreleri temizle</Button>}
     </div>
-  );
+  ) : undefined;
 
   return (
-    <section className="space-y-3">
+    <section className="space-y-4">
       <PageHeader
         icon="users"
         title="Hastalar"
-        description="Hastayı adı, TC'si veya telefonuyla bulun; dosyasını açın ya da randevu verin."
-        stats={summary ? [{ label: "Bu ay yeni kayıt", value: summary.newThisMonth.toLocaleString("tr-TR"), color: "text-emerald-700" }] : undefined}
-        actions={canWritePatients ? <Button icon={UserPlus} onClick={() => setShowCreate(true)}>Yeni Hasta</Button> : undefined}
+        actions={canWritePatients ? <Button icon={UserPlus} onClick={() => openCreate()}>Yeni hasta</Button> : undefined}
       />
 
-      <Toolbar>
+      <Toolbar
+        filterCount={activeFilters.length}
+        filters={(
+          <>
+            <DoctorSelect
+              value={doctorId}
+              onChange={(id, doctor) => {
+                setDoctorName(doctor?.fullName || "");
+                setParams({ doktor: id || null, sayfa: null });
+              }}
+              emptyLabel="Tüm doktorlar"
+              aria-label="Doktora göre: bu doktordan randevu ya da tedavi almış hastalar"
+              className="sm:w-52"
+            />
+            <Select
+              value={sortNameDesc ? "ad-za" : sortByName ? "ad" : ""}
+              onChange={(event) => setParams({ sirala: event.target.value || null, sayfa: null })}
+              aria-label="Sıralama"
+              className="sm:w-48"
+            >
+              <option value="">Son eklenen önce</option>
+              <option value="ad">Ada göre (A–Z)</option>
+              <option value="ad-za">Ada göre (Z–A)</option>
+            </Select>
+          </>
+        )}
+      >
         <SearchInput
           value={query}
           onChange={setQuery}
-          placeholder="Ad, TC veya telefon ara"
-          aria-label="Hasta ara: ad, TC, telefon, anlaşmalı kurum veya yönlendiren kişi"
+          // Telefonu/TC'yi göremeyen rolde arama numarayla eşleşmez (sunucu kuralı).
+          placeholder={hidePhone ? "Ad veya kurum ara" : "Ad, TC, telefon veya kurum ara"}
+          aria-label={hidePhone
+            ? "Hasta ara: ad, anlaşmalı kurum, meslek ya da yönlendiren"
+            : "Hasta ara: ad, TC, telefon, anlaşmalı kurum, meslek ya da yönlendiren"}
           slashShortcut
           wrapperClassName="flex-1 min-w-[220px]"
         />
-        <DoctorSelect
-          value={doctorId}
-          onChange={(id, doctor) => { setDoctorId(id); setDoctorName(doctor?.fullName || ""); setPage(1); }}
-          emptyLabel="Tüm doktorların hastaları"
-          aria-label="Doktora göre: bu doktordan randevu veya muayene almış hastalar"
-          className="sm:w-64"
-        />
       </Toolbar>
-      <ActiveFilters filters={activeFilters} onClearAll={resetFilters} />
+      <ActiveFilters filters={activeFilters} onClearAll={clearFilters} />
 
-      <ListTable<Patient>
-        columns={columns}
-        rows={patients}
-        rowKey={(patient) => patient.id}
-        loading={loading}
-        error={forbidden ? "Hasta listesini görme yetkiniz yok." : error}
-        onRetry={forbidden ? undefined : () => void load(true)}
-        onRowClick={openPatient}
-        getRowAriaLabel={(patient) => `${patient.fullName} hasta dosyasını aç`}
-        mobileCard={mobileCard}
-        sort={sort.key === "fullName" ? { key: "fullName", dir: sort.dir } satisfies ListSort : null}
-        onSortChange={() => {
-          setPage(1);
-          setSort((current) => current.key === "fullName"
-            ? (current.dir === "asc" ? { key: "fullName", dir: "desc" } : { key: "createdAt", dir: "desc" })
-            : { key: "fullName", dir: "asc" });
-        }}
-        emptyText={isFiltered ? "Aramanıza uyan hasta yok" : "Henüz hasta kaydı yok"}
-        emptyDescription={isFiltered
-          ? "Yazımı kontrol edin; hasta kayıtlı değilse yeni kayıt açabilirsiniz."
-          : "İlk hastanızı kaydederek başlayın."}
-        emptyAction={canWritePatients || isFiltered ? emptyAction : undefined}
-        pager={{
-          page,
-          pageCount,
-          pageSize,
-          pageSizeOptions: PAGE_SIZES,
-          total,
-          loading,
-          onPageChange: setPage,
-          onPageSizeChange: (size) => { setPageSize(size); setPage(1); },
-        }}
-      />
+      <div
+        ref={listTopRef}
+        className="scroll-mt-4"
+        onPointerOver={onListPointerOver}
+        onFocus={onListFocus}
+        onTouchStart={onListTouchStart}
+      >
+        <ListTable<Patient>
+          columns={columns}
+          rows={patients}
+          rowKey={(patient) => patient.id}
+          loading={loading}
+          skeletonRows={8}
+          error={error}
+          staleError={staleError}
+          onRetry={() => void load(error ? "user" : "silent")}
+          onRowClick={openPatient}
+          getRowAriaLabel={(patient) => `${patient.fullName} hasta dosyasını aç`}
+          mobileCard={mobileCard}
+          emptyText={searchEmpty ? "Aramanıza uyan hasta yok" : hasFilters ? "Bu filtreye uyan hasta yok" : "Henüz hasta kaydı yok"}
+          emptyDescription={searchEmpty
+            ? "Yazımı kontrol edin; hasta kayıtlı değilse yeni hasta olarak kaydedin."
+            : hasFilters ? undefined : canWritePatients ? "İlk hastayı \"Yeni hasta\" ile kaydedin." : undefined}
+          emptyAction={emptyAction}
+          pager={{
+            page,
+            pageCount,
+            pageSize,
+            pageSizeOptions: PAGE_SIZES,
+            total,
+            loading,
+            onPageChange: changePage,
+            onPageSizeChange: (size) => setParams({ boyut: size !== DEFAULT_PAGE_SIZE ? String(size) : null, sayfa: null }),
+          }}
+        />
+      </div>
 
       {canWritePatients && (
-        <PatientFormModal open={showCreate} onClose={closeCreate} onSaved={(patient) => router.push(`/hasta-detay?id=${patient.id}`)} />
+        <PatientFormModal
+          open={showCreate}
+          onClose={() => setShowCreate(false)}
+          initialValues={createInitial}
+          onSaved={(patient) => router.push(`/hasta-detay?id=${encodeURIComponent(patient.id)}`)}
+          onBookAppointment={canBookAppointments ? (patient) => router.push(appointmentHref(patient)) : undefined}
+        />
       )}
       {canWritePatients && (
         <PatientFormModal
@@ -480,22 +662,29 @@ function HastaContent() {
           onClose={() => setEditPatientId(null)}
           patientId={editPatientId || undefined}
           hidePhoneField={hidePhone}
-          onSaved={() => void load(true)}
+          onSaved={(patient) => {
+            showToastSafe({ type: "success", message: `${patient.fullName} bilgileri güncellendi.` });
+            reloadAfterOwnChange();
+          }}
+        />
+      )}
+      {canDeletePatients && (
+        <ArchivePatientModal
+          patient={archiveTarget}
+          onClose={() => setArchiveTarget(null)}
+          onArchived={(patient) => {
+            showToastSafe({ type: "success", title: "Hasta arşivlendi", message: `${patient.fullName} aktif listeden kaldırıldı.` });
+            reloadAfterOwnChange();
+          }}
         />
       )}
     </section>
   );
 }
 
-/** Mobil kartta yalnız borç varsa küçük kırmızı etiket. */
-function BalanceBadge({ value }: { value: number | null | undefined }) {
-  if (value === null || value === undefined || value < 0.005) return null;
-  return <Badge tone="critical">Borç {formatCurrency(value)}</Badge>;
-}
-
 export default function HastaPage() {
   return (
-    <Suspense fallback={<div className="py-20" aria-hidden="true" />}>
+    <Suspense fallback={<HastaListesiIskelet />}>
       <HastaContent />
     </Suspense>
   );

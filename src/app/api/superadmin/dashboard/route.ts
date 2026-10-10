@@ -2,11 +2,11 @@ import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import { summarizeInvoices } from "@/components/superadmin/invoice-status";
-import { institutionState } from "@/components/superadmin/sa-labels";
+import { LOW_SMS_THRESHOLD, PLATFORM_EVENT_ACTIONS, institutionState } from "@/components/superadmin/sa-labels";
+import { attachAuditActors } from "../audit/audit-actors";
 
 export const dynamic = "force-dynamic";
 
-const LOW_SMS_THRESHOLD = 50;
 const DEMO_WARNING_DAYS = 7;
 
 // Kontrol Paneli: "bugün neyle ilgilenmeliyim?" sorusunun cevabı. Fatura
@@ -56,13 +56,22 @@ export async function GET() {
       orderBy: { createdAt: "desc" },
       include: { smsPackage: { select: { smsCount: true } }, institution: { select: { id: true, name: true } } },
     }),
-    // Giriş/çıkış kayıtları operatöre iş çıkarmaz; akışta yalnız değişiklikler.
+    // Son işlemler yalnız PLATFORM olaylarıdır (fatura, klinik açma/kapama,
+    // gizli giriş, SMS satışı, ayar değişikliği). Önceden kliniklerin rutin
+    // işlemleri (randevu, bekleme listesi…) ve metinlerindeki hasta adları
+    // platformun ilk ekranını dolduruyordu (canlı test H9, K1). Tüm kayıtlar
+    // Denetim Günlüğü'nde; 30 gün sınırı taramayı tarih indeksinde tutar.
     prisma.auditLog.findMany({
-      where: { action: { notIn: ["LOGIN", "LOGOUT"] } },
+      where: {
+        createdAt: { gte: new Date(now.getTime() - 30 * 86_400_000) },
+        OR: [{ action: { startsWith: "SUPERADMIN_" } }, { action: { in: [...PLATFORM_EVENT_ACTIONS] } }],
+      },
       take: 8,
       orderBy: { createdAt: "desc" },
       select: {
         id: true,
+        userId: true,
+        actorId: true,
         action: true,
         detail: true,
         createdAt: true,
@@ -73,6 +82,7 @@ export async function GET() {
     }),
   ]);
 
+  const logsWithActors = await attachAuditActors(latestLogs);
   const iso = (value: Date | null) => (value ? value.toISOString() : null);
   const active = institutions.filter((item) => item.isActive);
   const blocked = active.filter((item) => institutionState({
@@ -115,7 +125,7 @@ export async function GET() {
       amount: Number(t.totalPrice),
       createdAt: t.createdAt.toISOString(),
     })),
-    latestLogs: latestLogs.map((log) => ({
+    latestLogs: logsWithActors.map((log) => ({
       id: log.id,
       action: log.action,
       detail: log.detail,
@@ -123,6 +133,7 @@ export async function GET() {
       isGhost: log.isGhost,
       actorRole: log.actorRole,
       user: log.user ? { fullName: log.user.fullName, role: log.user.role, institution: log.user.institution } : null,
+      actor: log.actor,
     })),
   });
 }

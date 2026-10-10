@@ -4,6 +4,12 @@ import type { BadgeTone } from "@/components/ui/Badge";
 // Kod adları (SUPPRESSED, APPOINTMENT_REMINDER, WHATSAPP...) kullanıcıya
 // gösterilmez; her ekran bu haritaları kullanır.
 
+/**
+ * "Kredi iste": destek formu konu ve metin dolu açılır (önceden boş forma
+ * gidiyordu; yönetici isteği baştan yazıyordu — A7).
+ */
+export const SMS_CREDIT_REQUEST_HREF = `/destek?yeni=1&konu=SMS&metin=${encodeURIComponent("SMS kredisi yüklenmesini rica ediyoruz.")}`;
+
 export type Channel = "SMS" | "WHATSAPP";
 export type ChannelPreference = "AUTO" | "SMS" | "WHATSAPP";
 
@@ -49,20 +55,23 @@ export const EVENT_FILTER_OPTIONS = [
 
 export type DispatchStatus = "QUEUED" | "SENT" | "DELIVERED" | "READ" | "FAILED" | "SUPPRESSED";
 
+// "Gönderilmedi" (izin/kredi yüzünden hiç denenmedi) ile "Gönderilemedi"
+// (sağlayıcı hatası) neredeyse aynı sözcüktü; kullanıcı ayırt edemiyordu.
+// Neden her zaman rozetin altında kısa cümleyle yazılır.
 export const DISPATCH_STATUS: Record<DispatchStatus, { label: string; tone: BadgeTone }> = {
   SENT: { label: "Gönderildi", tone: "success" },
   DELIVERED: { label: "Teslim edildi", tone: "success" },
   READ: { label: "Okundu", tone: "success" },
-  SUPPRESSED: { label: "Gönderilmedi", tone: "warning" },
-  FAILED: { label: "Gönderilemedi", tone: "critical" },
+  SUPPRESSED: { label: "Gitmedi", tone: "warning" },
+  FAILED: { label: "Hata", tone: "critical" },
   QUEUED: { label: "Sonuç bekleniyor", tone: "info" },
 };
 
 /** Gönderim Geçmişi durum süzgeci: adres çubuğundaki ?durum= değeri → API değeri. */
 export const STATUS_FILTER_OPTIONS = [
   { value: "gonderildi", api: "sent", label: "Gönderildi" },
-  { value: "gonderilmedi", api: "not-sent", label: "Gönderilmedi (izin, kredi vb.)" },
-  { value: "basarisiz", api: "failed", label: "Gönderilemedi (hata)" },
+  { value: "gonderilmedi", api: "not-sent", label: "Gitmedi" },
+  { value: "basarisiz", api: "failed", label: "Hata" },
   { value: "bekliyor", api: "pending", label: "Sonuç bekleniyor" },
 ] as const;
 
@@ -75,7 +84,7 @@ export function shortReason(reason: string | null | undefined): string | null {
   const text = reason.toLocaleLowerCase("tr-TR");
   if (text.includes("kesinleşmedi")) return "Sonuç belirsiz — tekrar göndermeyin";
   if (text.includes("sms iletişim izni")) return "Hastanın SMS izni yok";
-  if (text.includes("whatsapp iletişim izni")) return "Hastanın WhatsApp izni yok";
+  if (text.includes("whatsapp iletişim izni") || text.includes("whatsapp'tan mesaj almak istemiyor")) return "Hasta WhatsApp istemiyor";
   if (text.includes("bakiyesi yetersiz") || text.includes("kredi")) return "SMS kredisi bitti";
   if (text.includes("gönderimini kapatmış")) return "SMS gönderimi kapalı";
   if (text.includes("telefon")) return "Telefon numarası geçersiz";
@@ -87,20 +96,9 @@ export function shortReason(reason: string | null | undefined): string | null {
   return reason.length > 60 ? `${reason.slice(0, 57)}…` : reason;
 }
 
-/** WhatsApp sağlayıcı hatalarını personelin anlayacağı dile çevirir. */
-export function friendlyWhatsappError(error: string | null | undefined): string | null {
-  if (!error) return null;
-  const text = error.toLocaleLowerCase("tr-TR");
-  if (text.includes("adresi tanımlı değil") || text.includes("no_active_provider") || text.includes("platform_not_ready") || text.includes("sağlayıcı")) {
-    return "WhatsApp bağlantısı kurulmamış olduğu için mesaj gönderilemedi.";
-  }
-  if (text.includes("24 saat")) return "24 saatlik yanıt süresi dolduğu için serbest mesaj gönderilemedi.";
-  if (text.includes("izin")) return "Hastanın WhatsApp izni olmadığı için mesaj gönderilemedi.";
-  return error;
-}
-
 export type ConsentStatus = "ENABLED" | "PENDING" | "DISABLED" | "EXPIRED" | "SEND_FAILED" | "NONE";
 
+/** SMS izni için TEK sözlük (api/sms/send ve api/sms/recipients türetilmiş durumu döndürür). */
 export const SMS_CONSENT: Record<ConsentStatus, { label: string; tone: BadgeTone }> = {
   ENABLED: { label: "SMS izni var", tone: "success" },
   PENDING: { label: "Onay bekliyor", tone: "warning" },
@@ -114,46 +112,31 @@ export function smsConsentOf(status: string | null | undefined) {
   return SMS_CONSENT[(status && status in SMS_CONSENT ? status : "NONE") as ConsentStatus];
 }
 
-/** "905552220012" → "+90 555 222 00 12" (WhatsApp numaraları ülke koduyla gelir). */
-export function formatWhatsappNumber(phone: string | null | undefined) {
-  const digits = (phone || "").replace(/\D/g, "");
-  if (digits.length === 12 && digits.startsWith("90")) {
-    return `+90 ${digits.slice(2, 5)} ${digits.slice(5, 8)} ${digits.slice(8, 10)} ${digits.slice(10)}`;
-  }
-  if (digits.length === 11 && digits.startsWith("0")) {
-    return `+90 ${digits.slice(1, 4)} ${digits.slice(4, 7)} ${digits.slice(7, 9)} ${digits.slice(9)}`;
-  }
-  return digits ? `+${digits}` : "—";
-}
+const SHORT_DATE = new Intl.DateTimeFormat("tr-TR", { day: "numeric", month: "short", timeZone: "Europe/Istanbul" });
+const SHORT_DATE_YEAR = new Intl.DateTimeFormat("tr-TR", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/Istanbul" });
+const TIME = new Intl.DateTimeFormat("tr-TR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Istanbul" });
+const YEAR = new Intl.DateTimeFormat("tr-TR", { year: "numeric", timeZone: "Europe/Istanbul" });
 
-const SHORT_DATE = new Intl.DateTimeFormat("tr-TR", { day: "numeric", month: "short" });
-const SHORT_DATE_YEAR = new Intl.DateTimeFormat("tr-TR", { day: "numeric", month: "short", year: "numeric" });
-const TIME = new Intl.DateTimeFormat("tr-TR", { hour: "2-digit", minute: "2-digit" });
-
-/** Liste zamanı: bugünse saat, dünse "Dün", bu yılsa "29 Tem", değilse "29 Tem 2025". */
-export function relativeStamp(value: string | Date) {
-  const date = typeof value === "string" ? new Date(value) : value;
-  const now = new Date();
-  const yesterday = new Date(now);
-  yesterday.setDate(now.getDate() - 1);
-  if (date.toDateString() === now.toDateString()) return TIME.format(date);
-  if (date.toDateString() === yesterday.toDateString()) return "Dün";
-  return date.getFullYear() === now.getFullYear() ? SHORT_DATE.format(date) : SHORT_DATE_YEAR.format(date);
-}
-
-/** "12 Eki 14:30" — gönderim geçmişi satırı için. */
+/** "12 Eki 14:30" — gönderim geçmişi satırı (bu yıldan değilse yıl da yazılır). */
 export function dateTimeStamp(value: string | Date) {
   const date = typeof value === "string" ? new Date(value) : value;
-  const now = new Date();
-  const day = date.getFullYear() === now.getFullYear() ? SHORT_DATE.format(date) : SHORT_DATE_YEAR.format(date);
+  const day = YEAR.format(date) === YEAR.format(new Date()) ? SHORT_DATE.format(date) : SHORT_DATE_YEAR.format(date);
   return `${day} ${TIME.format(date)}`;
+}
+
+function calendarDate(isoDate: string) {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  return new Date(year, (month || 1) - 1, day || 1, 12);
 }
 
 /** "24 Kasım 2026 Salı" — özel günün sıradaki tarihi. */
 export function longDateWithWeekday(isoDate: string) {
-  const [year, month, day] = isoDate.split("-").map(Number);
-  const date = new Date(year, (month || 1) - 1, day || 1, 12);
-  return new Intl.DateTimeFormat("tr-TR", { day: "numeric", month: "long", year: "numeric", weekday: "long" }).format(date);
+  return new Intl.DateTimeFormat("tr-TR", { day: "numeric", month: "long", year: "numeric", weekday: "long" }).format(calendarDate(isoDate));
+}
+
+/** "29 Ekim" — kısa özetlerde sıradaki özel gün. */
+export function dayAndMonth(isoDate: string) {
+  return new Intl.DateTimeFormat("tr-TR", { day: "numeric", month: "long" }).format(calendarDate(isoDate));
 }
 
 export function formatCount(value: number) {

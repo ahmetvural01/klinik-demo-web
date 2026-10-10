@@ -1,13 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
-import { FormErrorBanner, FormField } from "@/components/ui/FormField";
+import { FormModal } from "@/components/ui/FormModal";
+import { FormField } from "@/components/ui/FormField";
 import { Input } from "@/components/ui/Input";
 import { SmsMessageEditor } from "@/components/sms/SmsMessageEditor";
+import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
-import { toReadableText, toStoredText } from "@/lib/sms-template-placeholders";
+import { renderSmsPreview, toReadableText, toStoredText } from "@/lib/sms-template-placeholders";
 import {
   MANUAL_PLACEHOLDER_TOKENS,
   customTextCode,
@@ -34,25 +37,41 @@ type MessageTextModalProps = {
   whatsappConnected: boolean;
   previewContext: Partial<Record<string, string>>;
   previewWarning?: string;
+  /** Yalnız görüntüleme: metin ve (varsa) ek ayarlar salt okunur, altta "Kapat". */
   readOnly?: boolean;
-  onSaved: () => void;
+  /** Metin kaydedildi; `saved` listeyi sunucuya yeniden sormadan güncellemek için. */
+  onSaved: (saved?: MessageTemplate) => void;
+  /** Pencere açıklaması; verilmezse olay metninin kuralı. */
+  description?: string;
+  /** Metnin üstünde ek ayar alanları (ör. ödeme hatırlatma günleri). */
+  settings?: ReactNode;
+  /** Ek ayarlar değişti mi (Kaydet ve kaydedilmemiş değişiklik uyarısı için). */
+  settingsDirty?: boolean;
+  /** Ek ayar hatası (alanın altında gösterilir); varken kaydedilmez. */
+  settingsError?: string | null;
+  /** Kaydet: ek ayar değiştiyse metinden önce çağrılır; hata fırlatırsa pencere açık kalır. */
+  onSaveSettings?: () => Promise<void>;
+  /** Kliniğe özel metni silip sistemin hazır metnine dönme yetkisi (api/sms/templates DELETE). */
+  canResetToDefault?: boolean;
+  /** Hazır metne dönüldü; hazır metin (biliniyorsa) listeyi yerelde güncellemek için. */
+  onReset?: (template: MessageTemplate) => void;
 };
 
-type FormState = {
-  title: string;
-  content: string;
-  whatsappContent: string;
-  whatsappTemplateName: string;
-  whatsappTemplateLanguage: string;
-};
+type FormState = { title: string; content: string };
 
 const SMS_MAX = 1600;
 
+function messageOf(data: unknown, fallback: string) {
+  const message = data && typeof data === "object" ? (data as { message?: unknown }).message : undefined;
+  return typeof message === "string" && message.trim() ? message : fallback;
+}
+
 /**
  * Mesaj metni penceresi — hem otomatik olay metinleri ("Randevu hatırlatma"
- * metnini düzenle) hem kliniğin kayıtlı metinleri için TEK pencere. Olay
- * metninde yalnız metin değişir: başlık, kategori veya "aktif" gibi gönderimi
- * etkilemeyen alanlar gösterilmez. Kod alanı kullanıcıdan istenmez.
+ * metni) hem kliniğin kayıtlı metinleri için TEK pencere. Olay metninde yalnız
+ * metin (ve varsa zamanlama gibi ek ayar) değişir; kod alanı kullanıcıdan
+ * istenmez. Metni değiştirme yetkisi olmayan (ör. yalnız WhatsApp yetkili)
+ * kullanıcı metni salt okunur görür — önceden boş bir pencere açılıyordu.
  */
 export function MessageTextModal({
   open,
@@ -69,18 +88,23 @@ export function MessageTextModal({
   previewWarning,
   readOnly = false,
   onSaved,
+  description,
+  settings,
+  settingsDirty = false,
+  settingsError,
+  onSaveSettings,
+  canResetToDefault = false,
+  onReset,
 }: MessageTextModalProps) {
   const initial = useMemo<FormState>(() => ({
     title: template?.title || "",
     content: template ? toReadableText(template.content) : initialContent || "",
-    whatsappContent: template?.whatsappContent && template.whatsappContent !== template.content ? toReadableText(template.whatsappContent) : "",
-    whatsappTemplateName: template?.whatsappTemplateName || "",
-    whatsappTemplateLanguage: template?.whatsappTemplateLanguage || "tr",
   }), [initialContent, template]);
   const [form, setForm] = useState<FormState>(initial);
   const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
   const [saveError, setSaveError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [resetting, setResetting] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -89,100 +113,188 @@ export function MessageTextModal({
     setSaveError("");
   }, [initial, open]);
 
+  const viewOnly = readOnly || !canWriteSms;
   const tokens = mode === "event" && event ? event.placeholders : MANUAL_PLACEHOLDER_TOKENS;
   const placeholders = placeholdersFor(tokens);
-  const showWhatsapp = canWriteWhatsapp && whatsappConnected;
-  const dirty = JSON.stringify(form) !== JSON.stringify(initial);
+  const textDirty = form.title !== initial.title || form.content !== initial.content;
+  const dirty = textDirty || settingsDirty;
   const title = mode === "event"
     ? `${event?.title || template?.title || "Mesaj"} metni`
     : template ? "Kayıtlı metni düzenle" : "Yeni kayıtlı metin";
+  const modalDescription = description ?? (mode === "event" ? event?.detail : "Mesaj gönderirken “Hazır metin” listesinden seçilir.");
+  const canReset = !viewOnly && canResetToDefault && Boolean(template?.isCustom && template.hasDefault);
 
   const validate = () => {
     const next: Partial<Record<keyof FormState, string>> = {};
     if (mode === "custom" && !form.title.trim()) next.title = "Metne kısa bir ad verin (ör. “Tatil duyurusu”).";
-    if (canWriteSms && !form.content.trim()) next.content = "SMS metni boş olamaz.";
+    if (!form.content.trim()) next.content = "Mesaj metni boş olamaz.";
     next.content = next.content || unsupportedPlaceholderError(form.content, tokens);
     const cleaned = Object.fromEntries(Object.entries(next).filter(([, value]) => Boolean(value)));
     setErrors(cleaned);
     return Object.keys(cleaned).length === 0;
   };
 
-  const save = async () => {
-    if (readOnly || !validate()) return;
+  const saveText = async (): Promise<MessageTemplate> => {
+    const code = template?.code || customTextCode(form.title, existingCodes);
+    const content = toStoredText(form.content.trim());
+    const titleToSave = mode === "custom" ? form.title.trim() : template?.title || event?.title || code;
+    const response = await fetch("/api/sms/templates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        code,
+        title: titleToSave,
+        description: template?.description || undefined,
+        category: template?.category || "GENERAL",
+        content,
+        // Tek metin: eski, ayrı WhatsApp metni ve Meta kalıp adı temizlenir.
+        whatsappContent: canWriteWhatsapp ? "" : undefined,
+        whatsappTemplateName: canWriteWhatsapp ? "" : undefined,
+        // Metni kaydetmek "bu metin kullanılsın" demektir; eski bir "pasif"
+        // işareti metni sessizce devre dışı bırakmasın.
+        isActive: true,
+      }),
+    });
+    const data = await response.json().catch(() => null) as Partial<MessageTemplate> | null;
+    if (!response.ok) throw new Error(messageOf(data, "Metin kaydedilemedi."));
+    // Liste ekranda hemen güncellensin (önceden tüm liste yeniden çekiliyor,
+    // satır ~3 sn eski metni gösteriyordu). Hazır metne dönebilmek için
+    // sistem metni de saklanır.
+    return {
+      code,
+      title: data?.title || titleToSave,
+      description: data?.description ?? template?.description ?? null,
+      category: data?.category || template?.category || "GENERAL",
+      content: data?.content || content,
+      whatsappContent: data?.whatsappContent ?? null,
+      whatsappTemplateName: data?.whatsappTemplateName ?? null,
+      whatsappTemplateLanguage: data?.whatsappTemplateLanguage || "tr",
+      isActive: data?.isActive ?? true,
+      isCustom: true,
+      hasDefault: template?.hasDefault ?? false,
+      defaultTitle: template?.defaultTitle ?? (template && !template.isCustom ? template.title : undefined),
+      defaultContent: template?.defaultContent ?? (template && !template.isCustom ? template.content : undefined),
+      updatedAt: data?.updatedAt || new Date().toISOString(),
+    };
+  };
+
+  const submit = async (submitEvent: FormEvent<HTMLFormElement>) => {
+    submitEvent.preventDefault();
+    if (viewOnly || !dirty) return;
+    if (settingsError) return;
+    if (textDirty && !validate()) return;
     setSaving(true);
     setSaveError("");
     try {
-      const code = template?.code || customTextCode(form.title, existingCodes);
-      const response = await fetch("/api/sms/templates", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          code,
-          title: mode === "custom" ? form.title.trim() : template?.title || event?.title || code,
-          description: template?.description || undefined,
-          category: template?.category || "GENERAL",
-          content: canWriteSms ? toStoredText(form.content.trim()) : undefined,
-          // Tek metin: eski, ayrı WhatsApp metni ve Meta kalıp adı temizlenir.
-          whatsappContent: canWriteWhatsapp ? "" : undefined,
-          whatsappTemplateName: canWriteWhatsapp ? "" : undefined,
-          // Metni kaydetmek "bu metin kullanılsın" demektir; eski bir "pasif"
-          // işareti metni sessizce devre dışı bırakmasın.
-          isActive: true,
-        }),
+      if (settingsDirty && onSaveSettings) await onSaveSettings();
+      if (textDirty) onSaved(await saveText());
+      showToastSafe({
+        message: mode === "event" ? "Kaydedildi. Bundan sonraki mesajlarda bu ayar kullanılır." : "Kayıtlı metin kaydedildi.",
+        type: "success",
       });
-      const data = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(data?.message || "Metin kaydedilemedi.");
-      showToastSafe({ message: mode === "event" ? "Mesaj metni kaydedildi. Bundan sonraki mesajlarda bu metin kullanılır." : "Kayıtlı metin kaydedildi. Mesaj Gönder'de seçebilirsiniz.", type: "success" });
-      onSaved();
       onClose();
     } catch (error) {
-      setSaveError(error instanceof Error ? error.message : "Metin kaydedilemedi.");
+      setSaveError(error instanceof Error ? error.message : "Kaydedilemedi.");
     } finally {
       setSaving(false);
     }
   };
 
+  const resetToDefault = async () => {
+    if (!template) return;
+    const ok = await confirmDialog({
+      title: "Hazır metne dönülsün mü?",
+      message: `“${event?.title || template.defaultTitle || template.title}” için kliniğinize özel yazdığınız metin silinir; sistemin hazır metni kullanılır.`,
+      confirmText: "Hazır metne dön",
+      cancelText: "Vazgeç",
+    });
+    if (!ok) return;
+    setResetting(true);
+    setSaveError("");
+    try {
+      const response = await fetch(`/api/sms/templates?code=${encodeURIComponent(template.code)}`, { method: "DELETE" });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(messageOf(data, "Hazır metne dönülemedi."));
+      onReset?.({
+        ...template,
+        title: template.defaultTitle || template.title,
+        content: template.defaultContent || template.content,
+        isCustom: false,
+      });
+      showToastSafe({ message: "Hazır metne dönüldü.", type: "success" });
+      onClose();
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Hazır metne dönülemedi.");
+    } finally {
+      setResetting(false);
+    }
+  };
+
+  if (viewOnly) {
+    return (
+      <Modal
+        module="sms"
+        open={open}
+        onClose={onClose}
+        title={mode === "event" ? title : template?.title || "Kayıtlı metin"}
+        description={modalDescription}
+        size="lg"
+        trackFormChanges={false}
+        footer={<Button variant="secondary" onClick={onClose}>Kapat</Button>}
+      >
+        <div className="space-y-4">
+          {settings}
+          <div>
+            <p className="mb-1 text-xs font-semibold text-slate-500">Hastaya giden metin</p>
+            <p className="whitespace-pre-wrap break-words rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm leading-5 text-slate-800">
+              {template ? renderSmsPreview(template.content, previewContext) : "—"}
+            </p>
+          </div>
+        </div>
+      </Modal>
+    );
+  }
+
   return (
-    <Modal
+    <FormModal
       module="sms"
       open={open}
       onClose={onClose}
-      isDirty={!readOnly && dirty}
+      isDirty={dirty}
       title={title}
-      description={mode === "event" ? event?.when : "Mesaj Gönder ekranında seçip tekrar kullanabileceğiniz metin."}
+      description={modalDescription}
       size="lg"
-      footer={readOnly ? (
-        <Button variant="secondary" onClick={onClose}>Kapat</Button>
-      ) : (
-        <>
-          <Button variant="secondary" onClick={onClose} disabled={saving}>Vazgeç</Button>
-          <Button onClick={() => void save()} loading={saving}>Kaydet</Button>
-        </>
-      )}
+      onSubmit={submit}
+      submitting={saving}
+      submitDisabled={!dirty || Boolean(settingsError) || resetting}
+      error={saveError || null}
+      footerExtra={canReset ? (
+        <Button variant="ghost" icon={Undo2} loading={resetting} disabled={saving} onClick={() => void resetToDefault()}>
+          Hazır metne dön
+        </Button>
+      ) : undefined}
     >
-      <div className="space-y-4">
-        <FormErrorBanner message={saveError} />
-        {mode === "custom" && (
-          <FormField label="Metnin adı" required error={errors.title} hint="Listede bu adla görünür; hastaya gitmez.">
-            <Input value={form.title} maxLength={80} disabled={readOnly} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Ör. Bayram tatili duyurusu" />
-          </FormField>
-        )}
-        {canWriteSms || readOnly ? (
-          <SmsMessageEditor
-            value={form.content}
-            onChange={(content) => setForm({ ...form, content })}
-            placeholders={placeholders}
-            previewContext={previewContext}
-            previewWarning={previewWarning}
-            label="Mesaj metni"
-            hint={showWhatsapp ? "WhatsApp bağlıysa bu metin WhatsApp'tan, değilse SMS ile gider." : undefined}
-            error={errors.content}
-            maxLength={SMS_MAX}
-            disabled={readOnly}
-            required={!readOnly}
-          />
-        ) : null}
-      </div>
-    </Modal>
+      {settings}
+      {mode === "custom" && (
+        <FormField label="Metnin adı" required error={errors.title} hint="Listede bu adla görünür; hastaya gitmez.">
+          <Input value={form.title} maxLength={80} autoFocus onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Ör. Bayram tatili duyurusu" />
+        </FormField>
+      )}
+      <SmsMessageEditor
+        value={form.content}
+        onChange={(content) => {
+          setForm({ ...form, content });
+          if (errors.content) setErrors({ ...errors, content: undefined });
+        }}
+        placeholders={placeholders}
+        previewContext={previewContext}
+        previewWarning={previewWarning}
+        previewMode="auto"
+        label="Mesaj metni"
+        hint={canWriteWhatsapp && whatsappConnected ? "WhatsApp bağlıyken aynı metin WhatsApp'tan gider." : ""}
+        error={errors.content}
+        maxLength={SMS_MAX}
+      />
+    </FormModal>
   );
 }

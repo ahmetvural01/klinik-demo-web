@@ -74,12 +74,14 @@ export function clearBranchSensitiveClientCaches() {
   if (preservedPreviewRole) sessionStorage.setItem("dev-preview-role", preservedPreviewRole);
 
   try {
+    // "clinic-messages-last-seen:*" silinmez: önbellek değil okundu işaretidir
+    // ve anahtarı zaten şube kapsamlıdır. Önceden şubeye geri dönünce son 7
+    // günün mesajları yeniden "yeni" sayılıyordu (panel-cache-reset ile aynı kural).
     for (let index = localStorage.length - 1; index >= 0; index -= 1) {
       const key = localStorage.key(index);
       if (
         key?.startsWith("panel-alerts:")
         || key?.startsWith("clinic-unread-messages:")
-        || key?.startsWith("clinic-messages-last-seen:")
         || key?.startsWith("klinikcep-active-price-list:")
       ) localStorage.removeItem(key);
     }

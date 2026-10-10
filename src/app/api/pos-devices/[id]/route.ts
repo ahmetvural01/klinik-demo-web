@@ -18,11 +18,11 @@ export async function PUT(request: NextRequest, props: Params) {
   const branch = requireActiveBranch(auth.user.branchContext);
   if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
 
-  const body = await request.json();
+  const body = await request.json().catch(() => null);
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return NextResponse.json({ message: "Geçersiz istek" }, { status: 400 });
   }
-  const existing = await (prisma as any).posDevice.findFirst({
+  const existing = await prisma.posDevice.findFirst({
     where: {
       id: params.id,
       ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
@@ -37,19 +37,28 @@ export async function PUT(request: NextRequest, props: Params) {
     return NextResponse.json({ message: "Aktiflik bilgisi geçersiz" }, { status: 400 });
   }
 
-  const updated = await (prisma as any).posDevice.update({
-    where: {
-      id_institutionId_branchId: {
-        id: existing.id,
-        institutionId: existing.institutionId,
-        branchId: existing.branchId,
+  let updated;
+  try {
+    updated = await prisma.posDevice.update({
+      where: {
+        id_institutionId_branchId: {
+          id: existing.id,
+          institutionId: existing.institutionId,
+          branchId: existing.branchId,
+        },
       },
-    },
-    data: {
-      ...(body.name     !== undefined && { name:     body.name.trim() }),
-      ...(body.isActive !== undefined && { isActive: body.isActive }),
-    },
-  });
+      data: {
+        ...(body.name     !== undefined && { name:     String(body.name).trim() }),
+        ...(body.isActive !== undefined && { isActive: body.isActive }),
+      },
+    });
+  } catch (error) {
+    // Aynı şubede aynı adla ikinci cihaz olamaz; önceden sunucu hatası dönüyordu.
+    if (error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2002") {
+      return NextResponse.json({ message: "Bu isimde bir POS cihazı zaten var" }, { status: 409 });
+    }
+    throw error;
+  }
 
   const beforeParts: string[] = [];
   const afterParts: string[] = [];
@@ -82,7 +91,7 @@ export async function DELETE(_: NextRequest, props: Params) {
   const branch = requireActiveBranch(auth.user.branchContext);
   if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
 
-  const existing = await (prisma as any).posDevice.findFirst({
+  const existing = await prisma.posDevice.findFirst({
     where: {
       id: params.id,
       ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
@@ -91,9 +100,15 @@ export async function DELETE(_: NextRequest, props: Params) {
   });
   if (!existing) return NextResponse.json({ message: "POS cihazı bulunamadı" }, { status: 404 });
 
-  const paymentCount = await prisma.payment.count({ where: { posId: existing.id, branchId: branch.branchId } });
-  if (paymentCount > 0) {
-    const deactivated = await (prisma as any).posDevice.update({
+  // Taksit ödemesi de cihaza bağlıdır (TaksitOdeme.posId, silinmeyi engeller):
+  // önceden yalnız tahsilat sayılıyor, taksitte kullanılmış cihaz silinmeye
+  // çalışılınca istek sunucu hatasıyla düşüyordu.
+  const [paymentCount, installmentPaymentCount] = await Promise.all([
+    prisma.payment.count({ where: { posId: existing.id, branchId: branch.branchId } }),
+    prisma.taksitOdeme.count({ where: { posId: existing.id, branchId: branch.branchId } }),
+  ]);
+  if (paymentCount > 0 || installmentPaymentCount > 0) {
+    const deactivated = await prisma.posDevice.update({
       where: { id_institutionId_branchId: { id: existing.id, institutionId: existing.institutionId, branchId: existing.branchId } },
       data: { isActive: false },
     });
@@ -101,7 +116,7 @@ export async function DELETE(_: NextRequest, props: Params) {
     return NextResponse.json({ ok: true, deactivated: true, message: "Geçmiş tahsilatlar korundu; POS cihazı pasife alındı." });
   }
 
-  const deleted = await (prisma as any).posDevice.delete({
+  const deleted = await prisma.posDevice.delete({
     where: { id_institutionId_branchId: { id: existing.id, institutionId: existing.institutionId, branchId: existing.branchId } },
   });
   await writeAudit(auth.user.id, "POS_DELETE", `POS cihazı silindi: ${deleted.name}`);

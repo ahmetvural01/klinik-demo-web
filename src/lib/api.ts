@@ -151,7 +151,25 @@ export async function requireAuth(permission?: string) {
     ? { ...tokenUser, role: previewRole, ghost: false, actualRole: tokenUser.role, ghostSession: true }
     : { ...tokenUser, actualRole: tokenUser.role, ghostSession: Boolean(tokenUser.ghost) };
 
-  const sessionState = await getUserSessionState(user.id);
+  // Birbirinden bağımsız dört okuma (oturum durumu, rol yetkisi, kurum durumu,
+  // şube bağlamı) önceden sırayla bekleniyordu: her API isteği 4 veritabanı
+  // gidiş-dönüşü kadar gecikiyordu. Artık aynı anda başlar; denetimler aşağıda
+  // ESKİSİYLE AYNI SIRADA ve aynı yanıtlarla değerlendirilir (yalnız okuma,
+  // yan etkisi yok). Erken dönüşte beklenmeyen sözlerin hatası "işlenmemiş
+  // ret" üretmesin diye susturulur; beklenen yerde hata aynen fırlar.
+  const sessionStatePromise = getUserSessionState(user.id);
+  const permissionPromise = !user.ghost && permission
+    ? can(user.role as import("@prisma/client").Role, permission)
+    : Promise.resolve(true);
+  const institutionPromise = !user.ghost && user.role !== "SUPERADMIN" && user.institutionId
+    ? getInstitutionState(user.institutionId)
+    : Promise.resolve(null);
+  const branchContextPromise = resolveBranchContext(user);
+  for (const pending of [permissionPromise, institutionPromise, branchContextPromise] as Promise<unknown>[]) {
+    pending.catch(() => undefined);
+  }
+
+  const sessionState = await sessionStatePromise;
   if (!sessionState.isActive) {
     return { error: NextResponse.json({ message: "Hesabınız pasifleştirilmiş. Lütfen yöneticinizle iletişime geçin." }, { status: 401 }) };
   }
@@ -182,7 +200,7 @@ export async function requireAuth(permission?: string) {
   // Ghost oturum superadmin'in klinik içine görünmez müdahale oturumudur.
   // Klinik tarafında rol yetki matrisi veya servis kısıtlarıyla engellenmemelidir.
   // Yalnızca gerçek /superadmin uçları için yukarıdaki özel kontrol geçerlidir.
-  if (!user.ghost && permission && !(await can(user.role as import("@prisma/client").Role, permission))) {
+  if (!user.ghost && permission && !(await permissionPromise)) {
     return { error: NextResponse.json({ message: "Bu işlem için yetkiniz yok." }, { status: 403 }) };
   }
 
@@ -196,14 +214,14 @@ export async function requireAuth(permission?: string) {
   }
 
   if (user.ghost) {
-    const branchContext = await resolveBranchContext(user);
+    const branchContext = await branchContextPromise;
     return { user: { ...user, branchContext } };
   }
 
   if (user.role !== "SUPERADMIN" && user.institutionId) {
     const now = new Date();
 
-    const institution = await getInstitutionState(user.institutionId);
+    const institution = await institutionPromise;
 
     if (!institution) {
       return { error: NextResponse.json({ message: "Oturum kurumu bulunamadı. Lütfen yeniden giriş yapın." }, { status: 401 }) };
@@ -284,7 +302,7 @@ export async function requireAuth(permission?: string) {
     }
   }
 
-  const branchContext = await resolveBranchContext(user);
+  const branchContext = await branchContextPromise;
   if (!user.ghost && user.role !== "SUPERADMIN" && !branchContext.activeBranchId) {
     return {
       error: NextResponse.json(
@@ -386,13 +404,37 @@ async function getRequestIp(): Promise<string | null> {
   }
 }
 
+/**
+ * Veri değiştirmeyen olaylar (oturum açma/kapama, görüntüleme, dışa aktarma,
+ * yazdırma): kayıt yazılır ama kurumun açık sekmeleri yenilemeye zorlanmaz.
+ * Her girişte bütün sekmelerin aynı anda yeniden istek atması gereksiz yüktü.
+ * Süperadmin'in kliniğe görünmez girişi/çıkışı (IMPERSONATE_*) da oturum
+ * olayıdır (denetim filtresinde "giriş" grubunda); kliniğin sekmelerini yenilemez.
+ */
+function isReadOnlyAuditAction(action: string) {
+  return (
+    action.startsWith("LOGIN") ||
+    action.startsWith("LOGOUT") ||
+    action.startsWith("IMPERSONATE_") ||
+    action.endsWith("_EXPORT") ||
+    action.endsWith("_VIEW") ||
+    action.endsWith("_PRINT")
+  );
+}
+
 export async function writeAudit(
   userId: string,
   action: string,
   detail?: string,
   /** Oturum çerezi henüz yazılmamışken (ör. giriş isteğinin içinde) işlemi yapanı açıkça belirtmek için. */
   actorOverride?: { id: string; role: string; ghost?: boolean },
+  /**
+   * `realtime`: kurumun açık sekmelerine "veri değişti" sinyali gitsin mi.
+   * Verilmezse eylem adından çıkarılır (salt okuma/oturum olaylarında gitmez).
+   */
+  options?: { realtime?: boolean },
 ) {
+  const shouldBump = options?.realtime ?? !isReadOnlyAuditAction(action);
   const currentUser: { id: string; role: string; institutionId: string | null; ghost?: boolean; ghostOwnerId?: string } | null = actorOverride
     ? { id: actorOverride.id, role: actorOverride.role, institutionId: null, ghost: actorOverride.ghost ?? false }
     : await decodeTokenUser();
@@ -409,14 +451,17 @@ export async function writeAudit(
   let realtimeBumped = false;
 
   const bumpOnce = async () => {
-    if (realtimeBumped) return;
+    if (realtimeBumped || !shouldBump) return;
     realtimeBumped = true;
     await bumpRealtimeInstitution(realtimeInstitutionId);
   };
 
-  const actor = currentUser?.id === userId
-    ? { role: currentUser.role, institutionId: currentUser.institutionId }
-    : await prisma.user.findUnique({ where: { id: userId }, select: { role: true, institutionId: true } });
+  // Aktörün kurumu yalnız gerçek zamanlı sinyal için gerekir; sinyal yoksa okunmaz.
+  const actor = !shouldBump
+    ? null
+    : currentUser?.id === userId
+      ? { role: currentUser.role, institutionId: currentUser.institutionId }
+      : await prisma.user.findUnique({ where: { id: userId }, select: { role: true, institutionId: true } });
 
   // Superadmin ve ghost müdahale oturumları KAYDEDİLİR (isGhost/actorRole
   // alanlarıyla) ama kurumun kendi /log ekranından GÖRÜNMEZ — filtre orada

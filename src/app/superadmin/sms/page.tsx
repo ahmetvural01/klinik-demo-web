@@ -9,43 +9,50 @@ import CelebrationDaysTab from "./_tabs/CelebrationDaysTab";
 import ProviderTab from "./_tabs/ProviderTab";
 import WhatsappProviderTab from "./_tabs/WhatsappProviderTab";
 
+// "stok" eski bağlantılar için kabul edilir (Kontrol Paneli, yer imleri) ve
+// "Satış ve stok" sekmesini açar.
 const TAB_KEYS = ["paketler", "stok", "sablonlar", "kutlama", "saglayici", "whatsapp"] as const;
+type VisibleTab = Exclude<(typeof TAB_KEYS)[number], "stok">;
 
 /**
- * SMS Yönetimi. Sekme seçimi adres çubuğunda (?tab=) tutulur; Kontrol
- * Paneli'ndeki "SMS stoğu" kartı doğrudan Stok sekmesini açar. Önceden
- * sekmeler dolu yeşil düğmelerdi, yenileyince hep ilk sekmeye dönülüyordu ve
- * her sekmenin üstünde aynı açıklama kartı tekrar ediyordu.
+ * SMS Yönetimi. Sekme seçimi adres çubuğunda (?tab=). Paketler ve stok tek
+ * sekmede ("Satış ve stok"): kliniğe SMS satmanın iki ön koşulu önceden iki
+ * ayrı sekmedeydi. Sekme başlarındaki açıklama satırları kaldırıldı; her
+ * listenin kendi başlığı ve tek satırlık alt başlığı var.
  */
 export default function SmsPage() {
   const [tab, setTab] = useTabParam(TAB_KEYS, "paketler");
+  const current: VisibleTab = tab === "stok" ? "paketler" : tab;
 
   return (
     <section className="space-y-4">
       <PageHeader
         icon="sms"
         title="SMS Yönetimi"
-        description="Kliniklere satılan SMS paketleri, platform stoğu, mesaj şablonları ve gönderim altyapısı."
+        description="SMS satışı ve stoğu, kliniklerin hazır mesajları ve gönderim altyapısı."
       />
-      <Tabs
+      <Tabs<VisibleTab>
         ariaLabel="SMS yönetimi bölümleri"
-        value={tab}
+        value={current}
         onChange={setTab}
         items={[
-          { key: "paketler", label: "Paketler" },
-          { key: "stok", label: "Stok" },
+          { key: "paketler", label: "Satış ve stok" },
           { key: "sablonlar", label: "Şablonlar" },
           { key: "kutlama", label: "Kutlama günleri" },
           { key: "saglayici", label: "SMS sağlayıcısı" },
           { key: "whatsapp", label: "WhatsApp" },
         ]}
       />
-      {tab === "paketler" && <PackagesTab />}
-      {tab === "stok" && <StockTab />}
-      {tab === "sablonlar" && <TemplatesTab />}
-      {tab === "kutlama" && <CelebrationDaysTab />}
-      {tab === "saglayici" && <ProviderTab />}
-      {tab === "whatsapp" && <WhatsappProviderTab />}
+      {current === "paketler" && (
+        <div className="space-y-4">
+          <StockTab />
+          <PackagesTab />
+        </div>
+      )}
+      {current === "sablonlar" && <TemplatesTab />}
+      {current === "kutlama" && <CelebrationDaysTab />}
+      {current === "saglayici" && <ProviderTab />}
+      {current === "whatsapp" && <WhatsappProviderTab />}
     </section>
   );
 }

@@ -1,4 +1,4 @@
-import { getAuditActionLabel } from "@/lib/audit-labels";
+import { getAuditActionLabel, hasAuditActionLabel } from "@/lib/audit-labels";
 
 // İşlem Kayıtları (/log) ekranının TEK sınıflandırması: hem "İşlem türü"
 // filtresi (api/logs) hem satırdaki bölüm etiketi buradan okunur. Önceden
@@ -129,99 +129,12 @@ export function auditCategoryWhere(key: AuditCategoryKey): WhereFragment {
   return { OR: branches };
 }
 
-// audit-labels.ts'de karşılığı olmayan, klinik panelinde üretilen kodlar.
-// Bunlar eksikken kod sözcük sözcük çevriliyor ve "Klinik Unıt Oluşturuldu"
-// gibi bozuk metinler çıkıyordu.
-const EXTRA_ACTION_LABELS: Record<string, string> = {
-  BRANCH_CONTEXT_CHANGE: "Çalışılan Şube Değiştirildi",
-  CELEBRATION_DAY_CREATE: "Kutlama Günü Eklendi",
-  CELEBRATION_DAY_UPDATE: "Kutlama Günü Güncellendi",
-  CELEBRATION_DAY_DELETE: "Kutlama Günü Silindi",
-  CELEBRATION_DAY_TOGGLE: "Kutlama Günü Açıldı / Kapatıldı",
-  CLINIC_TASK_CANCEL: "Görev İptal Edildi",
-  CLINIC_UNIT_CREATE: "Koltuk / Oda Eklendi",
-  CLINIC_UNIT_UPDATE: "Koltuk / Oda Güncellendi",
-  DOSYA_GORUNTULEME: "Hasta Dosyası Görüntülendi",
-  EXAM_CANCEL: "Muayene Kaydı İptal Edildi",
-  IMPERSONATE_START: "Destek Ekibi Hesaba Bağlandı",
-  IMPERSONATE_END: "Destek Ekibi Bağlantısı Kapandı",
-  LAB_ORDER_EDIT: "Laboratuvar Işi Düzenlendi",
-  LAB_ORDER_INVOICE_UPDATE: "Laboratuvar Faturası Güncellendi",
-  LAB_ORDER_INVOICE_CANCEL: "Laboratuvar Faturası İptal Edildi",
-  LOGOUT_ALL_DEVICES: "Diğer Cihazlardaki Oturumlar Kapatıldı",
-  PACKAGE_DEFINITION_CREATE: "Paket Şablonu Eklendi",
-  PACKAGE_DEFINITION_UPDATE: "Paket Şablonu Güncellendi",
-  PACKAGE_DEFINITION_DEACTIVATE: "Paket Şablonu Pasife Alındı",
-  PATIENT_ARCHIVE: "Hasta Arşivlendi",
-  PATIENT_FOLLOW_UP_CANCEL: "Hasta Takibi İptal Edildi",
-  PATIENT_FOLLOW_UP_EVENT_CANCEL: "Hasta Takip Notu İptal Edildi",
-  PATIENT_PACKAGE_SELL: "Hastaya Paket Satıldı",
-  PATIENT_PACKAGE_USE: "Hasta Paketinden Kullanım Düşüldü",
-  PATIENT_PACKAGE_CANCEL: "Hasta Paketi İptal Edildi",
-  PATIENT_SMS_CONSENT_RESEND: "Hastaya SMS İzin Mesajı Yeniden Gönderildi",
-  POS_DEACTIVATE: "POS Cihazı Pasife Alındı",
-  PRESCRIPTION_VOID: "Reçete İptal Edildi",
-  PRICE_SOURCE_UPDATE: "Kullanılan Fiyat Listesi Değiştirildi",
-  REMINDER_CANCEL: "Hatırlatma İptal Edildi",
-  SMS_MANUAL_FAILED: "Elle Gönderilen SMS Gönderilemedi",
-  STAFF_BRANCH_DEACTIVATE: "Personelin Şube Erişimi Kapatıldı",
-  STAFF_BRANCH_ACCESS_UPDATE: "Personele Şube Erişimi Verildi",
-  STAFF_BRANCH_ACCESS_REVOKE: "Personelin Şube Erişimi Kaldırıldı",
-  TAKSIT_PLAN_CANCEL: "Taksit Planı İptal Edildi",
-  TREATMENT_PLAN_CANCEL: "Tedavi Planı İptal Edildi",
-  VERI_DISA_AKTARMA: "Veri Dışa Aktarıldı",
-  WAITLIST_CANCEL: "Bekleme Listesi Kaydı İptal Edildi",
-  WHATSAPP_DELIVERY_SETTINGS_UPDATE: "WhatsApp Gönderim Ayarı Güncellendi",
-  WHATSAPP_DISCONNECTED: "WhatsApp Bağlantısı Kesildi",
-  WHATSAPP_EMBEDDED_SIGNUP_CONNECTED: "WhatsApp Hesabı Bağlandı",
-  WHATSAPP_PROVIDER_CREATE: "WhatsApp Sağlayıcısı Eklendi",
-  WHATSAPP_PROVIDER_TEST_SEND: "WhatsApp Deneme Mesajı Gönderildi",
-  WHATSAPP_REPLY: "WhatsApp Mesajı Yanıtlandı",
-  WHATSAPP_REPLY_FAILED: "WhatsApp Yanıtı Gönderilemedi",
-};
-
 /**
- * İşlem kodunun okunur adı. Ortak sözlükte (audit-labels) ya da yukarıdaki
- * ek listede olmayan kodlar için tahmini/bozuk sözcük sözcük çeviri yerine
- * "Diğer işlem" gösterilir; ham kod ayrıntı penceresinde görünür.
+ * İşlem kodunun okunur adı (tek sözlük: src/lib/audit-labels.ts). Sözlükte
+ * olmayan kodlar için tahmini/bozuk sözcük sözcük çeviri yerine "Diğer işlem"
+ * gösterilir; ham kod ayrıntı penceresinde görünür.
  */
 export function auditActionLabel(action: string, detail?: string | null): string {
-  if (EXTRA_ACTION_LABELS[action]) return EXTRA_ACTION_LABELS[action];
-  if (KNOWN_LABEL_CODES.has(action)) return getAuditActionLabel(action, detail);
+  if (hasAuditActionLabel(action)) return getAuditActionLabel(action, detail);
   return "Diğer işlem";
 }
-
-// audit-labels.ts'deki ACTION_LABELS anahtarları (dosya yalnız fonksiyon
-// dışa aktardığından listesi burada tutulur; yeni kod eklenirse iki yere de
-// eklenmeli — bkz. shared_requests: etiketlerin tek sözlükte birleşmesi).
-const KNOWN_LABEL_CODES = new Set<string>([
-  "LOGIN", "LOGOUT", "PATIENT_CREATE", "PATIENT_UPDATE", "PATIENT_DELETE", "PATIENT_DATA_EXPORT",
-  "PATIENT_CONSENT_CREATE", "PATIENT_CONSENT_VOID", "APPOINTMENT_CREATE", "APPOINTMENT_UPDATE",
-  "APPOINTMENT_DELETE", "APPOINTMENT_STATUS", "APPOINTMENT_CANCEL", "BOOKING_REQUEST_UPDATE",
-  "PUBLIC_BOOKING_REQUEST_CREATE", "WAITLIST_CREATE", "WAITLIST_UPDATE", "WAITLIST_DELETE",
-  "DOCTOR_BLOCK_CREATE", "DOCTOR_BLOCK_DELETE", "EXAM_CREATE", "EXAM_UPDATE", "EXAM_DELETE",
-  "EXAM_SETTINGS_UPDATE", "TREATMENT_PLAN_CREATE", "TREATMENT_PLAN_UPDATE", "TREATMENT_PLAN_DELETE",
-  "TREATMENT_TYPE_CREATE", "TREATMENT_TYPE_UPDATE", "TREATMENT_TYPE_DELETE", "PRESCRIPTION_CREATE",
-  "PRESCRIPTION_DELETE", "PAYMENT_CREATE", "PAYMENT_UPDATE", "PAYMENT_DELETE", "PAYMENT_VOID",
-  "KASA_PAYMENT_CREATE", "GIDER_CREATE", "GIDER_UPDATE", "GIDER_DELETE", "TAKSIT_MARK_OVERDUE",
-  "TAKSIT_ODEME", "TAKSIT_PLAN_CREATE", "TAKSIT_PLAN_UPDATE", "TAKSIT_PLAN_DELETE", "FIRMA_CREATE",
-  "FIRMA_UPDATE", "FIRMA_KONTAKT_CREATE", "FIRMA_KONTAKT_UPDATE", "FIRMA_KONTAKT_DELETE",
-  "FIRMA_ISLEM_CREATE", "FIRMA_ISLEM_UPDATE", "FIRMA_ISLEM_CANCEL", "PURCHASE_CREATE", "PURCHASE_UPDATE",
-  "PURCHASE_CANCEL", "EXPENSE_CATEGORY_CREATE", "EXPENSE_CATEGORY_UPDATE", "PRICE_CREATE", "PRICE_UPDATE",
-  "PRICE_DELETE", "STOCK_ITEM_CREATE", "STOCK_ITEM_UPDATE", "STOCK_MOVEMENT", "STOCK_ITEM_DELETE",
-  "PROFILE_UPDATE", "PASSWORD_CHANGE", "SETTINGS_UPDATE", "STAFF_CREATE", "STAFF_UPDATE", "STAFF_DEACTIVATE",
-  "POS_CREATE", "POS_UPDATE", "POS_DELETE", "SUPPORT_CREATE", "SUPPORT_UPDATE", "SUPPORT_DELETE",
-  "SMS_TEMPLATE_UPDATE", "SMS_TEMPLATE_SAVE", "SMS_TEMPLATE_CUSTOM_SAVE", "SMS_TEMPLATE_CUSTOM_RESET",
-  "SMS_BILGI", "SMS_HATIRLATMA", "SMS_ANKET", "SMS_TOPLU", "SMS_BILGI_AUTO", "SMS_REMINDER_AUTO",
-  "SMS_BILGI_FAILED", "SMS_HATIRLATMA_FAILED", "SMS_ANKET_FAILED", "SMS_TOPLU_FAILED",
-  "SMS_BILGI_AUTO_FAILED", "SMS_REMINDER_AUTO_FAILED", "LAB_ORDER_CREATE", "LAB_ORDER_UPDATE",
-  "LAB_ORDER_RPT_REOPEN", "LAB_ORDER_INVOICE_CREATE", "LAB_TRIP_CREATE", "LAB_TRIP_UPDATE",
-  "DOCUMENT_CREATE", "DOCUMENT_DELETE", "MESSAGE_CREATE", "MESSAGE_UPDATE", "MESSAGE_DELETE",
-  "ANNOUNCEMENT_CREATE", "ANNOUNCEMENT_DELETE", "CLINIC_TASK_CREATE", "CLINIC_TASK_UPDATE",
-  "CLINIC_TASK_DELETE", "REMINDER_CREATE", "REMINDER_UPDATE", "REMINDER_DELETE", "TWO_FACTOR_ENABLE",
-  "TWO_FACTOR_DISABLE", "PROFILE_2FA_SETUP_START", "FOLLOW_UP_TYPES_UPDATE", "PATIENT_FOLLOW_UP_CREATE",
-  "PATIENT_FOLLOW_UP_UPDATE", "PATIENT_FOLLOW_UP_DELETE", "PATIENT_FOLLOW_UP_EVENT_CREATE",
-  "PATIENT_FOLLOW_UP_EVENT_UPDATE", "PATIENT_FOLLOW_UP_EVENT_DELETE", "CONSENT_TEMPLATE_CREATE",
-  "PLATFORM_THEME_UPDATE", "DEV_DEMO_LOAD", "DEV_DEMO_LOAD_SKIPPED", "DEMO_REQUEST_CREATE",
-  "DEMO_PACKAGE_LOAD", "LIVE_DEMO_DATA_LOAD", "SEED",
-]);

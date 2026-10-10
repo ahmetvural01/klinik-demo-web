@@ -5,8 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { writeAudit } from "@/lib/api";
 import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rate-limit";
 import { applyStockMovement } from "@/lib/stock-ledger";
-
-const DEMO_DAYS = 14;
+import { DEMO_DAYS } from "@/components/marketing/demo-constants";
 
 function digits(input: string) {
   return input.replace(/\D/g, "");
@@ -431,6 +430,10 @@ export async function POST(request: NextRequest) {
       demo: {
         institution: result.institution.name,
         identityNo: managerIdentityNo,
+        // Doktor ve banko demo hesapları da aynı şifreyle açılıyor; tanıtımın
+        // "rol bazlı görünüm" vaadi denenebilsin diye ekranda gösterilir.
+        doctorIdentityNo,
+        bankoIdentityNo,
         password,
         expiresAt: demoExpiresAt.toISOString(),
         loginUrl: "/klinik/giris",

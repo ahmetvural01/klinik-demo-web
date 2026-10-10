@@ -5,6 +5,9 @@ import { requireAuth, writeAudit } from "@/lib/api";
 import { requireActiveBranch } from "@/lib/branch-context";
 import { createIntegratedPayment } from "@/lib/payment-ledger";
 import { BusinessRuleError } from "@/lib/public-error";
+import { isValidDateKey, turkeyDateKey, turkeyLocalDateTimeToUtc } from "@/lib/tz";
+
+const dayText = (dateKey: string) => dateKey.split("-").reverse().join(".");
 
 // PATCH: Taksit öde (kısmi veya tam)
 export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string; tid: string }> }) {
@@ -32,7 +35,26 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       return NextResponse.json({ error: "Geçersiz istek gövdesi" }, { status: 400 });
     }
-    const { tutar, yontem = "NAKIT", posId, note } = body;
+    const { tutar, yontem = "NAKIT", posId, note, createdAt } = body;
+
+    // İsteğe bağlı tahsilat günü ("YYYY-MM-DD"; normal tahsilatla aynı kural):
+    // ileri tarih olmaz, plan oluşturulmadan önceki gün olmaz (aşağıda, plan
+    // okununca). Bugün → şimdiki an; geçmiş gün → o günün öğleni (Türkiye).
+    // Gönderilmezse eski davranış: şimdi.
+    const today = turkeyDateKey();
+    let paymentDayKey: string | null = null;
+    if (createdAt !== undefined && createdAt !== null && createdAt !== "") {
+      if (typeof createdAt !== "string" || !isValidDateKey(createdAt)) {
+        return NextResponse.json({ error: "Geçerli bir tahsilat tarihi seçin" }, { status: 400 });
+      }
+      if (createdAt > today) {
+        return NextResponse.json({ error: "Tahsilat tarihi ileri bir gün olamaz" }, { status: 400 });
+      }
+      paymentDayKey = createdAt;
+    }
+    const paymentDate = paymentDayKey && paymentDayKey !== today
+      ? turkeyLocalDateTimeToUtc(paymentDayKey, "12:00")
+      : new Date();
 
     const requestedAmount = Number(tutar);
     const validMethods = new Set(["NAKIT", "KREDI_KARTI", "HAVALE_EFT", "MAIL_ORDER", "DIGER"]);
@@ -128,6 +150,10 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
       if (taksit.status === "IPTAL") {
         throw new BusinessRuleError("İptal edilmiş taksite tahsilat yapılamaz", 409);
       }
+      const planDayKey = turkeyDateKey(new Date(taksit.plan.createdAt));
+      if (paymentDayKey && paymentDayKey < planDayKey) {
+        throw new BusinessRuleError(`Tahsilat tarihi planın oluşturulduğu günden (${dayText(planDayKey)}) önce olamaz`, 400);
+      }
       if (posId) {
         const currentPos = await tx.posDevice.findFirst({
           where: { id: posId, institutionId: user.institutionId, branchId: branch.branchId, isActive: true },
@@ -165,6 +191,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
           amount: odemeAmtDecimal.toNumber(),
           description: note || `Taksit tahsilatı (${taksit.siraNo}. taksit)`,
           posId: posId || null,
+          createdAt: paymentDate,
           integrateInstallments: false,
       });
 
@@ -174,7 +201,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
           branchId: branch.branchId,
           taksitId: params.tid,
           paymentId: linkedPayment.id,
-          tarih: new Date(),
+          tarih: paymentDate,
           tutar: odemeAmtDecimal,
           yontem,
           posId: posId || null,

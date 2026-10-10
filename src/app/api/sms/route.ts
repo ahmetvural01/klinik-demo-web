@@ -7,6 +7,7 @@ import { enqueueSmsDispatchJob } from "@/lib/sms-jobs";
 import { renderCommunicationTemplate, resolveSmsTemplate } from "@/lib/sms-templates";
 import { requireActiveBranch } from "@/lib/branch-context";
 import { maskPatientName, maskPatientPhone } from "@/lib/audit-mask";
+import { shouldHidePatientPhoneForUser } from "@/lib/patient-visibility-server";
 
 const EVENT_TYPE_BY_SMS_TYPE: Record<string, NotificationEventType> = {
   BILGI: "APPOINTMENT_INFO",
@@ -39,6 +40,7 @@ export async function GET(request: NextRequest) {
     prisma.appointment.findMany({
       where: {
         ...whereFilter,
+        institutionId: auth.user.institutionId,
         branchId: activeBranch.branchId,
       },
       include: {
@@ -59,8 +61,14 @@ export async function GET(request: NextRequest) {
     }),
   ]);
 
+  // KVKK: telefonu göremeyen kişiye (rol ya da kişiye özel şube daraltması)
+  // numara maskeli gider — diğer randevu uçlarıyla aynı kural.
+  const hidePhone = await shouldHidePatientPhoneForUser(auth.user);
+
   return NextResponse.json({
-    appointments,
+    appointments: hidePhone
+      ? appointments.map((appointment) => ({ ...appointment, patient: { ...appointment.patient, phone: "***" } }))
+      : appointments,
     settings: {
       smsEnabled: settings?.smsEnabled ?? true,
       smsDefaultInfo: settings?.smsDefaultInfo ?? true,
@@ -106,7 +114,7 @@ export async function POST(request: NextRequest) {
 
   if (!appointmentIds.length) {
     metricIncrement("api_errors_total");
-    return NextResponse.json({ message: "En az bir randevu secin" }, { status: 400 });
+    return NextResponse.json({ message: "En az bir randevu seçin." }, { status: 400 });
   }
   if (!Object.hasOwn(EVENT_TYPE_BY_SMS_TYPE, smsType)) {
     metricIncrement("api_errors_total");
@@ -130,9 +138,21 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Klinik bulunamadı." }, { status: 404 });
   }
 
+  // Değerlendirme mesajının tek işi bağlantıdır: bağlantı tanımlı değilken
+  // hastaya bağlantısız metin gidiyor ve kredi harcanıyordu (H-7). Kuyruk
+  // yolunda iş de aynı kontrolü yapar (src/lib/sms-jobs.ts); burada hiçbir
+  // şey gönderilmeden ya da kuyruğa alınmadan reddedilir.
+  if (smsType === "ANKET" && !settings?.reviewLink?.trim()) {
+    metricIncrement("api_errors_total");
+    return NextResponse.json({
+      message: "Değerlendirme bağlantısı tanımlı değil; mesaj gönderilmedi. Bağlantıyı Ayarlar › Klinik sekmesinden ekleyin.",
+    }, { status: 400 });
+  }
+
   const appointments = await prisma.appointment.findMany({
     where: {
       id: { in: appointmentIds },
+      institutionId: auth.user.institutionId,
       branchId: activeBranch.branchId,
     },
     include: {
@@ -168,7 +188,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       queued: true,
       queueSize: queued.queueSize || 0,
-      message: "SMS gonderimi kuyruğa alindi.",
+      message: "SMS gönderimi kuyruğa alındı.",
     }, { status: 202 });
   }
 
@@ -255,12 +275,16 @@ export async function POST(request: NextRequest) {
   }
 
   const refreshedInstitution = await prisma.institution.findUnique({ where: { id: institution.id } });
+  // Başarısız alıcı listesi de telefonu göremeyen kişiye maskeli döner.
+  const hideRecipientPhone = failedRecipients.length > 0 && await shouldHidePatientPhoneForUser(auth.user);
   metricObserve("sms_dispatch_ms", Date.now() - started);
 
   return NextResponse.json({
     sent,
     failed: failedRecipients.length,
-    failedRecipients,
+    failedRecipients: hideRecipientPhone
+      ? failedRecipients.map((recipient) => ({ ...recipient, phone: "***" }))
+      : failedRecipients,
     remainingBalance: refreshedInstitution?.smsBalance ?? institution.smsBalance,
     message: `${sent} hastaya ${smsType === "BILGI" ? "bilgilendirme" : smsType === "HATIRLATMA" ? "hatırlatma" : "anket"} SMS'i gönderildi${failedRecipients.length ? `; ${failedRecipients.length} gönderim başarısız` : ""}.`,
   });

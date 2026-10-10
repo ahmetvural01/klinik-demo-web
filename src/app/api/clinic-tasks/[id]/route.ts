@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { hasEffectivePermission, requireAuth, writeAudit } from "@/lib/api";
 import { clinicTaskUpdateSchema } from "@/lib/validators";
 import { requireActiveBranch } from "@/lib/branch-context";
+import { clinicTaskAuditDetail } from "@/app/api/clinic-tasks/task-audit";
 
 const TASK_INCLUDE = {
   patient: { select: { id: true, fullName: true } },
@@ -133,7 +134,7 @@ export async function PUT(request: NextRequest, props: Params) {
     });
   });
 
-  await writeAudit(auth.user.id, "CLINIC_TASK_UPDATE", `${task.title} (oncelik:${task.priority}, durum:${task.status})`);
+  await writeAudit(auth.user.id, "CLINIC_TASK_UPDATE", clinicTaskAuditDetail(task));
 
   return NextResponse.json(task);
 }
@@ -169,6 +170,6 @@ export async function DELETE(_: NextRequest, props: Params) {
   }
 
   await prisma.clinicTask.update({ where: { id: existing.id }, data: { status: "IPTAL", completedAt: null } });
-  await writeAudit(auth.user.id, "CLINIC_TASK_CANCEL", existing.title);
+  await writeAudit(auth.user.id, "CLINIC_TASK_CANCEL", `"${existing.title}" görevi iptal edildi`);
   return NextResponse.json({ ok: true, status: "IPTAL" });
 }

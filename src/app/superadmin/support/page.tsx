@@ -9,16 +9,16 @@ import { Toolbar } from "@/components/ui/Toolbar";
 import { SearchInput } from "@/components/ui/SearchInput";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
-import { Modal } from "@/components/ui/Modal";
+import { FormModal } from "@/components/ui/FormModal";
 import { Textarea } from "@/components/ui/Input";
-import { FormErrorBanner, FormField } from "@/components/ui/FormField";
+import { FormField } from "@/components/ui/FormField";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { createModuleEmptyIcon } from "@/components/ui/ModuleIcon";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
 import { roleLabel } from "@/lib/staff-roles";
 import { dateTime } from "@/components/superadmin/sa-format";
-import { errorMessage, isAbort, saGet, saSend } from "@/components/superadmin/sa-fetch";
+import { errorMessage, isAbort, notifyCountsChanged, saGet, saSend } from "@/components/superadmin/sa-fetch";
 
 const SupportEmptyIcon = createModuleEmptyIcon("support");
 
@@ -45,7 +45,8 @@ function ticketState(ticket: Ticket): { label: string; tone: BadgeTone } {
 /**
  * Destek talepleri — iş kuyruğu: varsayılan sekme yanıt bekleyenler (en eski
  * üstte). Filtre ve sayaçlar sunucudan gelir, sayfalanır. Talep silinmez,
- * kapatılır (yeniden açılabilir).
+ * kapatılır (yeniden açılabilir). Satıra tıklayınca mesajın tamamı ve yanıt
+ * alanı açılır; "Yanıtla ve kapat" iki ayrı işlemi tek adımda yapar.
  */
 export default function SupportPage() {
   const [status, setStatus] = useTabParam(STATUS_KEYS, "open", "durum");
@@ -103,14 +104,16 @@ export default function SupportPage() {
     setReplyError(null);
   };
 
-  const submitReply = async () => {
+  const submitReply = async (closeAfter = false) => {
     if (!replyTicket) return;
     if (!replyText.trim()) return setReplyError("Yanıtınızı yazın.");
     setSaving(true);
     setReplyError(null);
     try {
       await saSend("/api/superadmin/support", "PATCH", { id: replyTicket.id, answer: replyText.trim() }, "Yanıt kaydedilemedi.");
-      showToastSafe({ type: "success", message: "Yanıt kaydedildi; kliniğin Destek ekranında görünür.", icon: "support" });
+      if (closeAfter) await saSend("/api/superadmin/support", "PATCH", { id: replyTicket.id, action: "close" }, "Yanıt kaydedildi ama talep kapatılamadı.");
+      showToastSafe({ type: "success", message: closeAfter ? "Yanıt kaydedildi, talep kapatıldı." : "Yanıt kaydedildi.", icon: "support" });
+      notifyCountsChanged();
       setReplyTicket(null);
       reload();
     } catch (error) {
@@ -135,6 +138,7 @@ export default function SupportPage() {
     try {
       await saSend("/api/superadmin/support", "PATCH", { id: ticket.id, action: closing ? "close" : "reopen" }, "Talep güncellenemedi.");
       showToastSafe({ type: "success", message: closing ? "Talep kapatıldı." : "Talep yeniden açıldı.", icon: "support" });
+      notifyCountsChanged();
       reload();
     } catch (error) {
       showToastSafe({ type: "error", message: errorMessage(error, "Talep güncellenemedi.") });
@@ -188,7 +192,7 @@ export default function SupportPage() {
 
   return (
     <section className="space-y-4">
-      <PageHeader icon="support" title="Destek Talepleri" description="Kliniklerden gelen soruları yanıtlayın. Yanıt kliniğin Destek ekranında görünür." />
+      <PageHeader icon="support" title="Destek Talepleri" description="Kliniklerden gelen sorular." />
 
       <Tabs
         ariaLabel="Talep durumu"
@@ -206,16 +210,21 @@ export default function SupportPage() {
       <ListTable<Ticket>
         header={
           <Toolbar>
-            <SearchInput value={query} onChange={setQuery} placeholder="Konu, mesaj, klinik veya kişi" wrapperClassName="flex-1 min-w-[220px]" />
+            <SearchInput value={query} onChange={setQuery} placeholder="Konu, mesaj, klinik veya kişi" slashShortcut wrapperClassName="flex-1 min-w-[220px]" />
           </Toolbar>
         }
         columns={columns}
         rows={tickets}
         rowKey={(ticket) => ticket.id}
         loading={loading}
-        error={loadError}
+        // Yanıt/kapatma sonrası yenileme başarısız olursa liste yerinde kalır.
+        error={tickets.length ? null : loadError}
+        staleError={tickets.length ? loadError : null}
         onRetry={reload}
         rowClassName={(ticket) => (ticket.status === "CLOSED" ? "opacity-60" : "")}
+        onRowClick={openReply}
+        isRowClickable={(ticket) => ticket.status !== "CLOSED"}
+        getRowAriaLabel={(ticket) => `${ticket.subject} talebini aç`}
         emptyText={status === "open" && !debouncedQuery ? "Yanıt bekleyen talep yok" : "Bu filtrede talep yok"}
         emptyIcon={SupportEmptyIcon}
         emptyIllustrative
@@ -239,27 +248,24 @@ export default function SupportPage() {
         }}
       />
 
-      <Modal
+      <FormModal
         open={Boolean(replyTicket)}
         onClose={() => setReplyTicket(null)}
         title={replyTicket?.answer ? "Yanıtı düzenle" : "Talebi yanıtla"}
         description={replyTicket ? `${replyTicket.institution?.name ?? "Klinik"} · ${replyTicket.subject}` : undefined}
         size="lg"
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => setReplyTicket(null)}>Vazgeç</Button>
-            <Button loading={saving} onClick={() => void submitReply()}>Kaydet</Button>
-          </>
-        }
+        onSubmit={() => submitReply()}
+        submitting={saving}
+        error={replyError}
+        formClassName="space-y-3"
+        footerExtra={<Button variant="secondary" disabled={saving} onClick={() => void submitReply(true)}>Yanıtla ve kapat</Button>}
       >
-        <div className="space-y-3">
-          <FormErrorBanner message={replyError} />
-          <p className="whitespace-pre-line rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">{replyTicket?.message}</p>
-          <FormField label="Yanıtınız" htmlFor="support-reply" required hint="Kliniğin Destek ekranında görünür; kliniğe ayrıca SMS/e-posta bildirimi gitmez.">
-            <Textarea id="support-reply" rows={5} maxLength={5000} value={replyText} onChange={(event) => setReplyText(event.target.value)} />
-          </FormField>
-        </div>
-      </Modal>
+        <p className="whitespace-pre-line rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">{replyTicket?.message}</p>
+        {replyTicket && <p className="text-xs text-slate-500">{dateTime(replyTicket.createdAt)} · {replyTicket.user ? `${replyTicket.user.fullName} (${roleLabel(replyTicket.user.role)})` : "Gönderen bilinmiyor"}{replyTicket.user?.email ? ` · ${replyTicket.user.email}` : ""}</p>}
+        <FormField label="Yanıtınız" htmlFor="support-reply" required hint="Kliniğin Destek ekranında görünür; kliniğe ayrıca SMS/e-posta bildirimi gitmez.">
+          <Textarea id="support-reply" autoFocus rows={5} maxLength={5000} value={replyText} onChange={(event) => setReplyText(event.target.value)} />
+        </FormField>
+      </FormModal>
     </section>
   );
 }

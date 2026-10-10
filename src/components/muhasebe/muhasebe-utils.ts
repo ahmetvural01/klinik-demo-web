@@ -6,23 +6,25 @@
 import { formatCurrency } from "@/lib/format";
 import { stripSystemTags } from "@/lib/format-text";
 import { turkeyDateKey } from "@/lib/tz";
+import { parseTurkishMoney } from "@/lib/money-input";
+import {
+  DOCTOR_PAYOUT_METHODS as SHARED_DOCTOR_PAYOUT_METHODS,
+  PAYMENT_METHOD_LABELS,
+  paymentMethodLabel,
+  requiresPos as sharedRequiresPos,
+} from "@/lib/payment-methods";
 import type { BadgeTone } from "@/components/ui/Badge";
 
-export const METHOD_LABELS: Record<string, string> = {
-  NAKIT: "Nakit",
-  KREDI_KARTI: "Kredi Kartı",
-  HAVALE_EFT: "Havale/EFT",
-  MAIL_ORDER: "Mail Order",
-  DIGER: "Diğer",
-};
+// Ödeme yöntemi sözlüğü tek kaynaktan (src/lib/payment-methods.ts); buradaki adlar
+// eski içe aktarmalar (Raporlar vb.) bozulmasın diye korunur.
+export const METHOD_LABELS: Record<string, string> = { ...PAYMENT_METHOD_LABELS };
 
 /** Doktor hakedişi ödemeleri yalnız nakit veya havale/EFT ile yapılabilir (sunucu da aynı kuralı uygular). */
-export const DOCTOR_PAYOUT_METHODS = ["NAKIT", "HAVALE_EFT"] as const;
+export const DOCTOR_PAYOUT_METHODS = SHARED_DOCTOR_PAYOUT_METHODS;
 
-const POS_REQUIRED_METHODS = new Set(["KREDI_KARTI", "MAIL_ORDER"]);
-export const requiresPos = (method: string) => POS_REQUIRED_METHODS.has(method);
+export const requiresPos = (method: string) => sharedRequiresPos(method);
 
-export const methodLabel = (method?: string | null) => (method ? METHOD_LABELS[method] || method : "");
+export const methodLabel = (method?: string | null) => paymentMethodLabel(method);
 
 export const KDV_OPTIONS = [
   { value: "0", label: "KDV yok (%0)" },
@@ -85,6 +87,26 @@ export function shortDate(value: string | Date | null | undefined) {
 
 export const todayKey = () => turkeyDateKey();
 
+/**
+ * Muhasebe araç çubuklarına verilir: ortak Toolbar'daki arama kabı (ilk çocuk)
+ * masaüstünde en az bu genişlikte kalır. Kabın tabanı 0 ve min-w-0 olduğu için
+ * süzgeçler sığmadığında satır kırılmıyor, arama kutusu seçicilerin altında
+ * eziliyordu (özel tarih aralığı, 1280 px'te beş durum düğmesi).
+ */
+export const FINANCE_TOOLBAR_CLASS = "sm:[&>div:first-child]:min-w-[240px]";
+
+/**
+ * Not satırında doktor adı: ad zaten unvanla başlıyorsa ("Dr. Mert Aydın")
+ * olduğu gibi, değilse "Dr. " ekiyle. Önceden her zaman ek konduğu için
+ * listede "Dr. Dr. Mert Aydın" görünüyordu.
+ */
+export function doctorLabel(name?: string | null) {
+  const text = (name || "").trim();
+  if (!text) return "";
+  // "Dr. Ad", "Dr Ad" ve boşluksuz "Dr.Ad" unvanlı sayılır; "Drake" gibi adlar sayılmaz.
+  return /^(dr|dt|uzm|prof|doç|doc|op)(\.\s*|\s+)/i.test(text) ? text : `Dr. ${text}`;
+}
+
 /** Açıklamadaki sistem etiketlerini ([SISTEM:...], [GELIR_TURU:...]) kullanıcıdan gizler. */
 export const cleanNote = (text?: string | null) => stripSystemTags(text).replace(/\s*\[GELIR_TURU:[^\]]+\]/g, "").trim();
 
@@ -95,13 +117,14 @@ export function newRequestKey(prefix: string) {
     : `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-/** Tutar alanı: virgüllü yazımı ("1.250,50") da kabul eder. Geçersizse NaN döner. */
+/**
+ * Tutar alanı (eski ad; yeni formlar MoneyInput + `@/lib/money-input` kullanır).
+ * Ortak ayrıştırıcıya bağlıdır: "1.500" = 1500 ("1,50" değil), "1.250,50" = 1250,5.
+ * Önceden "1.500" sessizce 1,50 TL okunuyordu. Geçersizse NaN döner.
+ */
 export function parseAmount(raw: string): number {
-  const text = raw.trim();
-  if (!text) return Number.NaN;
-  const normalized = text.includes(",") ? text.replace(/\./g, "").replace(",", ".") : text;
-  const value = Number(normalized);
-  return Number.isFinite(value) ? Math.round(value * 100) / 100 : Number.NaN;
+  const value = parseTurkishMoney(raw);
+  return value === null ? Number.NaN : Number(value);
 }
 
 /** Sistem tarafından başka bir kayıttan (ör. firma ödemesi) oluşturulmuş gider mi? */

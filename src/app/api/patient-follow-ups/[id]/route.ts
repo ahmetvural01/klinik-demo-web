@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { requireActiveBranch } from "@/lib/branch-context";
 import { patientFollowUpUpdateSchema } from "@/lib/validators";
-import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
+import { shouldHidePatientPhoneForUser } from "@/lib/patient-visibility-server";
 import { FOLLOW_UP_INCLUDE, maskFollowUpPhone } from "../follow-up-include";
 
 type Params = { params: Promise<{ id: string }> };
@@ -65,7 +65,7 @@ export async function PUT(request: NextRequest, props: Params) {
   });
 
   await writeAudit(auth.user.id, "PATIENT_FOLLOW_UP_UPDATE", `${existing.patient.fullName} takip kaydı güncellendi`);
-  const hidePhone = await shouldHidePatientPhoneForRole(auth.user.role);
+  const hidePhone = await shouldHidePatientPhoneForUser(auth.user);
   return NextResponse.json(maskFollowUpPhone(updated, hidePhone));
 }
 
@@ -88,7 +88,7 @@ export async function DELETE(_: NextRequest, props: Params) {
     return NextResponse.json({ message: "Takip kaydı bulunamadı" }, { status: 404 });
   }
 
-  await prisma.patientFollowUp.update({
+  const cancelled = await prisma.patientFollowUp.update({
     where: {
       id_institutionId_branchId: {
         id: existing.id,
@@ -97,8 +97,11 @@ export async function DELETE(_: NextRequest, props: Params) {
       },
     },
     data: { status: "KAPALI", closedAt: new Date(), resolutionNote: "Takip kaydı iptal edildi." },
+    include: FOLLOW_UP_INCLUDE,
   });
   await writeAudit(auth.user.id, "PATIENT_FOLLOW_UP_CANCEL", `${existing.patient.fullName} takip kaydı iptal edildi`);
 
-  return NextResponse.json({ ok: true });
+  // Liste satırını yeniden istek atmadan güncelleyebilsin diye güncel kayıt da döner (alan eklendi; `ok` aynen).
+  const hidePhone = await shouldHidePatientPhoneForUser(auth.user);
+  return NextResponse.json({ ok: true, followUp: maskFollowUpPhone(cancelled, hidePhone) });
 }

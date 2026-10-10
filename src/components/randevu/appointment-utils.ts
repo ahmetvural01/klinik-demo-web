@@ -35,6 +35,9 @@ export type Appointment = {
   status: string;
   note?: string | null;
   colorCode?: string | null;
+  /** Bilgilendirme mesajı (oluşturma + değişiklik + iptal mesajlarını yönetir). */
+  smsInfo?: boolean;
+  smsReminder?: boolean;
   patient?: AppointmentPatient | null;
   doctor?: { id: string; fullName: string } | null;
   clinicUnit?: { id: string; name: string; code?: string | null } | null;
@@ -97,6 +100,8 @@ export type CalendarSettings = {
   holidayDays: string[];
   dailySchedules: DaySchedule[];
   sms: { enabled: boolean; info: boolean; reminder: boolean; survey: boolean };
+  /** İletişim › Otomatik mesajlar: randevu değişince / iptal edilince hastaya haber ver. */
+  notify?: { change: boolean; cancel: boolean };
   treatments: Array<{ value: string; label: string; color: string }>;
   doctors: CalendarDoctor[];
   multiBranch: boolean;
@@ -252,6 +257,16 @@ export function statusLabel(raw: string): string {
   return APPOINTMENT_DISPLAY_STATUS_LABELS[displayStatus(raw)];
 }
 
+/**
+ * Liste ve detaydaki durum rozeti: hasta geldiğinde (ham GELDI) "Geldi
+ * (bekliyor)". Personel "Geldi"ye basıp rozette yalnız "Bekliyor" görünce
+ * işlemin olmadığını sanıyordu (canlı test K3). Dar takvim kartı kısa adı
+ * (statusLabel) kullanır.
+ */
+export function statusChipLabel(raw: string): string {
+  return raw === "GELDI" ? "Geldi (bekliyor)" : statusLabel(raw);
+}
+
 export function statusTone(raw: string) {
   return APPOINTMENT_DISPLAY_STATUS_TONE[displayStatus(raw)];
 }
@@ -388,7 +403,10 @@ export function buildSlotOptions(params: {
     else if (end > hours.close) busyReason = "mesai sonu";
     else if (hours.lunchStart !== null && hours.lunchEnd !== null && start < hours.lunchEnd && end > hours.lunchStart) busyReason = "öğle arası";
     else {
-      const hit = busy.find((item) => item.start < end && item.end > start);
+      // Kesin engel (kapalı zaman, doktorun mesaisi dışı) "dolu"dan önce gelir:
+      // dolu saat formda onayla seçilebilir, aynı saatte kapalı zaman da varsa seçilemez.
+      const hits = busy.filter((item) => item.start < end && item.end > start);
+      const hit = hits.find((item) => !item.label.startsWith("dolu")) || hits[0];
       if (hit) busyReason = hit.label;
     }
     return { minutes: start, label: timeLabel(start), busyReason };
@@ -495,16 +513,92 @@ export function followUpChoices(current: FollowUpKey) {
   return FOLLOW_UP_OPTIONS.filter((item) => (item.value !== "GEC_GELDI" && item.value !== "KENDISI_IPTAL") || item.value === current);
 }
 
-// ── Kişi ─────────────────────────────────────────────────────────────────
+// ── Hastaya otomatik mesaj (iptal / taşıma) ──────────────────────────────
 
-export function initialsOf(name: string | null | undefined): string {
-  return String(name || "?")
-    .split(/\s+/)
-    .filter(Boolean)
-    .filter((part) => !/^(dr\.?|dt\.?|uzm\.?)$/i.test(part))
-    .slice(0, 2)
-    .map((part) => part[0])
-    .join("")
-    .toLocaleUpperCase("tr-TR") || "?";
+const CLOSED_FOR_NOTICE = new Set(["IPTAL", "GELMEDI", "TAMAMLANDI"]);
+
+/**
+ * İptal ve taşıma onayında "hastaya mesaj gider mi" sorusunun yanıtı —
+ * sunucudaki kuralın (src/lib/appointment-change-notify.ts) aynısı: gelecekteki
+ * açık randevu + randevuda bilgilendirme açık + İletişim › Otomatik mesajlar
+ * anahtarı açık. Hastanın iletişim izni gönderim anında denetlenir. Önceden
+ * iki onay penceresi de koşulsuz "Hastaya otomatik mesaj gitmez" diyordu ve
+ * sistem mesajı gönderiyordu (canlı test H4).
+ *
+ * `notify` (isteğe bağlı): hastanın iletişim izni biliniyorsa (randevu
+ * patient-context ucu) "izni varsa" yerine kesin cümle kurulur — ör. "Hastanın
+ * SMS izni henüz yok; mesaj gitmez." (canlı test K6).
+ */
+export function patientNoticeText(
+  kind: "cancel" | "change",
+  appointment: Pick<Appointment, "status" | "smsInfo" | "startAt">,
+  settings: Pick<CalendarSettings, "notify"> | null,
+  options: { newStartAt?: Date; now?: Date; notify?: { canNotify: boolean; reason: string | null } | null } = {},
+): string {
+  const now = options.now || new Date();
+  const start = options.newStartAt || new Date(appointment.startAt);
+  if (CLOSED_FOR_NOTICE.has(appointment.status)) return "Randevu kapalı olduğu için hastaya mesaj gitmez.";
+  if (start.getTime() <= now.getTime()) return "Geçmiş saat olduğu için hastaya mesaj gitmez.";
+  if (appointment.smsInfo === false) return "Bu randevuda bilgilendirme kapalı; hastaya mesaj gitmez.";
+  const switchOn = kind === "cancel" ? settings?.notify?.cancel : settings?.notify?.change;
+  if (switchOn === false) {
+    return kind === "cancel" ? "Otomatik iptal mesajı kapalı; hastaya mesaj gitmez." : "Otomatik değişiklik mesajı kapalı; hastaya mesaj gitmez.";
+  }
+  if (options.notify) {
+    if (!options.notify.canNotify) return options.notify.reason || "Hastaya mesaj gitmez.";
+    return kind === "cancel" ? "Hastaya iptal bilgisi gönderilir." : "Hastaya yeni saat bildirilir.";
+  }
+  return kind === "cancel"
+    ? "Hastaya iptal bilgisi gönderilir (iletişim izni varsa)."
+    : "Hastaya yeni saat bildirilir (iletişim izni varsa).";
 }
 
+// ── Hızlı gün seçimi ─────────────────────────────────────────────────────
+
+/** "YYYY-MM-DD" gününden başlayarak klinik açık olan ilk `count` gün (en çok `maxScan` gün taranır). */
+export function openDayKeys(dailySchedules: DaySchedule[], fromKey: string, count: number, maxScan = 21): string[] {
+  const start = fromDateKey(fromKey);
+  if (!start) return [];
+  const result: string[] = [];
+  for (let offset = 0; offset < maxScan && result.length < count; offset += 1) {
+    const day = addDays(start, offset);
+    if (!getDayHours(dailySchedules, day).isHoliday) result.push(toDateKey(day));
+  }
+  return result;
+}
+
+/** "Sonraki randevu" (kontrol) için varsayılan gün: bir hafta sonrası ya da ondan sonraki ilk açık gün. */
+export function nextVisitDateKey(dailySchedules: DaySchedule[] | null | undefined, fromKey: string): string {
+  const base = fromDateKey(fromKey);
+  if (!base) return fromKey;
+  const target = toDateKey(addDays(base, 7));
+  if (!dailySchedules) return target;
+  return openDayKeys(dailySchedules, target, 1)[0] || target;
+}
+
+/** Kısa gün adı: "Bugün", "Yarın" ya da "Pzt 13". */
+export function quickDayLabel(dateKey: string, todayKey: string): string {
+  if (dateKey === todayKey) return "Bugün";
+  const today = fromDateKey(todayKey);
+  if (today && toDateKey(addDays(today, 1)) === dateKey) return "Yarın";
+  const day = fromDateKey(dateKey);
+  return day ? `${TR_DAYS_SHORT[day.getDay()]} ${day.getDate()}` : dateKey;
+}
+
+// ── Saat seçimi ──────────────────────────────────────────────────────────
+
+/**
+ * Formdaki saat düğmelerinin türü: "free" seçilebilir; "busy" doktorun başka
+ * randevusu (üstü çizili, onayla seçilebilir; hasta adı gösterilmez); "blocked" kapalı zaman (pasif);
+ * "hidden" geçmiş, öğle arası, mesai sonu ve doktorun mesaisi dışı (hiç
+ * gösterilmez — boş saati bulmayı zorlaştırıyordu).
+ */
+export type SlotKind = "free" | "busy" | "blocked" | "hidden";
+
+export function slotKind(option: SlotOption): SlotKind {
+  const reason = option.busyReason;
+  if (!reason) return "free";
+  if (reason.startsWith("dolu")) return "busy";
+  if (reason.startsWith("kapalı")) return "blocked";
+  return "hidden";
+}

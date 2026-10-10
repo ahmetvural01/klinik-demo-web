@@ -1,18 +1,21 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { AlertTriangle, CalendarPlus, Check, ClipboardPlus, FileText, Phone, RotateCcw, Wallet } from "lucide-react";
+import { AlertTriangle, CalendarPlus, Check, ClipboardPlus, FileText, ListChecks, Pencil, Phone, RotateCcw, Wallet } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
+import { Callout } from "@/components/ui/Callout";
+import { DescriptionList } from "@/components/ui/DescriptionList";
 import { FormErrorBanner, FormField } from "@/components/ui/FormField";
 import { Select, Textarea } from "@/components/ui/Input";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
 import { canMarkNoShow } from "@/lib/appointment-status";
+import { getFollowUpMeta, type FollowUpKey, type TreatmentOption } from "@/lib/appointment-follow-up";
 import { routes } from "@/lib/routes";
-import type { FollowUpKey, TreatmentOption } from "@/lib/appointment-follow-up";
-import { cancelAppointment, patchAppointment } from "@/components/randevu/appointment-api";
+import { usePermissions } from "@/components/auth/PermissionProvider";
+import { cancelAppointment, fetchPatientContext, patchAppointment } from "@/components/randevu/appointment-api";
 import {
   STATUS_ICON,
   buildNoteSafe,
@@ -24,12 +27,15 @@ import {
   formatTimeRange,
   isUnresolvedPast,
   parseNoteFull,
+  patientNoticeText,
   phoneHref,
-  statusLabel,
+  statusChipLabel,
   statusTone,
+  toDateKey,
   treatmentMetaOf,
   type Appointment,
   type AppointmentPermissions,
+  type CalendarSettings,
 } from "@/components/randevu/appointment-utils";
 
 type AppointmentDetailModalProps = {
@@ -43,23 +49,31 @@ type AppointmentDetailModalProps = {
   onEdit: (appointment: Appointment) => void;
   /** Aynı hasta ve doktorla yeni randevu formu. */
   onNextAppointment: (appointment: Appointment) => void;
+  /** Kurum bildirim anahtarları (iptal onayında "mesaj gider mi" metni için). */
+  settings?: CalendarSettings | null;
+  /** İptalden sonra boşalan saati doldurmak için bekleme listesi (sayı > 0 ise düğme görünür). */
+  waitlistCount?: number;
+  onOpenWaitlist?: () => void;
 };
 
-type StatusAction = { status: string; label: string; icon: typeof Check };
+type StatusAction = { status: string; label: string; doneTitle: string; icon: typeof Check };
 
+// Düğme fiili söyler ("Geldi", "Tamamla"), üstteki rozet durumu ("Geldi
+// (bekliyor)" = hasta geldi, bekleme salonunda). Fiiller Liste görünümündeki
+// hızlı düğmelerle aynıdır (önceden listede "Tamamla", burada "Tamamlandı").
 const STATUS_ACTIONS: StatusAction[] = [
-  { status: "GELDI", label: "Hasta geldi", icon: Check },
-  { status: "TAMAMLANDI", label: "Tamamlandı", icon: Check },
-  { status: "GELMEDI", label: "Gelmedi", icon: AlertTriangle },
+  { status: "GELDI", label: "Geldi", doneTitle: "Geldi", icon: Check },
+  { status: "TAMAMLANDI", label: "Tamamla", doneTitle: "Tamamlandı", icon: Check },
+  { status: "GELMEDI", label: "Gelmedi", doneTitle: "Gelmedi", icon: AlertTriangle },
 ];
+
+const FUTURE_DAY_REASON = "Randevu günü henüz gelmedi.";
 
 /**
  * Randevu detayı: üstte kim/ne zaman/hangi doktor tek bakışta; altında
- * durumu değiştiren fiiller (Hasta geldi · Tamamlandı · Gelmedi) ve duruma
- * göre sonraki adım (Tedavi gir, Tahsilat al, Sonraki randevu). İptal ayrı ve
- * sonda. Önceden aynı pencerede iki birincil düğme, iki iptal yolu ve not ile
- * takip notunun aynı metni iki kez göstermesi vardı; durum değişince hiçbir
- * bildirim çıkmadan pencere kapanıyordu.
+ * durumu değiştiren fiiller (Geldi · Tamamlandı · Gelmedi) ve duruma göre
+ * sonraki adım (Tedavi gir, Tahsilat al, Sonraki randevu). Not okunur durur,
+ * "Düzenle" ile açılır. İptal ayrı ve solda; pencereyi X/Esc kapatır.
  */
 export function AppointmentDetailModal({
   appointment,
@@ -70,9 +84,13 @@ export function AppointmentDetailModal({
   onChanged,
   onEdit,
   onNextAppointment,
+  settings = null,
+  waitlistCount = 0,
+  onOpenWaitlist,
 }: AppointmentDetailModalProps) {
   const [current, setCurrent] = useState<Appointment>(appointment);
   const parsed = useMemo(() => parseNoteFull(current.note, treatments), [current.note, treatments]);
+  const [editingNote, setEditingNote] = useState(false);
   const [followUp, setFollowUp] = useState<FollowUpKey>(parsed.followUp);
   const [noteText, setNoteText] = useState(parsed.detail);
   const [busy, setBusy] = useState<string | null>(null);
@@ -83,12 +101,21 @@ export function AppointmentDetailModal({
   const treatment = treatmentMetaOf(parsed.treatment, treatments);
   const unresolved = isUnresolvedPast(current.status, current.startAt);
   const noShowAllowed = canMarkNoShow(current.startAt);
+  // Gelecek gündeki randevuya "Geldi"/"Tamamla" basılamaz (yalnız "Gelmedi"
+  // kısıtlıydı; ileri tarihli randevu yanlışlıkla tamamlanabiliyordu — H8).
+  const futureDay = toDateKey(new Date(current.startAt)) > toDateKey(new Date());
   const isCancelled = current.status === "IPTAL";
   const patientId = current.patient?.id || "";
   const phone = permissions.canSeePhone ? current.patient?.phone : null;
   const tel = phoneHref(phone);
-  const noteDirty = followUp !== parsed.followUp || noteText.trim() !== parsed.detail.trim();
+  const noteDirty = editingNote && (followUp !== parsed.followUp || noteText.trim() !== parsed.detail.trim());
   const canCancel = (permissions.canDelete || permissions.canApprove) && !isCancelled;
+  // Sonraki adım düğmeleri yalnız işi yapabilecek role: bankoya "Tedavi gir"
+  // çıkıyor, tıklayınca Tedavi sekmesi olmadığı için Özet açılıyordu.
+  const { can } = usePermissions();
+  const canEnterTreatment = can("examinations:write");
+  const canTakePayment = can("payments:write");
+  const followUpMeta = getFollowUpMeta(parsed.followUp);
 
   const changeStatus = async (status: string, label: string) => {
     if (busy) return;
@@ -97,20 +124,44 @@ export function AppointmentDetailModal({
     const result = await patchAppointment(current.id, { status });
     setBusy(null);
     if (!result.ok) {
-      setError(result.message);
+      if (result.message) setError(result.message);
       return;
     }
     const next = { ...current, status };
     setCurrent(next);
     onChanged(next);
-    showToastSafe({ title: label, message: `${current.patient?.fullName || "Hasta"} · ${statusLabel(status)}`, type: "success" });
+    // "Geldi"den sonra bildirim de hastanın geldiğini söyler (önceden "Bekliyor" — K3).
+    const resultText = status === "GELDI" ? "bekleme salonunda" : statusChipLabel(status);
+    showToastSafe({ title: label, message: `${current.patient?.fullName || "Hasta"} · ${resultText}`, type: "success" });
+  };
+
+  /**
+   * İptal onayında mesaj cümlesi kesin olsun: hastanın iletişim izni randevu
+   * formundaki uçtan (patient-context) okunur. Okunamazsa (yetki/ağ) eski
+   * "izni varsa" cümlesi kalır; onay penceresi en çok 2,5 sn bekler.
+   */
+  const loadNotify = async () => {
+    if (!patientId || !permissions.canCreate || current.smsInfo === false) return null;
+    if (new Date(current.startAt).getTime() <= Date.now() || settings?.notify?.cancel === false) return null;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 2500);
+    try {
+      return (await fetchPatientContext(patientId, current.id, controller.signal))?.notify ?? null;
+    } catch {
+      return null;
+    } finally {
+      window.clearTimeout(timer);
+    }
   };
 
   const cancel = async () => {
     if (busy) return;
+    setBusy("IPTAL");
+    const notify = await loadNotify();
+    setBusy(null);
     const confirmed = await confirmDialog({
       title: "Randevu iptal edilsin mi?",
-      message: `${current.patient?.fullName || "Hasta"} · ${formatDayShort(new Date(current.startAt))} ${formatTimeRange(current.startAt, current.endAt)}. Kayıt silinmez; takvimde “İptal” olarak kalır. Hastaya otomatik mesaj gitmez.`,
+      message: `${current.patient?.fullName || "Hasta"} · ${formatDayShort(new Date(current.startAt))} ${formatTimeRange(current.startAt, current.endAt)}. ${patientNoticeText("cancel", current, settings, { notify })} Kayıt silinmez; Liste görünümünde “İptal” süzgecinde görünür.`,
       confirmText: "Randevuyu iptal et",
       cancelText: "Vazgeç",
       danger: true,
@@ -121,13 +172,13 @@ export function AppointmentDetailModal({
     const result = await cancelAppointment(current.id, permissions.canDelete);
     setBusy(null);
     if (!result.ok) {
-      setError(result.message);
+      if (result.message) setError(result.message);
       return;
     }
     const next = { ...current, status: "IPTAL" };
     setCurrent(next);
     onChanged(next);
-    showToastSafe({ title: "Randevu iptal edildi", message: `${current.patient?.fullName || "Hasta"} · saat boşaldı. Bekleme listesindeki hastalara bakabilirsiniz.`, type: "success" });
+    showToastSafe({ title: "Randevu iptal edildi", message: `${current.patient?.fullName || "Hasta"} · saat boşaldı.`, type: "success" });
   };
 
   const saveNote = async () => {
@@ -138,31 +189,39 @@ export function AppointmentDetailModal({
     const result = await patchAppointment(current.id, { note: nextNote });
     setBusy(null);
     if (!result.ok) {
-      setError(result.message);
+      if (result.message) setError(result.message);
       return;
     }
     const next = { ...current, note: nextNote };
     setCurrent(next);
+    setEditingNote(false);
     onChanged(next);
-    showToastSafe({ message: "Not ve takip durumu kaydedildi.", type: "success" });
+    showToastSafe({ message: "Not kaydedildi.", type: "success" });
   };
 
-  // Duruma göre tek birincil "sonraki adım".
-  const primaryStatus = isCancelled ? null : current.status === "GELDI" ? "TAMAMLANDI" : current.status === "TAMAMLANDI" || current.status === "GELMEDI" ? null : "GELDI";
+  const startNoteEdit = () => {
+    setFollowUp(parsed.followUp);
+    setNoteText(parsed.detail);
+    setEditingNote(true);
+  };
 
-  const footer = (
+  // Duruma göre tek birincil "sonraki adım" (gelecek günde yok: düğmeler pasif).
+  const primaryStatus = isCancelled || futureDay ? null : current.status === "GELDI" ? "TAMAMLANDI" : current.status === "TAMAMLANDI" || current.status === "GELMEDI" ? null : "GELDI";
+
+  const footer = (permissions.canCreate && !isCancelled) || canCancel ? (
     <>
       {canCancel && (
-        <Button variant="ghost" className="mr-auto text-red-600 hover:bg-red-50 hover:text-red-700" onClick={() => void cancel()} loading={busy === "IPTAL"}>
+        <Button variant="danger-ghost" className="mr-auto" onClick={() => void cancel()} loading={busy === "IPTAL"} disabled={Boolean(busy) && busy !== "IPTAL"}>
           Randevuyu iptal et
         </Button>
       )}
       {permissions.canCreate && !isCancelled && (
-        <Button variant="secondary" onClick={() => onEdit(current)}>Düzenle / taşı</Button>
+        // İstek sürerken pasif: önceden "Planlandı'ya geri al" yanıtı gelmeden
+        // açılan düzenleme formu eski durumu geri yazıyordu (canlı test H2).
+        <Button variant="secondary" icon={Pencil} disabled={Boolean(busy)} onClick={() => onEdit(current)}>Düzenle / taşı</Button>
       )}
-      <Button variant="secondary" onClick={onClose}>Kapat</Button>
     </>
-  );
+  ) : undefined;
 
   return (
     <Modal
@@ -177,88 +236,97 @@ export function AppointmentDetailModal({
     >
       <div className="space-y-4">
         <div className="flex flex-wrap items-center gap-2">
-          <Badge tone={statusTone(current.status)} icon={StatusIcon} size="md">{statusLabel(current.status)}</Badge>
+          <Badge tone={statusTone(current.status)} icon={StatusIcon} size="md">{statusChipLabel(current.status)}</Badge>
           {unresolved && <Badge tone="warning" icon={AlertTriangle}>Gün geçti, durum işaretlenmedi</Badge>}
-          {current.patient?.hasContagiousDisease && (
-            <Badge tone="critical" icon={AlertTriangle} title={current.patient.contagiousDiseaseNote || undefined}>
-              Bulaşıcı hastalık{current.patient.contagiousDiseaseNote ? `: ${current.patient.contagiousDiseaseNote}` : ""}
-            </Badge>
-          )}
         </div>
+
+        {current.patient?.hasContagiousDisease && (
+          <Callout tone="critical" compact title="Bulaşıcı hastalık">{current.patient.contagiousDiseaseNote || "Hasta kartında işaretli."}</Callout>
+        )}
 
         <FormErrorBanner message={error} />
 
-        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
-          <dt className="text-slate-500">Doktor</dt>
-          <dd className="font-semibold text-slate-800">{current.doctor?.fullName || "—"}</dd>
-          <dt className="text-slate-500">Tedavi</dt>
-          <dd className="flex items-center gap-1.5 font-semibold text-slate-800">
-            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: treatment.color }} aria-hidden="true" />
-            {treatment.label}
-          </dd>
-          {phone && (
-            <>
-              <dt className="text-slate-500">Telefon</dt>
-              <dd>
-                {tel ? (
-                  <a href={tel} className="inline-flex items-center gap-1 font-semibold text-primary hover:underline">
-                    <Phone className="h-3.5 w-3.5" aria-hidden="true" /> {formatPhoneDisplay(phone)}
-                  </a>
-                ) : formatPhoneDisplay(phone)}
-              </dd>
-            </>
-          )}
-          {current.clinicUnit && (
-            <>
-              <dt className="text-slate-500">Tedavi alanı</dt>
-              <dd className="text-slate-800">{current.clinicUnit.name}{current.clinicUnit.code ? ` · ${current.clinicUnit.code}` : ""}</dd>
-            </>
-          )}
-          {multiBranch && current.branch?.name && (
-            <>
-              <dt className="text-slate-500">Şube</dt>
-              <dd className="text-slate-800">{current.branch.name}</dd>
-            </>
-          )}
-        </dl>
+        <DescriptionList
+          layout="rows"
+          items={[
+            { key: "doktor", label: "Doktor", value: current.doctor?.fullName },
+            {
+              key: "tedavi",
+              label: "Tedavi",
+              value: (
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: treatment.color }} aria-hidden="true" />
+                  {treatment.label}
+                </span>
+              ),
+            },
+            {
+              key: "telefon",
+              label: "Telefon",
+              hidden: !phone,
+              value: tel ? (
+                <a href={tel} className="inline-flex items-center gap-1 font-semibold text-primary hover:underline">
+                  <Phone className="h-3.5 w-3.5" aria-hidden="true" /> {formatPhoneDisplay(phone)}
+                </a>
+              ) : formatPhoneDisplay(phone),
+            },
+            {
+              key: "alan",
+              label: "Tedavi alanı",
+              hidden: !current.clinicUnit,
+              value: current.clinicUnit ? `${current.clinicUnit.name}${current.clinicUnit.code ? ` · ${current.clinicUnit.code}` : ""}` : null,
+            },
+            { key: "sube", label: "Şube", hidden: !(multiBranch && current.branch?.name), value: current.branch?.name },
+          ]}
+        />
 
         {permissions.canCreate && !isCancelled && (
-          <section aria-label="Durum" className="space-y-2">
-            <p className="text-xs font-bold text-slate-800">Durumu işaretle</p>
-            <div className="flex flex-wrap gap-2">
-              {STATUS_ACTIONS.map((action) => {
-                const active = current.status === action.status;
-                const blockedNoShow = action.status === "GELMEDI" && !noShowAllowed;
-                return (
-                  <Button
-                    key={action.status}
-                    size="sm"
-                    variant={active ? "secondary" : primaryStatus === action.status ? "primary" : "secondary"}
-                    icon={active ? Check : undefined}
-                    aria-pressed={active}
-                    disabled={active || blockedNoShow || Boolean(busy)}
-                    loading={busy === action.status}
-                    title={blockedNoShow ? "Randevu saati gelmeden “Gelmedi” işaretlenemez." : undefined}
-                    onClick={() => void changeStatus(action.status, action.label)}
-                  >
-                    {active ? statusLabel(action.status) : action.label}
-                  </Button>
-                );
-              })}
-              {display !== "PLANLANDI" && (
-                <Button size="sm" variant="ghost" icon={RotateCcw} disabled={Boolean(busy)} loading={busy === "BEKLIYOR"} onClick={() => void changeStatus("BEKLIYOR", "Planlandı'ya alındı")}>
-                  Planlandı&apos;ya geri al
+          <section aria-label="Durum" className="flex flex-wrap items-center gap-2">
+            {STATUS_ACTIONS.map((action) => {
+              const active = current.status === action.status;
+              const blockedNoShow = action.status === "GELMEDI" && !noShowAllowed;
+              const blockedFuture = futureDay && action.status !== "GELMEDI";
+              return (
+                <Button
+                  key={action.status}
+                  size="sm"
+                  variant={!active && primaryStatus === action.status ? "primary" : "secondary"}
+                  icon={active ? Check : undefined}
+                  aria-pressed={active}
+                  disabled={active || blockedNoShow || blockedFuture || Boolean(busy)}
+                  loading={busy === action.status}
+                  title={blockedFuture ? FUTURE_DAY_REASON : blockedNoShow ? "Randevu saati gelmeden “Gelmedi” işaretlenemez." : undefined}
+                  onClick={() => void changeStatus(action.status, action.doneTitle)}
+                >
+                  {action.label}
                 </Button>
-              )}
-            </div>
+              );
+            })}
+            {display !== "PLANLANDI" && (
+              <Button size="sm" variant="ghost" icon={RotateCcw} disabled={Boolean(busy)} loading={busy === "BEKLIYOR"} onClick={() => void changeStatus("BEKLIYOR", "Planlandı'ya alındı")}>
+                Planlandı&apos;ya geri al
+              </Button>
+            )}
+            {/* Pasif düğmenin ipucu dokunmatikte görünmez; neden satırda yazar. */}
+            {futureDay && display === "PLANLANDI" && <p className="w-full text-xs text-slate-500">{FUTURE_DAY_REASON} Geliş ve tamamlama o gün işaretlenir.</p>}
           </section>
         )}
 
         {isCancelled && permissions.canCreate && (
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
-            <span>Bu randevu iptal edildi.</span>
-            <Button size="sm" variant="secondary" icon={RotateCcw} loading={busy === "BEKLIYOR"} onClick={() => void changeStatus("BEKLIYOR", "Randevu yeniden açıldı")}>Yeniden aç</Button>
-          </div>
+          <Callout
+            tone="neutral"
+            compact
+            action={(
+              <>
+                {waitlistCount > 0 && onOpenWaitlist && (
+                  <Button size="sm" variant="secondary" icon={ListChecks} count={waitlistCount} countTone="warning" countLabel="bekleyen hasta" onClick={onOpenWaitlist}>Bekleme listesi</Button>
+                )}
+                <Button size="sm" variant="secondary" icon={RotateCcw} loading={busy === "BEKLIYOR"} onClick={() => void changeStatus("BEKLIYOR", "Randevu yeniden açıldı")}>Yeniden aç</Button>
+              </>
+            )}
+          >
+            Bu randevu iptal edildi.
+          </Callout>
         )}
 
         {/* Sonraki adım: hasta dosyasındaki mevcut akışlara bağlanır. */}
@@ -266,8 +334,8 @@ export function AppointmentDetailModal({
           <section aria-label="Sonraki adım" className="flex flex-wrap gap-2 border-t border-slate-100 pt-3">
             {current.status === "GELDI" && (
               <>
-                <Button size="sm" variant="secondary" icon={ClipboardPlus} href={routes.patient(patientId, "tedavi")}>Tedavi gir</Button>
-                <Button size="sm" variant="secondary" icon={Wallet} href={routes.patient(patientId, "odeme")}>Tahsilat al</Button>
+                {canEnterTreatment && <Button size="sm" variant="secondary" icon={ClipboardPlus} href={routes.patient(patientId, "tedavi")}>Tedavi gir</Button>}
+                {canTakePayment && <Button size="sm" variant="secondary" icon={Wallet} href={routes.patient(patientId, "odeme")}>Tahsilat al</Button>}
               </>
             )}
             {permissions.canCreate && (current.status === "TAMAMLANDI" || current.status === "GELMEDI" || isCancelled) && (
@@ -279,11 +347,11 @@ export function AppointmentDetailModal({
           </section>
         )}
 
-        <section aria-label="Not ve takip" className="space-y-3 rounded-lg border border-slate-200 bg-slate-50/60 p-3">
-          {permissions.canCreate ? (
-            <>
-              <div className="grid gap-3 sm:grid-cols-[minmax(0,220px)_1fr]">
-                <FormField label="Takip durumu" htmlFor="appt-followup" hint="Hasta Takip listesine düşer.">
+        <section aria-label="Not" className="rounded-lg border border-slate-200 p-3">
+          {editingNote ? (
+            <div className="space-y-3">
+              <div className="grid gap-3 sm:grid-cols-[minmax(0,200px)_1fr]">
+                <FormField label="Takip durumu" htmlFor="appt-followup" hint="Hasta aramalarına düşer.">
                   <Select id="appt-followup" size="sm" value={followUp} onChange={(event) => setFollowUp(event.target.value as FollowUpKey)}>
                     {followUpChoices(followUp).map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
                   </Select>
@@ -292,12 +360,23 @@ export function AppointmentDetailModal({
                   <Textarea id="appt-note-detail" rows={2} value={noteText} onChange={(event) => setNoteText(event.target.value)} placeholder="Ör. 2 kez arandı, ulaşılamadı" />
                 </FormField>
               </div>
-              <div className="flex justify-end">
-                <Button size="sm" variant="secondary" disabled={!noteDirty} loading={busy === "NOTE"} onClick={() => void saveNote()}>Notu kaydet</Button>
+              <div className="flex justify-end gap-2">
+                <Button size="sm" variant="ghost" disabled={busy === "NOTE"} onClick={() => setEditingNote(false)}>Vazgeç</Button>
+                <Button size="sm" disabled={!noteDirty} loading={busy === "NOTE"} onClick={() => void saveNote()}>Kaydet</Button>
               </div>
-            </>
+            </div>
           ) : (
-            <p className="whitespace-pre-line text-sm text-slate-700">{parsed.detail || <span className="text-slate-400">Not yok</span>}</p>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 space-y-1">
+                <p className="text-xs font-bold text-slate-800">Not</p>
+                <p className="whitespace-pre-line text-sm text-slate-700">{parsed.detail || <span className="text-slate-400">Not yok</span>}</p>
+                {parsed.followUp !== "YOK" && <Badge tone={followUpMeta.needsAction ? "warning" : "neutral"}>{followUpMeta.label}</Badge>}
+              </div>
+              {permissions.canCreate && (
+                // "Notu düzenle": alttaki "Düzenle / taşı" (randevu formu) ile karışmasın.
+                <Button size="sm" variant="ghost" icon={Pencil} onClick={startNoteEdit} className="shrink-0">Notu düzenle</Button>
+              )}
+            </div>
           )}
         </section>
       </div>

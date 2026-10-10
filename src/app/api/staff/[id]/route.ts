@@ -4,9 +4,10 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { validateWorkHoursRange, parseTimeToMinutes } from "@/lib/working-hours-core";
 import { turkeyTimeKey } from "@/lib/tz";
-import { invalidateUserSessionCache, requireAuth, writeAudit } from "@/lib/api";
+import { hasEffectivePermission, invalidateUserSessionCache, requireAuth, writeAudit } from "@/lib/api";
 import { checkStaffLimit } from "@/lib/staff-limits";
 import { TC_NO_REGEX, TC_NO_MESSAGE } from "@/lib/validators";
+import { isValidTurkishIdentityNumber } from "@/lib/tc-kimlik";
 import { requireActiveBranch } from "@/lib/branch-context";
 
 type Params = { params: Promise<{ id: string }> };
@@ -54,7 +55,7 @@ export async function GET(_: NextRequest, props: Params) {
       genelYuzde: true,
       maasYuzde: true,
       profile: { select: { workStart: true, workEnd: true, photoUrl: true, hideAsDoctor: true } },
-      branchMemberships: { where: { branchId: branch.branchId, isActive: true }, select: { isActive: true, kkYuzde: true, genelYuzde: true, maasYuzde: true }, take: 1 },
+      branchMemberships: { where: { branchId: branch.branchId, isActive: true }, select: { isActive: true, isBranchManager: true, kkYuzde: true, genelYuzde: true, maasYuzde: true }, take: 1 },
     },
   });
 
@@ -62,15 +63,25 @@ export async function GET(_: NextRequest, props: Params) {
     return NextResponse.json({ message: "Personel bulunamadı" }, { status: 404 });
   }
 
+  // TC kimlik no (KVKK) yalnız personel kaydını düzenleyebilene döner
+  // (bkz. api/staff GET); düzenleme formu yalnız onda açılır.
+  const canSeeIdentity = await hasEffectivePermission(auth.user, "staff:write");
   // bkz. src/app/api/staff/route.ts — aynı komisyon oranı gizliliği kontrolü.
   const branchRates = user.branchMemberships[0];
+  const { identityNo, ...userWithoutIdentity } = user;
   const scopedUser = {
-    ...user,
+    ...userWithoutIdentity,
+    ...(canSeeIdentity ? { identityNo } : {}),
+    // Personel penceresi şube yöneticisinde rol/pasife alma alanlarını
+    // baştan kilitli gösterir (sunucu zaten 409 verir). Önceden bu tek bilgi
+    // için ağır /api/branches?manage=1 listesi çekiliyordu.
+    isBranchManager: Boolean(branchRates?.isBranchManager),
     kkYuzde: branchRates?.kkYuzde ?? user.kkYuzde,
     genelYuzde: branchRates?.genelYuzde ?? user.genelYuzde,
     maasYuzde: branchRates?.maasYuzde ?? user.maasYuzde,
   };
-  const canSeeRates = auth.user.role === "YONETICI" || auth.user.role === "SUPERADMIN";
+  // Oranlar yalnız hakediş özetini de gören kişiye döner (finance:read; bkz. api/staff GET).
+  const canSeeRates = await hasEffectivePermission(auth.user, "finance:read");
   if (!canSeeRates) {
     const { kkYuzde: _kkYuzde, genelYuzde: _genelYuzde, maasYuzde: _maasYuzde, branchMemberships: _branchMemberships, ...rest } = scopedUser;
     return NextResponse.json(rest);
@@ -129,7 +140,13 @@ export async function PUT(request: NextRequest, props: Params) {
   if (body.identityNo !== undefined) {
     body.identityNo = String(body.identityNo).trim();
     if (!TC_NO_REGEX.test(body.identityNo)) {
-      return NextResponse.json({ message: TC_NO_MESSAGE }, { status: 400 });
+      return NextResponse.json({ message: TC_NO_MESSAGE, field: "identityNo" }, { status: 400 });
+    }
+    // Yeni kayıttaki (POST) algoritma denetimi düzenlemede de geçerli: TC giriş
+    // kimliğidir, yanlış yazılan numara sonradan zor fark edilir. Değişmeyen
+    // eski kayıt engellenmez (yalnız yeni yazılan numara denetlenir).
+    if (body.identityNo !== existing.identityNo && !isValidTurkishIdentityNumber(body.identityNo)) {
+      return NextResponse.json({ message: "Geçerli bir TC kimlik no yazın; numarayı kimlikten kontrol edin.", field: "identityNo" }, { status: 400 });
     }
   }
   if (body.password !== undefined && (typeof body.password !== "string" || body.password.length < 8 || body.password.length > 72)) {
@@ -147,6 +164,9 @@ export async function PUT(request: NextRequest, props: Params) {
   }
 
   const newRole = (body.role || existing.role) as string;
+  // Rol oturum anahtarında (JWT) taşınır: rolü değişen kişinin açık oturumları
+  // kapatılır, yoksa yeniden girişe kadar eski rolün yetkileriyle çalışırdı.
+  const roleChanged = newRole !== existing.role;
   const currentMembership = existing.branchMemberships[0];
   const newIsActive = typeof body.isActive === "boolean" ? body.isActive : currentMembership?.isActive ?? true;
   if (existing.id === auth.user.id && currentMembership?.isActive !== false && !newIsActive) {
@@ -254,8 +274,8 @@ export async function PUT(request: NextRequest, props: Params) {
       ...(newPasswordHash && {
         passwordHash: newPasswordHash,
         mustChangePassword: false,
-        tokenVersion: { increment: 1 },
       }),
+      ...(newPasswordHash || roleChanged ? { tokenVersion: { increment: 1 } } : {}),
       role: newRole as Role,
       // Form bu alanı göndermiyorsa mevcut değeri korur — önceden eksik
       // gönderilen istek durumu sessizce "aktif"e, mesaiyi 08:30–18:00'e
@@ -350,7 +370,7 @@ export async function PUT(request: NextRequest, props: Params) {
     return NextResponse.json({ message: "Personel güncellenemedi" }, { status: 503 });
   }
 
-  if (newPasswordHash) {
+  if (newPasswordHash || roleChanged) {
     invalidateUserSessionCache(existing.id);
   }
 
@@ -373,10 +393,17 @@ export async function PUT(request: NextRequest, props: Params) {
   }
   pushDiff("Kurum", existing.institutionId, updated.institutionId);
   pushDiff("Rol", roleLabel(existing.role), roleLabel(updated.role));
-  pushDiff("Durum", existing.isActive, updated.isActive);
-  pushDiff("KK Yüzde", existing.kkYuzde, updated.kkYuzde);
-  pushDiff("Genel Yüzde", existing.genelYuzde, updated.genelYuzde);
-  pushDiff("Maaş Yüzde", existing.maasYuzde, updated.maasYuzde);
+  // "Önce" değerleri "sonra" ile aynı kaynaktan (şube üyeliği, yoksa kullanıcı
+  // kaydı) okunur; önceden eski kullanıcı kolonu (çoğu zaman boş) okunuyor,
+  // oran değişmediği halde kayıtta "KK Yüzde: - → 3" görünüyordu.
+  pushDiff("Durum", currentMembership?.isActive ?? existing.isActive, updated.isActive);
+  pushDiff("KK Yüzde", currentMembership?.kkYuzde ?? existing.kkYuzde, updated.kkYuzde);
+  pushDiff("Genel Yüzde", currentMembership?.genelYuzde ?? existing.genelYuzde, updated.genelYuzde);
+  pushDiff("Maaş Yüzde", currentMembership?.maasYuzde ?? existing.maasYuzde, updated.maasYuzde);
+  if (roleChanged) {
+    beforeParts.push("Oturum: açık");
+    afterParts.push("Oturum: rol değiştiği için kapatıldı");
+  }
 
   pushDiff("Mesai Başlangıç", existing.profile?.workStart, updated.profile?.workStart);
   pushDiff("Mesai Bitiş", existing.profile?.workEnd, updated.profile?.workEnd);

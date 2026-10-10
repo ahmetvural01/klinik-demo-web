@@ -6,6 +6,8 @@
 
 import { TOOTH_STATUS_LABELS, type ToothStatus } from "@/components/ToothChart";
 import { formatDateText } from "@/components/ui/Money";
+import { formatPhoneNumber } from "@/lib/format";
+import type { ClinicLetterhead } from "./clinic-letterhead";
 import {
   ageFrom,
   getItemAmount,
@@ -35,7 +37,7 @@ export function escapeHtml(value: unknown) {
 
 const date = (value?: string | null) => (value ? formatDateText(value) : "—");
 
-type PrintContext = { data: PatientDetailData; clinicName: string; hidePhone: boolean };
+export type PrintContext = { data: PatientDetailData; clinic: ClinicLetterhead; hidePhone: boolean };
 
 function printHtml(body: string) {
   const el = document.getElementById("ks-print-area");
@@ -47,9 +49,13 @@ function printHtml(body: string) {
   }, 150);
 }
 
-function header({ clinicName }: PrintContext, docType: string) {
+// Antet kliniğin kendi künyesidir: önceden ad altına her klinik için sabit
+// "Diş Sağlığı Merkezi" yazılıyordu (muayenehane/poliklinik için yanlış unvan)
+// ve adres/telefon yoktu.
+function header({ clinic }: PrintContext, docType: string) {
+  const sub = [clinic.address, clinic.phone ? `Tel: ${clinic.phone}` : ""].filter(Boolean).join(" · ");
   return `<div class="header">
-    <div><div class="h-title">${escapeHtml(clinicName || "Klinik")}</div><div class="h-sub">Diş Sağlığı Merkezi</div></div>
+    <div><div class="h-title">${escapeHtml(clinic.name || "Klinik")}</div>${sub ? `<div class="h-sub">${escapeHtml(sub)}</div>` : ""}</div>
     <div class="h-right"><div style="font-size:12px;font-weight:700;letter-spacing:1px">${escapeHtml(docType)}</div><div style="font-size:9px;opacity:0.8">${escapeHtml(formatDateText(new Date()))}</div></div>
   </div>`;
 }
@@ -60,7 +66,7 @@ function patientBar({ data, hidePhone }: PrintContext) {
     <span><strong>${escapeHtml(data.fullName)}</strong></span>
     ${data.tcNo && data.tcNo !== "***" ? `<span>T.C.: <strong>${escapeHtml(data.tcNo)}</strong></span>` : ""}
     ${data.birthDate ? `<span>Doğum: <strong>${escapeHtml(date(data.birthDate))}${age !== null ? ` (${age} yaş)` : ""}</strong></span>` : ""}
-    ${!hidePhone && data.phone && data.phone !== "***" ? `<span>Tel: <strong>${escapeHtml(data.phone)}</strong></span>` : ""}
+    ${!hidePhone && data.phone && data.phone !== "***" ? `<span>Tel: <strong>${escapeHtml(data.phoneCountryCode && data.phoneCountryCode !== "+90" ? `${data.phoneCountryCode} ${data.phone}` : formatPhoneNumber(data.phone))}</strong></span>` : ""}
     ${data.bloodType ? `<span>Kan: <strong>${escapeHtml(data.bloodType)}</strong></span>` : ""}
   </div>`;
 }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { bumpRealtimeInstitution, hasEffectivePermission, requireAuth, writeAudit } from "@/lib/api";
+import { hasEffectivePermission, requireAuth, writeAudit } from "@/lib/api";
 import { reverseLabInvoiceFirmaIntegration } from "@/lib/lab-firma-integration";
 import { requireActiveBranch } from "@/lib/branch-context";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
@@ -63,7 +63,7 @@ export async function GET(_: NextRequest, props: { params: Promise<{ id: string 
   });
 
   if (!order) return NextResponse.json({ error: "Laboratuvar işi bulunamadı" }, { status: 404 });
-  return NextResponse.json(await toPublicLabOrder(order, auth.user.role));
+  return NextResponse.json(await toPublicLabOrder(order, auth.user));
 }
 
 export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string }> }) {
@@ -193,8 +193,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
 
       const changed = Object.keys(data).filter((key) => key !== "firmaId").join(", ");
       await writeAudit(auth.user.id, "LAB_ORDER_EDIT", `Laboratuvar işi bilgileri düzeltildi (${params.id}): ${changed}`);
-      await bumpRealtimeInstitution(institutionId);
-      return NextResponse.json(await toPublicLabOrder(updated, auth.user.role));
+      return NextResponse.json(await toPublicLabOrder(updated, auth.user));
     } catch (error) {
       const response = ruleErrorResponse(error);
       if (response) return response;
@@ -310,8 +309,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
       }, { isolationLevel: "Serializable" });
 
       await writeAudit(auth.user.id, "LAB_ORDER_RPT_REOPEN", `Laboratuvar işi yeniden yapım için açıldı (${params.id}); faturalar ${voidInvoices ? "iptal edildi" : "korundu"}`);
-      await bumpRealtimeInstitution(institutionId);
-      return NextResponse.json(await toPublicLabOrder(reopened, auth.user.role));
+      return NextResponse.json(await toPublicLabOrder(reopened, auth.user));
     } catch (error) {
       const response = ruleErrorResponse(error);
       if (response) return response;
@@ -321,7 +319,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
 
   if (status === undefined || status === existing.status) {
     const unchanged = await prisma.labOrder.findFirst({ where: { id: params.id, institutionId, branchId: branch.branchId }, include: LAB_ORDER_INCLUDE });
-    return NextResponse.json(await toPublicLabOrder(unchanged, auth.user.role));
+    return NextResponse.json(await toPublicLabOrder(unchanged, auth.user));
   }
 
   // ── Durum değişikliği: Hastaya takıldı / İptal ─────────────────────────────
@@ -417,8 +415,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
         ? `Laboratuvar işi iptal edildi (${params.id}): ${cancelReason}`
         : `Laboratuvar işi hastaya takıldı (${params.id})`,
     );
-    await bumpRealtimeInstitution(institutionId);
-    return NextResponse.json(await toPublicLabOrder(updated, auth.user.role));
+    return NextResponse.json(await toPublicLabOrder(updated, auth.user));
   } catch (error) {
     const response = ruleErrorResponse(error);
     if (response) return response;

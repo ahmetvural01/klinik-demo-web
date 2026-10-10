@@ -25,8 +25,8 @@
 
 ## 5) Go-Live Sonrasi Kontrol
 1. `/api/system/health` 200 donuyor.
-2. `/api/system/metrics` yonetici hesabi ile erisilebilir.
-3. `/api/system/alerts` kritik alarm uretmiyor.
+2. `/api/system/metrics` ve `/api/system/alerts` yalnız süperadmin oturumuyla okunur (klinik yöneticisine kapalı, 403); Süperadmin › Sistem Ayarları › Teknik ölçümler ikisini `/api/superadmin/system-settings/metrics` ucundan birlikte gösterir.
+3. Teknik ölçümler sekmesinde (ya da süperadmin oturumuyla `/api/system/alerts`) kritik alarm yok.
 4. Login, hasta, randevu, gorevler, hasta takip akislari manuel kontrol edildi.
 5. SMS queue worker aktif ve backlog yok.
 

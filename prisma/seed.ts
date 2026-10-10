@@ -19,7 +19,7 @@ async function main() {
   const demoInstitutionEmail = process.env.DEMO_INSTITUTION_EMAIL || "demo@local.test";
   const demoInstitutionWebsite = process.env.DEMO_INSTITUTION_WEBSITE || "www.demo.local";
   const demoAdminIdentity = process.env.DEMO_ADMIN_IDENTITY || "00000000000";
-  const demoAdminFullName = process.env.DEMO_ADMIN_FULL_NAME || "Demo Kullanici";
+  const demoAdminFullName = process.env.DEMO_ADMIN_FULL_NAME || "Demo Kullanıcı";
   const superadminIdentityNo = process.env.SUPERADMIN_IDENTITY || "00000000001";
   const superadminFullName = process.env.SUPERADMIN_FULL_NAME || "Demo Superadmin";
   const requestedSuperadminIdentityNo = process.env.SUPERADMIN_LOGIN_IDENTITY || superadminIdentityNo;
@@ -37,7 +37,7 @@ async function main() {
           name: demoInstitutionName,
           email: demoInstitutionEmail,
           phone: "05306375370",
-          address: "Cukurova / Adana",
+          address: "Çukurova / Adana",
           subscriptionPlan: "PROFESYONEL",
           isActive: true,
         },
@@ -47,7 +47,7 @@ async function main() {
           name: demoInstitutionName,
           email: demoInstitutionEmail,
           phone: "05306375370",
-          address: "Cukurova / Adana",
+          address: "Çukurova / Adana",
           subscriptionPlan: "PROFESYONEL",
           smsBalance: 0,
           isActive: true,
@@ -96,7 +96,7 @@ async function main() {
     create: {
       institutionId: institution.id,
       institutionName: "Adana White Dental Clinic",
-      institutionAddress: "Cukurova / Adana",
+      institutionAddress: "Çukurova / Adana",
       institutionPhone: "05306375370",
       institutionWebsite: demoInstitutionWebsite,
       openingTime: "08:30",
@@ -176,21 +176,27 @@ async function main() {
   // institutionId=null (sistem varsayılanı) satırlarda Postgres NULL'ları
   // @@unique([institutionId, code]) karşılaştırmasında eşit saymaz — native
   // upsert/ON CONFLICT bu durumda güvenilmez, bu yüzden elle findFirst+create/update.
+  // Metinler uygulamadaki yedek metinlerle aynı Türkçe yazımla (bkz.
+  // api/sms/route.ts); kategori Süperadmin › SMS › Şablonlar süzgeciyle eşleşir.
+  // Yalnız eksik şablon oluşturulur; mevcut kayıtlar değişmez.
   const defaultTemplates = [
     {
       code: "BILGI",
       title: "Bilgi SMS",
-      content: "{{institutionName}}: Sayin {{patientName}}, randevunuz olusturuldu. Tarih: {{dateTime}}.",
+      category: "APPOINTMENT",
+      content: "{{institutionName}}: Sayın {{patientName}}, randevunuz oluşturuldu. Tarih: {{dateTime}}.",
     },
     {
       code: "HATIRLATMA",
-      title: "Hatirlatma SMS",
-      content: "{{institutionName}}: Sayin {{patientName}}, randevu hatirlatmasi. Tarih: {{dateTime}}, Doktor: {{doctorName}}.",
+      title: "Hatırlatma SMS",
+      category: "APPOINTMENT",
+      content: "{{institutionName}}: Sayın {{patientName}}, randevu hatırlatması. Tarih: {{dateTime}}, Doktor: {{doctorName}}.",
     },
     {
       code: "ANKET",
       title: "Anket SMS",
-      content: "{{institutionName}}: Sayin {{patientName}}, randevunuz tamamlandi. Geri bildiriminiz bizim icin degerli.",
+      category: "AFTERCARE",
+      content: "{{institutionName}}: Sayın {{patientName}}, randevunuz tamamlandı. Geri bildiriminiz bizim için değerli.",
     },
   ];
   for (const t of defaultTemplates) {
@@ -205,7 +211,7 @@ async function main() {
     update: {},
     create: {
       code: "MOCK",
-      name: "Ucretsiz Test (Mock)",
+      name: "Ücretsiz deneme (Mock)",
       isActive: true,
       priority: 1,
       httpMethod: "POST",
@@ -249,7 +255,7 @@ async function main() {
     update: {},
     create: {
       code: "ILETIMERKEZI",
-      name: "Ileti Merkezi",
+      name: "İleti Merkezi",
       isActive: false,
       priority: 2,
       httpMethod: "POST",
@@ -273,7 +279,7 @@ async function main() {
     update: {},
     create: {
       code: "CUSTOM",
-      name: "Ozel HTTP SMS",
+      name: "Özel HTTP SMS",
       isActive: false,
       priority: 50,
       httpMethod: "POST",
@@ -333,11 +339,11 @@ async function main() {
     data: {
       userId: admin.id,
       action: "SEED",
-      detail: "Baslangic verileri yuklendi"
+      detail: "Başlangıç verileri yüklendi"
     }
   });
 
-  console.log("Seed tamamlandi");
+  console.log("Seed tamamlandı");
 }
 
 main()

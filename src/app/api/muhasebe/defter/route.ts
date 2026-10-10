@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { PaymentMethod } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, withApiTiming } from "@/lib/api";
+import { hasEffectivePermission, requireAuth, withApiTiming } from "@/lib/api";
 import { requireActiveBranch } from "@/lib/branch-context";
 import { stripSystemTags } from "@/lib/format-text";
+import { paymentMethodLabel } from "@/lib/payment-methods";
 import { isValidDateKey, turkeyDateKey, turkeyDayRangeUtc } from "@/lib/tz";
 
 /**
- * GET /api/muhasebe/defter?from=YYYY-MM-DD&to=YYYY-MM-DD&tur=HEPSI|TAHSILAT|GIDER&yontem=&q=&page=&take=&all=1
+ * GET /api/muhasebe/defter?from=YYYY-MM-DD&to=YYYY-MM-DD&tur=HEPSI|TAHSILAT|GIDER|IPTAL&yontem=&q=&page=&take=&all=1
  *
  * Muhasebe "Gelir ve gider" listesi: hasta tahsilatları ile giderleri AYNI
  * tarih aralığında, sunucuda birleştirip filtreler ve dönem toplamlarını
@@ -18,11 +19,18 @@ import { isValidDateKey, turkeyDateKey, turkeyDayRangeUtc } from "@/lib/tz";
  *
  * Yetki: tahsilatlar payments:read, giderler finance:read ister (eski uçlarla
  * aynı kontrol); kullanıcının izni olmayan kaynak listeye hiç katılmaz.
- * Salt okunur uçtur; hiçbir kayıt değiştirmez.
+ * Tüm kayıtları tek seferde (all=1, dışa aktarma) almak finance:export ister.
+ * Kurum geneli liste olduğu için Muhasebe ekranı izni (finance:center) de
+ * gerekir: önceden payments:read yeten asistan kliniğin bütün tahsilatlarını
+ * okuyabiliyordu. Salt okunur uçtur; hiçbir kayıt değiştirmez.
+ *
+ * tur=IPTAL: dönemde iptal edilmiş tahsilat ve giderler (salt okunur iz;
+ * önceden iptal edilen kayıt listeden iz bırakmadan kayboluyordu). Toplamlar
+ * yalnız bu iptal edilmiş kümeyi anlatır; ekran bu görünümde dönem özetini
+ * göstermez.
  */
 
 const METHODS: readonly PaymentMethod[] = ["NAKIT", "KREDI_KARTI", "HAVALE_EFT", "MAIL_ORDER", "DIGER"];
-const METHOD_LABELS: Record<string, string> = { NAKIT: "Nakit", KREDI_KARTI: "Kredi Kartı", HAVALE_EFT: "Havale/EFT", MAIL_ORDER: "Mail Order", DIGER: "Diğer" };
 const AY = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"];
 const SOURCE_CAP = 5000;
 
@@ -45,17 +53,34 @@ type Row = {
   method: string;
   amount: number;
   locked: boolean;
+  /** İptal edilmiş kayıt (yalnız tur=IPTAL görünümünde); salt okunur. */
+  voided?: boolean;
+  /** İptal anı (tahsilatta iptal zamanı, giderde son değişiklik zamanı). */
+  voidedAt?: string | null;
   payment?: Record<string, unknown>;
   expense?: Record<string, unknown>;
 };
 
 export const GET = withApiTiming("muhasebe-defter", async function GET(request: NextRequest) {
   try {
-    const [paymentAuth, expenseAuth] = await Promise.all([requireAuth("payments:read"), requireAuth("finance:read")]);
-    const auth = paymentAuth.error ? expenseAuth : paymentAuth;
+    // Oturum/kurum/şube kontrolü BİR kez; kaynak izinleri aynı oturumdan hesaplanır.
+    // Önceden iki tam requireAuth turu (her biri 4 sorgu) birlikte çalışıyordu.
+    const auth = await requireAuth();
     if (auth.error) return auth.error;
-    const canPayments = !paymentAuth.error;
-    const canExpenses = !expenseAuth.error;
+    const all = request.nextUrl.searchParams.get("all") === "1";
+    const [canPayments, canExpenses, canExport, canCenter] = await Promise.all([
+      hasEffectivePermission(auth.user, "payments:read"),
+      hasEffectivePermission(auth.user, "finance:read"),
+      all ? hasEffectivePermission(auth.user, "finance:export") : Promise.resolve(true),
+      hasEffectivePermission(auth.user, "finance:center"),
+    ]);
+    if ((!canPayments && !canExpenses) || !canCenter) {
+      return NextResponse.json({ message: "Gelir ve gider listesini görme yetkiniz yok." }, { status: 403 });
+    }
+    // Rol Yetkileri'ndeki "Finans — Dışa Aktarma" izni önceden hiçbir yerde denetlenmiyordu.
+    if (!canExport) {
+      return NextResponse.json({ message: "Muhasebe kayıtlarını dışa aktarma yetkiniz yok." }, { status: 403 });
+    }
     const branch = requireActiveBranch(auth.user.branchContext);
     if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
     const institutionId = auth.user.institutionId;
@@ -73,12 +98,12 @@ export const GET = withApiTiming("muhasebe-defter", async function GET(request: 
     }
     const tur = params.get("tur") || "HEPSI";
     const yontemParam = params.get("yontem") || "HEPSI";
-    if (!["HEPSI", "TAHSILAT", "GIDER"].includes(tur) || (yontemParam !== "HEPSI" && !isMethod(yontemParam))) {
+    if (!["HEPSI", "TAHSILAT", "GIDER", "IPTAL"].includes(tur) || (yontemParam !== "HEPSI" && !isMethod(yontemParam))) {
       return NextResponse.json({ message: "Geçersiz filtre." }, { status: 400 });
     }
+    const cancelled = tur === "IPTAL";
     const method = yontemParam !== "HEPSI" && isMethod(yontemParam) ? yontemParam : null;
     const q = (params.get("q") || "").trim().toLocaleLowerCase("tr");
-    const all = params.get("all") === "1";
     const take = Math.min(200, Math.max(1, Number.parseInt(params.get("take") || "50", 10) || 50));
     const requestedPage = Math.max(1, Number.parseInt(params.get("page") || "1", 10) || 1);
 
@@ -91,14 +116,14 @@ export const GET = withApiTiming("muhasebe-defter", async function GET(request: 
             where: {
               institutionId,
               branchId: branch.branchId,
-              status: "ACTIVE",
+              status: cancelled ? "VOID" : "ACTIVE",
               // Eski "Hakediş Öde" akışının hastasız ödemeleri gelir değildir (kurumdan doktora çıkış).
               patientId: { not: null },
               createdAt: { gte: rangeStart, lte: rangeEnd },
               ...(method ? { method } : {}),
             },
             select: {
-              id: true, createdAt: true, amount: true, method: true, description: true, posId: true, doctorId: true,
+              id: true, createdAt: true, amount: true, method: true, description: true, posId: true, doctorId: true, voidedAt: true,
               patient: { select: { id: true, fullName: true } },
               doctor: { select: { id: true, fullName: true } },
             },
@@ -106,17 +131,18 @@ export const GET = withApiTiming("muhasebe-defter", async function GET(request: 
             take: SOURCE_CAP + 1,
           })
         : Promise.resolve([]),
+      // tur=IPTAL iki kaynağı da (izin varsa) okur.
       canExpenses && tur !== "TAHSILAT"
         ? prisma.expense.findMany({
             where: {
               institutionId,
               branchId: branch.branchId,
-              status: "AKTIF",
+              status: cancelled ? "IPTAL" : "AKTIF",
               tarih: { gte: rangeStart, lte: rangeEnd },
               ...(method ? { yontem: method } : {}),
             },
             select: {
-              id: true, tarih: true, createdAt: true, category: true, categoryId: true, description: true, tutar: true,
+              id: true, tarih: true, createdAt: true, updatedAt: true, category: true, categoryId: true, description: true, tutar: true,
               yontem: true, faturaNo: true, kdvOrani: true, doctorId: true, periodYear: true, periodMonth: true,
               sourceType: true, sourceId: true,
               expenseCategory: { select: { id: true, name: true } },
@@ -161,6 +187,7 @@ export const GET = withApiTiming("muhasebe-defter", async function GET(request: 
         method: payment.method,
         amount: Number(payment.amount),
         locked: false,
+        ...(cancelled ? { voided: true, voidedAt: payment.voidedAt?.toISOString() ?? null } : {}),
         payment: {
           id: payment.id,
           createdAt: payment.createdAt.toISOString(),
@@ -213,6 +240,7 @@ export const GET = withApiTiming("muhasebe-defter", async function GET(request: 
         method: expense.yontem || "NAKIT",
         amount: Number(expense.tutar),
         locked: isFirma,
+        ...(cancelled ? { voided: true, voidedAt: expense.updatedAt.toISOString() } : {}),
         expense: {
           id: expense.id,
           tarih: expense.tarih.toISOString(),
@@ -232,9 +260,13 @@ export const GET = withApiTiming("muhasebe-defter", async function GET(request: 
       });
     }
 
+    // Fatura no da aranır: girilen fatura/dekont numarasıyla gider bulunabilsin.
     const filtered = q
-      ? rows.filter((row) => [row.who, row.item, row.note, row.doctor, METHOD_LABELS[row.method]]
-          .some((value) => (value || "").toLocaleLowerCase("tr").includes(q)))
+      ? rows.filter((row) => {
+          const faturaNo = typeof row.expense?.faturaNo === "string" ? row.expense.faturaNo : "";
+          return [row.who, row.item, row.note, row.doctor, paymentMethodLabel(row.method), faturaNo]
+            .some((value) => (value || "").toLocaleLowerCase("tr").includes(q));
+        })
       : rows;
     filtered.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
 

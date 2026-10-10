@@ -6,6 +6,7 @@ import { findPurchasePayments, firmaIslemToken } from "@/lib/purchase-payment-li
 import { rebuildFirmaPaymentAllocations } from "@/lib/firma-payment-allocation";
 import { requireActiveBranch } from "@/lib/branch-context";
 import { BusinessRuleError, publicErrorResponse } from "@/lib/public-error";
+import { BUSY_MESSAGE, PURCHASE_TX_OPTIONS, isTransientDbError, withProductName } from "../../transaction-errors";
 
 // POST /api/purchases/[id]/cancel — tüm kalemlerin stoğu geri alınır (gerçek FK üzerinden,
 // tag-eşleştirme yok), bağlı FirmaIslem ve Purchase İPTAL olarak işaretlenir.
@@ -79,7 +80,8 @@ export async function POST(_req: NextRequest, props: { params: Promise<{ id: str
 
       if (current.receiptStatus === "TESLIM_ALINDI") {
         for (const item of current.items) {
-          await reversePurchaseItemStock({
+          // Engel olan satır (partisi kullanılmış ürün) hata mesajında adıyla söylenir.
+          await withProductName(item.productName, () => reversePurchaseItemStock({
             tx,
             purchaseItemId: item.id,
             stockItemId: item.stockItemId,
@@ -87,7 +89,7 @@ export async function POST(_req: NextRequest, props: { params: Promise<{ id: str
             branchId: branch.branchId,
             userId: auth.user.id,
             note: `Satın alma iptali: ${current.firma.name} (${item.productName})`,
-          });
+          }));
         }
       }
       if (current.firmaIslemId) {
@@ -110,7 +112,7 @@ export async function POST(_req: NextRequest, props: { params: Promise<{ id: str
       await tx.purchase.update({ where: { id: current.id }, data: { status: "IPTAL" } });
       await rebuildFirmaPaymentAllocations(tx, current.firmaId, branch.branchId);
       return { duplicate: false, receiptStatus: current.receiptStatus, firmaName: current.firma.name };
-    });
+    }, PURCHASE_TX_OPTIONS);
 
     if (!result.duplicate) {
       await writeAudit(auth.user.id, "PURCHASE_CANCEL", `${result.firmaName} satın alması iptal edildi (${params.id})`);
@@ -130,6 +132,7 @@ export async function POST(_req: NextRequest, props: { params: Promise<{ id: str
     if (e instanceof Error && e.message === "PURCHASE_NOT_FOUND") {
       return NextResponse.json({ error: "Satın alma bulunamadı" }, { status: 404 });
     }
+    if (isTransientDbError(e)) return NextResponse.json({ error: BUSY_MESSAGE }, { status: 503 });
     const publicError = publicErrorResponse(e, "Satın alma iptal edilemedi. Lütfen tekrar deneyin.");
     return NextResponse.json({ error: publicError.message }, { status: publicError.status });
   }

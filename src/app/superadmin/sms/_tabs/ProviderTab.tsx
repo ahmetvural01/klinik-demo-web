@@ -1,16 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, Pencil, Plus, Send, Wallet } from "lucide-react";
-import { Button, IconButton } from "@/components/ui/Button";
-import { Modal } from "@/components/ui/Modal";
+import { Pencil, Plus, Send, Wallet } from "lucide-react";
+import { Button } from "@/components/ui/Button";
+import { ActionMenu } from "@/components/ui/ActionMenu";
+import { Callout } from "@/components/ui/Callout";
+import { Disclosure } from "@/components/ui/Disclosure";
+import { FormModal } from "@/components/ui/FormModal";
 import { Badge } from "@/components/ui/Badge";
 import { Input, Select, Textarea } from "@/components/ui/Input";
-import { FormErrorBanner, FormField } from "@/components/ui/FormField";
+import { FormField } from "@/components/ui/FormField";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
-import { TabIntro } from "@/components/superadmin/TabIntro";
 import { errorMessage, isAbort, saGet, saSend } from "@/components/superadmin/sa-fetch";
 
 type Provider = {
@@ -78,6 +80,7 @@ export default function ProviderTab() {
   }, [reloadKey]);
 
   const active = providers.find((item) => item.isActive) || null;
+  const advancedFilled = [form.balanceUrl, form.headersJson, form.bodyTemplate, form.successPattern].some((value) => value.trim());
   const set = <K extends keyof typeof EMPTY>(key: K, value: (typeof EMPTY)[K]) => setForm((current) => ({ ...current, [key]: value }));
 
   const openCreate = () => {
@@ -186,14 +189,20 @@ export default function ProviderTab() {
 
   const credentialText = (item: Provider) => isMock(item)
     ? "Deneme sağlayıcısı — gerçek SMS göndermez"
-    : [item.sendUrl ? "Gönderim adresi var" : "Gönderim adresi YOK", item.hasPassword || item.hasApiKey ? "kimlik bilgisi var" : "şifre/anahtar YOK", item.sender ? `başlık: ${item.sender}` : ""].filter(Boolean).join(" · ");
+    : [item.sendUrl ? "Gönderim adresi var" : "Gönderim adresi yok", item.hasPassword || item.hasApiKey ? "kimlik bilgisi var" : "şifre/anahtar yok", item.sender ? `başlık: ${item.sender}` : ""].filter(Boolean).join(" · ");
 
+  // Satırda en sık iki iş görünür (Aktif et, Deneme SMS); bakiye ve düzenleme "…" menüsünde.
   const actions = (item: Provider) => (
     <div className="flex flex-wrap items-center justify-end gap-1.5">
       {!item.isActive && <Button size="sm" variant="secondary" disabled={busyId === item.id} onClick={() => void activate(item)}>Aktif et</Button>}
-      <Button size="sm" variant="ghost" icon={Wallet} disabled={busyId === item.id} onClick={() => void checkBalance(item)}>Bakiye</Button>
       <Button size="sm" variant="ghost" icon={Send} onClick={() => { setTestTarget(item); setTestError(null); }}>Deneme SMS</Button>
-      <IconButton icon={Pencil} title="Düzenle" size="sm" onClick={() => openEdit(item)} />
+      <ActionMenu
+        label={item.name + " için diğer işlemler"}
+        items={[
+          { key: "balance", label: "Bakiye sorgula", icon: Wallet, disabled: busyId === item.id, onSelect: () => void checkBalance(item) },
+          { key: "edit", label: "Düzenle", icon: Pencil, onSelect: () => openEdit(item) },
+        ]}
+      />
     </div>
   );
 
@@ -208,32 +217,30 @@ export default function ProviderTab() {
         </div>
       ),
     },
-    { key: "status", header: "Durum", render: (item) => (item.isActive ? <Badge tone="success">Aktif — tüm SMS buradan</Badge> : <Badge tone="neutral">Beklemede</Badge>) },
+    { key: "status", header: "Durum", render: (item) => (item.isActive ? <Badge tone="success">Aktif</Badge> : <Badge tone="neutral">Pasif</Badge>) },
     { key: "actions", header: "", align: "right", render: actions },
   ];
 
   return (
     <section className="space-y-3">
-      <TabIntro
-        text="Tüm kliniklerin SMS'leri aktif sağlayıcı üzerinden gider. Aynı anda tek sağlayıcı aktif olabilir."
-        actions={<Button icon={Plus} onClick={openCreate}>Yeni sağlayıcı</Button>}
-      />
-
       {!loading && !loadError && (!active || isMock(active)) && (
-        <p className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+        <Callout tone="warning" title={active ? "SMS'ler hastalara gitmiyor" : "Aktif SMS sağlayıcısı yok"}>
           {active
-            ? `Aktif sağlayıcı "${active.name}" bir deneme sağlayıcısı: kliniklerin SMS'leri hastalara GİTMİYOR. Gerçek gönderim için bir sağlayıcı ekleyip test edin ve aktif edin.`
-            : "Aktif SMS sağlayıcısı yok: sistem sunucu ayarlarındaki varsayılan sağlayıcıyı dener. Bir sağlayıcı ekleyip aktif edin."}
-        </p>
+            ? `Aktif sağlayıcı "${active.name}" bir deneme sağlayıcısı. Gerçek gönderim için bir sağlayıcı ekleyip test edin ve aktif edin.`
+            : "Sistem sunucu ayarlarındaki varsayılan sağlayıcıyı dener. Bir sağlayıcı ekleyip aktif edin."}
+        </Callout>
       )}
 
       <ListTable<Provider>
+        subtitle="Tüm kliniklerin SMS'i aktif sağlayıcıdan gider; aynı anda tek sağlayıcı aktif olabilir."
+        actions={<Button size="sm" variant="secondary" icon={Plus} onClick={openCreate}>Yeni sağlayıcı</Button>}
         columns={columns}
         rows={providers}
         rowKey={(item) => item.id}
         loading={loading}
-        error={loadError}
+        // Veri varken yenileme hatası listeyi silmez; üstte şerit olarak görünür.
+        error={providers.length > 0 ? null : loadError}
+        staleError={providers.length > 0 ? loadError : null}
         onRetry={reload}
         emptyText="Henüz sağlayıcı yok"
         emptyDescription="SMS gönderebilmek için sağlayıcınızın (ör. NetGSM) bilgilerini ekleyin."
@@ -241,7 +248,7 @@ export default function ProviderTab() {
           <div className="space-y-1.5">
             <div className="flex items-start justify-between gap-2">
               <p className="min-w-0 font-semibold text-slate-900">{item.name}</p>
-              {item.isActive ? <Badge tone="success">Aktif</Badge> : <Badge tone="neutral">Beklemede</Badge>}
+              {item.isActive ? <Badge tone="success">Aktif</Badge> : <Badge tone="neutral">Pasif</Badge>}
             </div>
             <p className="text-xs text-slate-500">{credentialText(item)}</p>
             {actions(item)}
@@ -249,24 +256,19 @@ export default function ProviderTab() {
         )}
       />
 
-      <Modal
+      <FormModal
         open={open}
         onClose={() => setOpen(false)}
         title={editing ? "Sağlayıcıyı düzenle" : "Yeni SMS sağlayıcısı"}
         description="Bilgileri sağlayıcınızın entegrasyon belgesinden alın. Şifre ve anahtar şifreli saklanır, ekranda gösterilmez."
         size="lg"
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => setOpen(false)}>Vazgeç</Button>
-            <Button loading={saving} onClick={() => void save()}>Kaydet</Button>
-          </>
-        }
+        onSubmit={() => save()}
+        submitting={saving}
+        error={formError}
       >
-        <div className="space-y-4">
-          <FormErrorBanner message={formError} />
           <div className="grid gap-3 sm:grid-cols-2">
             <FormField label="Ad" htmlFor="provider-name" required>
-              <Input id="provider-name" value={form.name} onChange={(event) => set("name", event.target.value)} placeholder="NetGSM" />
+              <Input id="provider-name" autoFocus value={form.name} onChange={(event) => set("name", event.target.value)} placeholder="NetGSM" />
             </FormField>
             <FormField label="Kısa kod" htmlFor="provider-code" required={!editing} hint={editing ? "Değiştirilemez" : "Harf/rakam, ör. NETGSM"}>
               <Input id="provider-code" value={form.code} disabled={Boolean(editing)} onChange={(event) => set("code", event.target.value.toUpperCase())} />
@@ -284,9 +286,9 @@ export default function ProviderTab() {
               <Input id="provider-key" type="password" value={form.apiKey} onChange={(event) => set("apiKey", event.target.value)} autoComplete="new-password" />
             </FormField>
           </div>
-          <fieldset className="space-y-3 border-t border-slate-100 pt-4">
-            <legend className="mb-1 text-sm font-bold text-slate-900">Teknik bağlantı</legend>
-            <div className="grid gap-3 sm:grid-cols-[1fr_8rem]">
+          {/* Gönderim adresi aktif etmenin ön koşulu: her zaman görünür. Seyrek
+              gereken teknik alanlar katlı "Gelişmiş bağlantı ayarları"nda. */}
+          <div className="grid gap-3 sm:grid-cols-[1fr_8rem]">
               <FormField label="Gönderim adresi" htmlFor="provider-send-url">
                 <Input id="provider-send-url" value={form.sendUrl} onChange={(event) => set("sendUrl", event.target.value)} placeholder="https://api.saglayici.com/sms/send" />
               </FormField>
@@ -296,7 +298,14 @@ export default function ProviderTab() {
                   <option value="GET">GET</option>
                 </Select>
               </FormField>
-            </div>
+          </div>
+          <Disclosure
+            key={editing?.id ?? "new"}
+            title="Gelişmiş bağlantı ayarları"
+            summary={advancedFilled ? "Dolu alan var" : "İsteğe bağlı"}
+            defaultOpen={advancedFilled}
+          >
+            <div className="space-y-3">
             <FormField label="Bakiye sorgu adresi" htmlFor="provider-balance-url">
               <Input id="provider-balance-url" value={form.balanceUrl} onChange={(event) => set("balanceUrl", event.target.value)} placeholder="https://api.saglayici.com/sms/balance" />
             </FormField>
@@ -309,33 +318,29 @@ export default function ProviderTab() {
             <FormField label="Başarılı yanıt deseni" htmlFor="provider-success" hint="İsteğe bağlı; yanıtta bu ifade varsa gönderim başarılı sayılır">
               <Input id="provider-success" value={form.successPattern} onChange={(event) => set("successPattern", event.target.value)} />
             </FormField>
-          </fieldset>
-        </div>
-      </Modal>
+            </div>
+          </Disclosure>
+      </FormModal>
 
-      <Modal
+      <FormModal
         open={Boolean(testTarget)}
         onClose={() => setTestTarget(null)}
         title="Deneme SMS'i gönder"
         description={testTarget ? `${testTarget.name} üzerinden kendi telefonunuza bir deneme mesajı gönderin.` : undefined}
         size="sm"
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => setTestTarget(null)}>Vazgeç</Button>
-            <Button loading={sending} icon={Send} onClick={() => void sendTest()}>Gönder</Button>
-          </>
-        }
+        onSubmit={() => sendTest()}
+        submitting={sending}
+        submitLabel="Gönder"
+        error={testError}
+        formClassName="space-y-3"
       >
-        <div className="space-y-3">
-          <FormErrorBanner message={testError} />
           <FormField label="Telefon" htmlFor="provider-test-phone" required>
             <Input id="provider-test-phone" type="tel" inputMode="tel" value={testForm.phone} onChange={(event) => setTestForm((current) => ({ ...current, phone: event.target.value }))} placeholder="05xx xxx xx xx" />
           </FormField>
           <FormField label="Mesaj" htmlFor="provider-test-message" required>
             <Textarea id="provider-test-message" rows={3} value={testForm.message} onChange={(event) => setTestForm((current) => ({ ...current, message: event.target.value }))} />
           </FormField>
-        </div>
-      </Modal>
+      </FormModal>
     </section>
   );
 }

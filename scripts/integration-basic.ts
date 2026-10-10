@@ -38,20 +38,42 @@ async function main() {
     throw new Error("Integration login cookie missing");
   }
 
-  const metrics = await fetch(`${BASE_URL}/api/system/metrics`, {
-    headers: { Cookie: cookie },
-  });
-
-  if (!metrics.ok) {
-    throw new Error(`Metrics check failed: ${metrics.status}`);
+  // Sunucu ölçümleri ve alarmlar platform genelidir (tüm kliniklerin
+  // sayaçları, yavaş rotalar): klinik oturumu 403 almalı. Önceden audit:read
+  // ile her klinik yöneticisine açıktı; artık yalnız süperadmin okur
+  // (Süperadmin › Sistem Ayarları › Teknik ölçümler).
+  // Teknik ölçümler sekmesi süperadmin yüzeyindeki birleşik ucu okur (açık
+  // gizli klinik girişinde de süperadmin oturumuyla); o da klinikte 403.
+  const platformMetricPaths = ["/api/system/metrics", "/api/system/alerts", "/api/superadmin/system-settings/metrics"];
+  for (const path of platformMetricPaths) {
+    const clinicResponse = await fetch(`${BASE_URL}${path}`, { headers: { Cookie: cookie } });
+    if (clinicResponse.status !== 403) {
+      throw new Error(`${path} klinik oturumunda 403 beklenirdi, gelen: ${clinicResponse.status}`);
+    }
   }
 
-  const alerts = await fetch(`${BASE_URL}/api/system/alerts`, {
-    headers: { Cookie: cookie },
-  });
-
-  if (!alerts.ok) {
-    throw new Error(`Alerts check failed: ${alerts.status}`);
+  // İsteğe bağlı: süperadmin bilgileri verilirse aynı uçlar 200 dönmeli.
+  const superIdentity = process.env.INTEGRATION_SUPERADMIN_IDENTITY;
+  const superPassword = process.env.INTEGRATION_SUPERADMIN_PASSWORD;
+  if (superIdentity && superPassword) {
+    const superLogin = await fetch(`${BASE_URL}/api/auth/superadmin/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ identityNo: superIdentity, password: superPassword }),
+    });
+    if (!superLogin.ok) {
+      throw new Error(`Superadmin login failed: ${superLogin.status}`);
+    }
+    const superCookie = (superLogin.headers.get("set-cookie") || "").split(";")[0];
+    if (!superCookie) {
+      throw new Error("Superadmin login cookie missing (iki adımlı doğrulama açık hesapla bu kontrol yapılamaz)");
+    }
+    for (const path of platformMetricPaths) {
+      const superResponse = await fetch(`${BASE_URL}${path}`, { headers: { Cookie: superCookie } });
+      if (!superResponse.ok) {
+        throw new Error(`${path} süperadmin oturumunda 200 beklenirdi, gelen: ${superResponse.status}`);
+      }
+    }
   }
 
   console.log("Integration checks passed.");

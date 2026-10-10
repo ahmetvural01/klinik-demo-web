@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { hasEffectivePermission, requireAuth, withApiTiming, writeAudit } from "@/lib/api";
 import { applyStockMovement } from "@/lib/stock-ledger";
@@ -9,41 +10,46 @@ import { getCategoryAliases, normalizeCategory } from "@/lib/stock-category";
 export const dynamic = "force-dynamic";
 
 const nameKey = (value: string) => value.toLocaleLowerCase("tr-TR").replace(/\s+/g, " ").trim();
+const round2 = (value: number) => Math.round(value * 100) / 100;
 
-function enrichStockItem(item: any, purchaseLines?: any[], activeLots?: any[], onOrderQuantity = 0) {
-  const purchaseItems = Array.isArray(purchaseLines) ? purchaseLines : Array.isArray(item.purchaseItems) ? item.purchaseItems : [];
-  const lots = Array.isArray(activeLots) ? activeLots : [];
-  const sortedPurchases = [...purchaseItems].sort((a, b) => {
-    const ad = new Date(a.purchase?.tarih || a.createdAt || 0).getTime();
-    const bd = new Date(b.purchase?.tarih || b.createdAt || 0).getTime();
-    return bd - ad;
-  });
-  const lastLine = sortedPurchases[0];
-  const totalQty = purchaseItems.reduce((sum: number, line: any) => sum + Number(line.quantity || 0), 0);
-  const totalCost = purchaseItems.reduce((sum: number, line: any) => sum + Number(line.lineTotal || 0), 0);
-  const lotQuantity = lots.reduce((sum: number, lot: any) => sum + Number(lot.quantityRemaining || 0), 0);
-  const lotCost = lots.reduce(
-    (sum: number, lot: any) => sum + Number(lot.quantityRemaining || 0) * Number(lot.unitCost || 0),
-    0,
-  );
+type LastPurchaseLine = {
+  unitPrice: Prisma.Decimal | number | string | null;
+  quantity: number;
+  createdAt: Date;
+  purchase: { tarih: Date; faturaNo: string | null; firma: { id: string; name: string } | null } | null;
+};
+
+type StockEnrichment = {
+  /** Teslim alınmış son alış satırı ("Son alış"). */
+  lastLine?: LastPurchaseLine | null;
+  /** Teslim alınmış alışların toplam miktarı ve tutarı (partisi kalmamış kartta ortalama maliyet). */
+  receivedQuantity?: number;
+  receivedCost?: number;
+  activeLots?: Array<{ quantityRemaining: number; unitCost: Prisma.Decimal | number | string | null; expiresAt: Date | null }>;
+  /** Teslim alınmamış siparişlerdeki miktar ("Siparişte"). */
+  onOrderQuantity?: number;
+};
+
+function enrichStockItem(item: any, { lastLine = null, receivedQuantity = 0, receivedCost = 0, activeLots = [], onOrderQuantity = 0 }: StockEnrichment) {
+  const lotQuantity = activeLots.reduce((sum, lot) => sum + Number(lot.quantityRemaining || 0), 0);
+  const lotCost = activeLots.reduce((sum, lot) => sum + Number(lot.quantityRemaining || 0) * Number(lot.unitCost || 0), 0);
   const averageUnitPrice = lotQuantity > 0
-    ? Math.round((lotCost / lotQuantity) * 100) / 100
-    : totalQty > 0
-      ? Math.round((totalCost / totalQty) * 100) / 100
+    ? round2(lotCost / lotQuantity)
+    : receivedQuantity > 0
+      ? round2(receivedCost / receivedQuantity)
       : null;
-  const expiringLot = [...lots]
+  const expiringLot = [...activeLots]
     .filter((lot) => lot.expiresAt)
-    .sort((a, b) => new Date(a.expiresAt).getTime() - new Date(b.expiresAt).getTime())[0];
+    .sort((a, b) => new Date(a.expiresAt as Date).getTime() - new Date(b.expiresAt as Date).getTime())[0];
 
   return {
     ...item,
     category: normalizeCategory(item.category),
     averageUnitPrice,
-    activeLotCount: lots.length,
+    activeLotCount: activeLots.length,
     // Çıkış yalnız partilerden yapılabildiği için ekranda "en fazla" sınırı
     // ve partisi eksik kartların uyarısı bu sayıdan hesaplanır.
     lotQuantity,
-    // Teslim alınmamış siparişlerdeki miktar ("Siparişte").
     onOrderQuantity,
     nearestExpiry: expiringLot?.expiresAt || null,
     lastPurchase: lastLine ? {
@@ -66,6 +72,17 @@ function hideStockCost(item: any) {
   };
 }
 
+/**
+ * GET /api/stock — stok kartları + özet (son alış, ortalama maliyet, partiler, siparişte).
+ * Önceden her çağrıda kartların TÜM alış satırları (fatura/firma ilişkisiyle,
+ * sınırsız) Node'a çekilip bellekte toplanıyordu; Stok, menü rozeti ve ana
+ * sayfa bunu çağırdığı için zamanla en ağır uç olmuştu. Toplamlar artık
+ * veritabanında gruplanır, son alış kart başına tek satır okunur. Yanıt
+ * biçimi aynıdır (başka ekranlar kullanıyor).
+ *
+ * ?lite=1: satın alma formundaki ürün önerileri için yalnız ad/birim/barkod/
+ * miktar ve son alış (lot, ortalama, siparişte hesaplanmaz).
+ */
 export const GET = withApiTiming("stock", async function GET(req: NextRequest) {
   const auth = await requireAuth("stock:read");
   if (auth.error) return auth.error;
@@ -77,96 +94,91 @@ export const GET = withApiTiming("stock", async function GET(req: NextRequest) {
   const categoryAliases = category ? getCategoryAliases(category) : [];
   // ?arsiv=1: arşivlenmiş kartlar (geri almak için).
   const archived = searchParams.get("arsiv") === "1";
+  const lite = searchParams.get("lite") === "1";
+  const scope = {
+    ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+    branchId: branch.branchId,
+  };
 
   let items: any[] = [];
   try {
     items = await (prisma as any).stockItem.findMany({
       where: {
         isActive: !archived,
-        ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
-        branchId: branch.branchId,
+        ...scope,
         ...(category ? { category: { in: categoryAliases } } : {}),
       },
       orderBy: { name: "asc" },
+      ...(lite ? { select: { id: true, name: true, category: true, unit: true, quantity: true, minQuantity: true, barcode: true } } : {}),
     });
   } catch (error) {
     console.error("[stock GET] fallback:", error);
     return NextResponse.json({ message: "Stok verileri yüklenemedi. Lütfen sistem yöneticinize bildiriniz." }, { status: 503 });
   }
+  if (items.length === 0) return NextResponse.json([]);
 
-  const itemIds = items.map((item) => item.id);
-  const purchaseLines = itemIds.length
-    ? await (prisma as any).purchaseItem.findMany({
-        where: {
-          stockItemId: { in: itemIds },
-          archivedAt: null,
-          purchase: {
-            status: "AKTIF",
-            ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
-            branchId: branch.branchId,
-          },
-        },
-        orderBy: { createdAt: "desc" },
-        include: {
-          purchase: {
-            select: {
-              tarih: true,
-              faturaNo: true,
-              receiptStatus: true,
-              firma: { select: { id: true, name: true } },
-            },
-          },
-        },
-      })
-    : [];
-  // "Son alış" ve ortalama maliyet yalnız teslim alınmış satırlardan;
-  // gelmemiş sipariş ayrı "Siparişte" miktarı olarak gösterilir.
-  const onOrderByItem = new Map<string, number>();
-  const linesByItem = new Map<string, any[]>();
-  for (const line of purchaseLines) {
-    if (line.purchase?.receiptStatus === "SIPARIS_VERILDI") {
-      onOrderByItem.set(line.stockItemId, (onOrderByItem.get(line.stockItemId) || 0) + Number(line.quantity || 0));
-      continue;
-    }
-    const arr = linesByItem.get(line.stockItemId) || [];
-    arr.push(line);
-    linesByItem.set(line.stockItemId, arr);
+  const itemIds = items.map((item) => item.id as string);
+  const lineScope: Prisma.PurchaseItemWhereInput = { stockItemId: { in: itemIds }, archivedAt: null, ...scope };
+  const receivedWhere: Prisma.PurchaseItemWhereInput = { ...lineScope, purchase: { status: "AKTIF", receiptStatus: "TESLIM_ALINDI", ...scope } };
+  const orderWhere: Prisma.PurchaseItemWhereInput = { ...lineScope, purchase: { status: "AKTIF", receiptStatus: "SIPARIS_VERILDI", ...scope } };
+
+  const [lastLines, receivedSums, orderSums, activeLots, canSeeCost] = await Promise.all([
+    // "Son alış" yalnız teslim alınmış satırlardan; kart başına en yeni tek satır.
+    prisma.purchaseItem.findMany({
+      where: receivedWhere,
+      orderBy: [{ purchase: { tarih: "desc" } }, { createdAt: "desc" }],
+      distinct: ["stockItemId"],
+      select: {
+        stockItemId: true,
+        unitPrice: true,
+        quantity: true,
+        createdAt: true,
+        purchase: { select: { tarih: true, faturaNo: true, firma: { select: { id: true, name: true } } } },
+      },
+    }),
+    lite ? null : prisma.purchaseItem.groupBy({
+      by: ["stockItemId"],
+      where: receivedWhere,
+      _sum: { quantity: true, lineTotal: true },
+    }),
+    lite ? null : prisma.purchaseItem.groupBy({
+      by: ["stockItemId"],
+      where: orderWhere,
+      _sum: { quantity: true },
+    }),
+    lite ? null : prisma.stockLot.findMany({
+      where: {
+        stockItemId: { in: itemIds },
+        status: "AKTIF",
+        quantityRemaining: { gt: 0 },
+        ...scope,
+      },
+      select: { stockItemId: true, quantityRemaining: true, unitCost: true, expiresAt: true },
+    }),
+    // Alış fiyatı ve maliyet finans bilgisidir: finance:read olmayan roller
+    // (asistan, banko, doktor) stok miktarını görür ama maliyeti görmez.
+    hasEffectivePermission(auth.user, "finance:read"),
+  ]);
+
+  const lastByItem = new Map(lastLines.map((line) => [line.stockItemId, line]));
+  const receivedByItem = new Map((receivedSums || []).map((row) => [row.stockItemId, row._sum]));
+  const onOrderByItem = new Map((orderSums || []).map((row) => [row.stockItemId, Number(row._sum.quantity || 0)]));
+  const lotsByItem = new Map<string, NonNullable<typeof activeLots>>();
+  for (const lot of activeLots || []) {
+    const list = lotsByItem.get(lot.stockItemId) || [];
+    list.push(lot);
+    lotsByItem.set(lot.stockItemId, list);
   }
 
-  const activeLots = itemIds.length
-    ? await (prisma as any).stockLot.findMany({
-        where: {
-          stockItemId: { in: itemIds },
-          status: "AKTIF",
-          quantityRemaining: { gt: 0 },
-          ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
-          branchId: branch.branchId,
-        },
-        select: {
-          stockItemId: true,
-          quantityRemaining: true,
-          unitCost: true,
-          expiresAt: true,
-        },
-      })
-    : [];
-  const lotsByItem = new Map<string, any[]>();
-  for (const lot of activeLots) {
-    const arr = lotsByItem.get(lot.stockItemId) || [];
-    arr.push(lot);
-    lotsByItem.set(lot.stockItemId, arr);
-  }
-
-  // Alış fiyatı ve maliyet finans bilgisidir: finance:read olmayan roller
-  // (asistan, banko, doktor) stok miktarını görür ama maliyeti görmez.
-  const canSeeCost = await hasEffectivePermission(auth.user, "finance:read");
   return NextResponse.json(items.map((item) => {
-    const enriched = enrichStockItem(
-      item,
-      linesByItem.get(item.id) || [],
-      lotsByItem.get(item.id) || [],
-      onOrderByItem.get(item.id) || 0,
-    );
+    const received = receivedByItem.get(item.id);
+    const enriched = enrichStockItem(item, {
+      lastLine: lastByItem.get(item.id) || null,
+      receivedQuantity: Number(received?.quantity || 0),
+      receivedCost: Number(received?.lineTotal || 0),
+      activeLots: lotsByItem.get(item.id) || [],
+      onOrderQuantity: onOrderByItem.get(item.id) || 0,
+    });
     return canSeeCost ? enriched : hideStockCost(enriched);
   }));
 });
@@ -210,6 +222,8 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const initialQuantity = quantity;
+  const expiryDate = expiresAt ? new Date(expiresAt) : null;
   let item;
   try {
     item = await (prisma as any).$transaction(async (tx: any) => {
@@ -225,12 +239,13 @@ export async function POST(req: NextRequest) {
           unitPrice: null,
           supplier: null,
           barcode,
-          expiresAt: expiresAt ? new Date(expiresAt) : null,
+          // Açılış stoku varsa SKT o partiye yazılır (aşağıda); kartta kalırsa
+          // parti bitip yenileri gelince ürün kalıcı olarak "SKT geçti" görünüyordu.
+          expiresAt: initialQuantity > 0 ? null : expiryDate,
           storageLocation,
         },
       });
 
-      const initialQuantity = quantity;
       if (initialQuantity > 0) {
         const movement = await applyStockMovement({
           tx,
@@ -241,6 +256,7 @@ export async function POST(req: NextRequest) {
           type: "GIRIS",
           quantity: initialQuantity,
           note: "Açılış stoku (sayım)",
+          expiresAt: expiryDate,
           // Açılış partisi birim maliyetiyle açılır; önceden ₺0 maliyetle
           // açıldığı için ortalama maliyet ve stok değeri düşük görünüyordu.
           ...(unitPrice !== null && unitPrice !== undefined ? { unitPrice: Number(unitPrice) } : {}),
@@ -259,5 +275,5 @@ export async function POST(req: NextRequest) {
   }
 
   await writeAudit(auth.user.id, "STOCK_ITEM_CREATE", `"${name}" stok kalemi oluşturuldu`);
-  return NextResponse.json(enrichStockItem({ ...item, purchaseItems: [] }, [], []), { status: 201 });
+  return NextResponse.json(enrichStockItem(item, {}), { status: 201 });
 }

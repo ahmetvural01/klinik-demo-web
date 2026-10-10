@@ -6,6 +6,8 @@ import type { Appointment } from "@/components/randevu/appointment-utils";
 /**
  * Randevu ekranlarının (takvim, anasayfa) sunucuyla konuştuğu TEK yer.
  * Önceden aynı istekler sayfanın içinde üç-dört kez ayrı ayrı yazılıyordu.
+ * Hata iletisi boşsa (status 409, message "") kullanıcı onayı reddetmiştir;
+ * çağıran bir şey göstermez.
  */
 
 export type ApiResult<T = unknown> = { ok: true; data: T } | { ok: false; message: string; status: number };
@@ -48,20 +50,61 @@ export async function saveAppointment(url: string, method: "POST" | "PUT", body:
   }
 }
 
-/** Yalnız durum ve/veya not değişikliği (sunucu kısmi güncelleme yolu). */
+/**
+ * Yalnız durum ve/veya not değişikliği (sunucu kısmi güncelleme yolu).
+ * İptal edilen randevu yeniden açılırken doktorun aynı saatte başka randevusu
+ * varsa sunucu onay ister (409 + requiresConfirmation) — kayıttaki kuralın aynısı.
+ */
 export async function patchAppointment(id: string, body: { status?: string; note?: string }): Promise<ApiResult<Appointment>> {
+  const send = (payload: Record<string, unknown>) => fetch(`/api/appointments/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
   try {
-    const response = await fetch(`/api/appointments/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const data = await readJson(response);
+    let response = await send(body);
+    let data = await readJson(response);
+    if (response.status === 409 && data?.requiresConfirmation) {
+      const confirmed = await confirmDialog({
+        title: "Doktorun bu saatte başka randevusu var",
+        message: messageOf(data, "Bu doktorun aynı saatte başka bir randevusu var. Yine de devam edilsin mi?"),
+        confirmText: "Yine de yeniden aç",
+        cancelText: "Vazgeç",
+      });
+      if (!confirmed) return { ok: false, message: "", status: 409 };
+      response = await send({ ...body, overrideConflict: true });
+      data = await readJson(response);
+    }
     if (!response.ok) return { ok: false, message: messageOf(data, "Randevu güncellenemedi."), status: response.status };
     return { ok: true, data: data as unknown as Appointment };
   } catch {
     return { ok: false, message: "Bağlantı kurulamadı. Tekrar deneyin.", status: 0 };
   }
+}
+
+export type PatientContext = {
+  notify: { canNotify: boolean; reason: string | null };
+  nextAppointment: { id: string; startAt: string; doctorName: string | null; doctorId?: string | null } | null;
+  contagious: { note: string | null } | null;
+  /** Son tamamlanan randevunun hekimi (hekim önerisi); yoksa null. */
+  lastAppointmentDoctorId?: string | null;
+};
+
+/** Randevu formu için seçili hastanın kısa bağlamı (mesaj gider mi, yaklaşan randevu, bulaşıcı hastalık, hekim önerisi). */
+export async function fetchPatientContext(patientId: string, excludeAppointmentId: string | undefined, signal?: AbortSignal): Promise<PatientContext | null> {
+  const params = new URLSearchParams({ patientId });
+  if (excludeAppointmentId) params.set("excludeAppointmentId", excludeAppointmentId);
+  const response = await fetch(`/api/appointments/patient-context?${params.toString()}`, { cache: "no-store", signal });
+  if (!response.ok) return null;
+  return (await response.json().catch(() => null)) as PatientContext | null;
+}
+
+/** Online talebin kayıtlı hastası (TC ya da telefonla, sunucuda eşleştirilir). */
+export async function fetchBookingRequestMatch(requestId: string, signal?: AbortSignal): Promise<{ id: string; fullName: string } | null> {
+  const response = await fetch(`/api/booking-requests/${encodeURIComponent(requestId)}`, { cache: "no-store", signal });
+  if (!response.ok) throw new Error("Kayıtlı hasta aranamadı.");
+  const data = (await response.json().catch(() => null)) as { patient?: { id: string; fullName: string } | null } | null;
+  return data?.patient?.id ? { id: data.patient.id, fullName: data.patient.fullName } : null;
 }
 
 /**

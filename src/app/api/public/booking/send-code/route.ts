@@ -4,6 +4,7 @@ import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rate-limit";
 import { formatZodError, publicBookingSendCodeSchema } from "@/lib/validators";
 import { sendSms } from "@/lib/sms";
 import { generatePublicBookingOtp } from "@/lib/public-booking-otp";
+import { normalizeLocalPhone } from "@/lib/phone-number";
 
 export async function POST(req: NextRequest) {
   const ip = getClientIpFromHeaders(req.headers);
@@ -13,7 +14,14 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json().catch(() => ({}));
-  const parsed = publicBookingSendCodeSchema.safeParse(body);
+  // Telefon "0532…", "532…" ya da "+90 532…" yazılabilir; kod da talep de aynı
+  // kanonik 10 haneyle (5XXXXXXXXX) işlenir — doğrulama kodu anahtarı telefona
+  // bağlı olduğu için iki uçta aynı değer şart. Önceden sayfa 0'lı numarayı
+  // gönderiyor, sunucu reddediyordu: talep hiç tamamlanamıyordu (denetim G1).
+  const parsed = publicBookingSendCodeSchema.safeParse({
+    ...(body && typeof body === "object" ? body : {}),
+    phone: normalizeLocalPhone(String((body as { phone?: unknown })?.phone ?? ""), "+90"),
+  });
   if (!parsed.success) {
     return NextResponse.json({ error: formatZodError(parsed.error)[0] || "Geçersiz veri" }, { status: 400 });
   }

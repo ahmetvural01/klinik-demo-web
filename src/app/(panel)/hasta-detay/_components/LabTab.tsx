@@ -1,19 +1,18 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { FlaskConical, Plus } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { ListTable, EmptyValue, type ListTableColumn } from "@/components/ui/ListTable";
-import { Modal } from "@/components/ui/Modal";
 import { formatDateText } from "@/components/ui/Money";
-import { LabOrderDetailPanel, type SharedLabOrder } from "@/components/lab/LabOrderDetailPanel";
+import { LabOrderDetailModal } from "@/components/lab/LabOrderDetailModal";
 import { LabStatusBadge } from "@/components/lab/LabStatusBadge";
+import { getLabRowAction } from "@/components/lab/lab-row-action";
 import { useLabOrderActions } from "@/components/lab/useLabOrderActions";
 import { normalizeLabOrder, type LabOrderView } from "@/components/lab/lab-order-model";
 import { getOrderSummary, LAB_LABELS, stageDetail, teethList, type LabOrderSummary } from "@/lib/lab-workflow";
 import { usePatientFile } from "./PatientFileContext";
-import { money } from "./patient-file-shared";
 
 type Row = { order: LabOrderView; summary: LabOrderSummary };
 
@@ -21,14 +20,19 @@ type Row = { order: LabOrderView; summary: LabOrderSummary };
  * Hastanın laboratuvar işleri. Laboratuvar sayfasıyla aynı durum adları, aynı
  * iş ekranı ve aynı eylem pencereleri kullanılır (bkz. src/components/lab):
  * bir işi burada "Laboratuvardan geldi" yapmak ile Laboratuvar sayfasında
- * yapmak aynı şeydir.
+ * yapmak aynı şeydir. Lab ücreti (kliniğin gideri) listede değil, işin
+ * ayrıntısındaki fatura bölümündedir: hasta yanındayken "hastanın ödeyeceği
+ * tutar" gibi okunuyordu.
  */
-export function LabTab({ labNames }: { labNames: string[] }) {
-  const { data, reload, can, openLabCreate, hidePatientPhone } = usePatientFile();
+export function LabTab() {
+  const { data, reload, can, openLabCreate, hidePatientPhone, labNames, loadLabNames } = usePatientFile();
   const canWrite = can("lab:write");
   const canComplete = can("lab:complete");
   const canCancel = can("lab:delete");
   const [detailId, setDetailId] = useState<string | null>(null);
+
+  // Laboratuvar adları yalnız bu sekme açılınca okunur (işi başka laboratuvara göndermek için).
+  useEffect(() => { loadLabNames(); }, [loadLabNames]);
 
   const rows = useMemo<Row[]>(() => data.labOrders
     .map((raw) => normalizeLabOrder({
@@ -46,30 +50,33 @@ export function LabTab({ labNames }: { labNames: string[] }) {
   const actions = useLabOrderActions({ onChanged: () => { void reload(true); }, labNames });
 
   const detail = detailId ? rows.find((row) => row.order.id === detailId)?.order || null : null;
-  const findOrder = (order: SharedLabOrder) => rows.find((row) => row.order.id === order.id)?.order || null;
-  const withOrder = (fn: (order: LabOrderView) => void) => (order: SharedLabOrder) => {
-    const found = findOrder(order);
-    if (found) fn(found);
-  };
 
-  // Satırdaki tek eylem: işin sıradaki adımı (Laboratuvar sayfasıyla aynı kural).
-  const rowAction = ({ order, summary }: Row): { label: string; run: () => void } | null => {
-    if (summary.stage === "new") return canWrite ? { label: LAB_LABELS.send, run: () => actions.openSend(order) } : null;
-    if (summary.stage === "atLab" || summary.stage === "late") {
-      return canWrite && summary.pendingTrip ? { label: LAB_LABELS.receive, run: () => actions.openReceive(order) } : null;
-    }
-    if (summary.stage === "clinic") {
-      const finished = summary.templateFinished || !summary.nextStep;
-      if (finished && canComplete) return { label: LAB_LABELS.complete, run: () => actions.openComplete(order) };
-      if (canWrite) return { label: LAB_LABELS.send, run: () => actions.openSend(order) };
-      if (canComplete) return { label: LAB_LABELS.complete, run: () => actions.openComplete(order) };
-    }
-    return null;
+  // Satırdaki tek eylem: işin sıradaki adımı — Laboratuvar sayfasıyla AYNI
+  // kural (components/lab/lab-row-action) ve aynı tek tık kaydı (gönder /
+  // geldi). Önceden kural burada kopyaydı: son adımı gelmiş işte "Hastaya
+  // takıldı" yetkisi olmayan kullanıcıya yanlışlıkla "Laboratuvara gönder"
+  // öneriliyordu; artık Lab sayfasındaki gibi "Hekim takacak" yazar.
+  const runRowAction = ({ order }: Row, kind: string) => {
+    if (kind === "send") actions.quickSend(order);
+    else if (kind === "receive") actions.quickReceive(order);
+    else if (kind === "complete") actions.openComplete(order);
   };
 
   const actionButton = (row: Row) => {
-    const action = rowAction(row);
-    return action ? <Button size="sm" variant="secondary" disabled={actions.busy} onClick={action.run}>{action.label}</Button> : null;
+    const action = getLabRowAction(row.summary, { canWrite, canComplete });
+    if (!action) return null;
+    if (action.kind === "awaitComplete") return <span className="text-xs font-semibold text-slate-500">{action.label}</span>;
+    return (
+      <Button
+        size="sm"
+        variant="secondary"
+        loading={actions.quickBusyId === row.order.id}
+        disabled={actions.busy && actions.quickBusyId !== row.order.id}
+        onClick={() => runRowAction(row, action.kind)}
+      >
+        {action.label}
+      </Button>
+    );
   };
 
   const workCell = ({ order }: Row) => {
@@ -97,22 +104,14 @@ export function LabTab({ labNames }: { labNames: string[] }) {
     { key: "lab", header: "Laboratuvar", render: ({ order }) => order.labName || <EmptyValue /> },
     { key: "status", header: "Durum", render: statusCell },
     { key: "date", header: "Açılış", render: ({ order }) => (order.createdAt ? <span className="whitespace-nowrap">{formatDateText(order.createdAt)}</span> : <EmptyValue />) },
-    { key: "cost", header: "Lab ücreti", align: "right", render: ({ summary }) => (summary.totalAmount > 0 ? <span className="tabular-nums">{money(summary.totalAmount)}</span> : <EmptyValue />) },
     ...(canWrite || canComplete ? [{ key: "actions", header: "", align: "right" as const, render: actionButton }] : []),
   ];
 
-  const openCount = rows.filter((row) => !row.summary.isDone && !row.summary.cancelled).length;
-
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-slate-500">
-          {rows.length === 0 ? "Bu hasta için laboratuvar işi yok." : `${openCount} açık iş${rows.length > openCount ? ` · ${rows.length - openCount} kapanmış` : ""}. İşe tıklayınca adımları ve faturası açılır.`}
-        </p>
-        {canWrite && <Button variant="secondary" icon={Plus} onClick={openLabCreate}>{LAB_LABELS.newOrder}</Button>}
-      </div>
-
       <ListTable
+        title="Laboratuvar işleri"
+        actions={canWrite ? <Button size="sm" variant="secondary" icon={Plus} onClick={openLabCreate}>{LAB_LABELS.newOrder}</Button> : undefined}
         columns={columns}
         rows={rows}
         rowKey={(row) => row.order.id}
@@ -122,7 +121,6 @@ export function LabTab({ labNames }: { labNames: string[] }) {
         emptyIcon={FlaskConical}
         emptyText="Laboratuvar işi yok"
         emptyDescription={canWrite ? "Kron, protez, plak gibi işleri buradan laboratuvara gönderin ve takip edin." : undefined}
-        emptyAction={canWrite ? <Button size="sm" variant="secondary" icon={Plus} onClick={openLabCreate}>{LAB_LABELS.newOrder}</Button> : undefined}
         mobileCard={(row) => (
           <div className="space-y-2">
             <div className="flex items-start justify-between gap-3">
@@ -130,41 +128,22 @@ export function LabTab({ labNames }: { labNames: string[] }) {
               <LabStatusBadge stage={row.summary.stage} />
             </div>
             <p className={`text-xs ${row.summary.stage === "late" ? "font-semibold text-red-700" : "text-slate-500"}`}>{[row.order.labName, stageDetail(row.summary)].filter(Boolean).join(" · ")}</p>
-            {rowAction(row) && <div>{actionButton(row)}</div>}
+            {actionButton(row) && <div>{actionButton(row)}</div>}
           </div>
         )}
       />
 
-      {/* İş ayrıntısı — bir eylem penceresi açıkken gizlenir; aynı anda tek pencere. */}
-      <Modal
-        open={Boolean(detail) && !actions.isOpen}
+      {/* İş ayrıntısı — Laboratuvar sayfasıyla aynı pencere ve aynı yetki
+          kuralları; bir eylem penceresi açıkken gizlenir (aynı anda tek pencere). */}
+      <LabOrderDetailModal
+        order={detail}
         onClose={() => setDetailId(null)}
-        title={detail ? detail.labType : "Lab işi"}
-        description={detail ? `${data.fullName} · ${detail.labName}` : undefined}
-        size="lg"
-        module="flask"
-        trackFormChanges={false}
-        footer={<Button variant="secondary" onClick={() => setDetailId(null)}>Kapat</Button>}
-      >
-        {detail && (
-          <LabOrderDetailPanel
-            order={detail}
-            canWrite={canWrite}
-            canComplete={canComplete}
-            showPatientLink={false}
-            onAddTrip={withOrder(actions.openSend)}
-            onReceive={(order, trip) => { const found = findOrder(order); if (found) actions.openReceive(found, found.trips.find((item) => item.id === trip.id)); }}
-            onEditTrip={(order, trip) => { const found = findOrder(order); const target = found?.trips.find((item) => item.id === trip.id); if (found && target) actions.openEditTrip(found, target); }}
-            onAddInvoice={withOrder((order) => actions.openInvoice(order, null))}
-            onEditInvoice={(order, invoice) => { const found = findOrder(order); const target = found?.invoices.find((item) => item.id === invoice.id); if (found && target) actions.openInvoice(found, target); }}
-            onDeleteInvoice={(order, invoice) => { const found = findOrder(order); const target = found?.invoices.find((item) => item.id === invoice.id); if (found && target) void actions.cancelInvoice(found, target); }}
-            onComplete={canComplete ? withOrder(actions.openComplete) : undefined}
-            onRpt={withOrder(actions.openRework)}
-            onEditOrder={withOrder(actions.openEditOrder)}
-            onCancel={canCancel ? withOrder(actions.openCancel) : undefined}
-          />
-        )}
-      </Modal>
+        actions={actions}
+        canWrite={canWrite}
+        canComplete={canComplete}
+        canCancel={canCancel}
+        showPatientLink={false}
+      />
 
       {actions.modals}
     </div>

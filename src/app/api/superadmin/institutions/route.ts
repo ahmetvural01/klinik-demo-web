@@ -4,14 +4,26 @@ import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import { getPlanDefaultLimits } from "@/lib/subscription-plans";
 import { summarizeInvoices } from "@/components/superadmin/invoice-status";
+import { isValidTurkishIdentityNumber } from "@/lib/tc-kimlik";
 import bcrypt from "bcryptjs";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const auth = await requireAuth("superadmin");
   if (auth.error) return auth.error;
 
   if (auth.user.role !== "SUPERADMIN") {
     return NextResponse.json({ message: "Yetki yok" }, { status: 403 });
+  }
+
+  // Hafif liste (?fields=basic): yalnız süzgeç/seçici için ad listesi
+  // (Denetim Günlüğü, Duyurular). Tam yanıt her kliniğin fatura özetini ve
+  // kullanıcı sayılarını hesaplıyor; o ekranlar yalnız adı kullanıyordu.
+  if (request.nextUrl.searchParams.get("fields") === "basic") {
+    const basic = await prisma.institution.findMany({
+      select: { id: true, name: true, isActive: true },
+      orderBy: { name: "asc" },
+    });
+    return NextResponse.json(basic);
   }
 
   const [institutions, openInvoices, activeUsers, managers] = await Promise.all([
@@ -114,8 +126,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Klinik adı, e-posta, sahibin adı, TC kimlik no ve şifresi zorunlu" }, { status: 400 });
   }
 
-  if (!/^\d{11}$/.test(ownerIdentityNo)) {
-    return NextResponse.json({ message: "Sahibin TC kimlik numarası 11 rakam olmalı" }, { status: 400 });
+  // Yalnız 11 hane değil, TC sağlaması da (hasta formuyla aynı kural):
+  // yanlış yazılan numarayla açılan hesaba sahibi giriş yapamıyordu.
+  if (!isValidTurkishIdentityNumber(ownerIdentityNo)) {
+    return NextResponse.json({ message: "Sahibin TC kimlik numarası geçerli değil" }, { status: 400 });
   }
 
   // Personel ve platform yöneticisi şifreleriyle aynı kural (8-72 karakter);

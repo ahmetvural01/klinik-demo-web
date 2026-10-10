@@ -1,17 +1,30 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, CalendarClock, Globe2, ListChecks, UserPlus } from "lucide-react";
-import { Modal } from "@/components/ui/Modal";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { CalendarClock, Globe2, ListChecks, UserPlus } from "lucide-react";
+import { FormModal } from "@/components/ui/FormModal";
 import { Button } from "@/components/ui/Button";
-import { FormErrorBanner, FormField } from "@/components/ui/FormField";
-import { Input, Select, Textarea } from "@/components/ui/Input";
-import { Switch } from "@/components/ui/Switch";
+import { Callout } from "@/components/ui/Callout";
+import { Checkbox } from "@/components/ui/Checkbox";
+import { Disclosure } from "@/components/ui/Disclosure";
+import { FormField } from "@/components/ui/FormField";
+import { Select, Textarea } from "@/components/ui/Input";
+import { QuickDatePicker, type QuickDateOption } from "@/components/ui/QuickDatePicker";
 import { PatientPicker, type PickedPatient } from "@/components/patient/PatientPicker";
-import { PatientFormModal } from "@/components/patient/PatientFormModal";
+import { PatientFormModal, type PatientFormInitialValues } from "@/components/patient/PatientFormModal";
 import { DoctorSelect } from "@/components/staff/DoctorSelect";
+import { usePermissions } from "@/components/auth/PermissionProvider";
+import { normalizeLocalPhone } from "@/lib/phone-number";
+import { turkeyDateKey } from "@/lib/tz";
 import type { TreatmentOption } from "@/lib/appointment-follow-up";
-import { fetchDayAppointments, saveAppointment } from "@/components/randevu/appointment-api";
+import { SlotPicker } from "@/components/randevu/SlotPicker";
+import {
+  fetchBookingRequestMatch,
+  fetchDayAppointments,
+  fetchPatientContext,
+  saveAppointment,
+  type PatientContext,
+} from "@/components/randevu/appointment-api";
 import {
   buildNoteSafe,
   buildSlotOptions,
@@ -19,17 +32,20 @@ import {
   defaultTreatmentKey,
   durationMinutes as durationBetween,
   firstFreeSlot,
+  formatClock,
   formatDayShort,
   formatPhoneDisplay,
-  formatTimeRange,
   fromDateKey,
   getDayHours,
   minutesOfDay,
+  openDayKeys,
   parseClock,
   parseNoteFull,
   preferredDateKeyOf,
   preferredMinutesOf,
   preferredPeriodLabel,
+  quickDayLabel,
+  slotKind,
   timeLabel,
   toDateKey,
   type Appointment,
@@ -50,7 +66,26 @@ export type AppointmentFormInitial = {
   durationMin?: number;
   treatment?: string;
   note?: string;
+  /** "sonraki": hızlı günler +1 hafta / +2 hafta / +1 ay (kontrol randevusu). */
+  quickDates?: "yakin" | "sonraki";
 };
+
+/**
+ * Hasta aramasına yazılan metinden yeni hasta formunun ön değerleri: 11 hane
+ * (0'la başlamayan) TC, 10-11 hane telefon, diğer her şey ad soyad. Önceden
+ * yazılan ad yeni hasta formunda yeniden yazılıyordu (canlı test H7).
+ */
+function initialFromQuery(query: string | undefined): PatientFormInitialValues | undefined {
+  const text = (query || "").trim();
+  if (!text) return undefined;
+  const digits = text.replace(/\D/g, "");
+  if (/^[\d\s()+-]+$/.test(text)) {
+    if (digits.length === 11 && !digits.startsWith("0")) return { tcNo: digits };
+    if (digits.length >= 10) return { phone: normalizeLocalPhone(digits, "+90"), phoneCountryCode: "+90" };
+    return undefined;
+  }
+  return { fullName: text };
+}
 
 export type AppointmentFormSaved = {
   appointment: Appointment;
@@ -74,24 +109,16 @@ type AppointmentFormModalProps = {
   onSaved: (result: AppointmentFormSaved) => void;
 };
 
-/** Saat seçeneklerinden hangileri sunucunun kesin olarak reddettiği saatler. */
-function isHardBlocked(option: SlotOption | undefined) {
-  if (!option?.busyReason) return false;
-  return !option.busyReason.startsWith("dolu");
-}
-
-function phoneDigits(value: string | null | undefined) {
-  return String(value || "").replace(/\D/g, "").slice(-10);
-}
-
 /**
  * Randevu formu — TEK form: "Yeni randevu" düğmesi, takvimde boş saat, üst
  * bardaki "Yeni > Randevu", hasta dosyasından gelen bağlantı, online talep ve
- * bekleme listesi aynı formu açar. Önceden her giriş aynı formu farklı
- * varsayılanlarla dolduruyordu: online talep 03:00 ile açılıyor, saat
- * ızgaraya uymuyor, listede olmayan tedavi sessizce "Implant" kaydediliyordu.
- * Saat artık seçili doktorun o günkü programına göre listeden seçilir; dolu,
- * kapalı ve geçmiş saatler listede açıkça yazar.
+ * bekleme listesi aynı formu açar.
+ *
+ * Sıra işin sırasıdır: hasta → doktor → gün → saat → süre ve tedavi → not;
+ * seyrek alan (tedavi alanı) "Diğer seçenekler" altında, hastaya mesaj tek
+ * satırda. Önceden saat 30-40 seçenekli bir açılır listeden diğer hastaların
+ * adları okunarak seçiliyordu, SMS anahtarları kurum varsayılanını yok
+ * sayıyordu ve beş ayrı elle yazılmış uyarı kutusu aynı anda görünebiliyordu.
  */
 export function AppointmentFormModal({
   mode,
@@ -108,6 +135,7 @@ export function AppointmentFormModal({
   onSaved,
 }: AppointmentFormModalProps) {
   const isEdit = mode === "edit" && Boolean(appointment);
+  const { hasFeature } = usePermissions();
   const todayKey = toDateKey(new Date());
   const parsedNote = useMemo(() => (appointment ? parseNoteFull(appointment.note, treatments) : null), [appointment, treatments]);
 
@@ -118,6 +146,10 @@ export function AppointmentFormModal({
     return initial?.patient || null;
   });
   const [doctorId, setDoctorId] = useState(() => appointment?.doctor?.id || initial?.doctorId || (doctors.length === 1 ? doctors[0].id : ""));
+  // Hasta seçilince boş doktor alanına hastanın hekimi önerilir (aşağıda);
+  // kullanıcı doktoru kendisi seçtiyse öneri hiç uygulanmaz.
+  const [suggestedDoctorId, setSuggestedDoctorId] = useState<string | null>(null);
+  const doctorTouchedRef = useRef(false);
   const [dateKey, setDateKey] = useState(() => (appointment ? toDateKey(new Date(appointment.startAt)) : initial?.dateKey || todayKey));
   const [minutes, setMinutes] = useState<number | null>(() => (appointment ? minutesOfDay(new Date(appointment.startAt)) : initial?.minutes ?? null));
   const [durationMin, setDurationMin] = useState(() => {
@@ -127,8 +159,11 @@ export function AppointmentFormModal({
   const [treatment, setTreatment] = useState(() => parsedNote?.treatment || initial?.treatment || defaultTreatmentKey(treatments));
   const [clinicUnitId, setClinicUnitId] = useState(() => appointment?.clinicUnit?.id || "");
   const [note, setNote] = useState(() => parsedNote?.detail ?? initial?.note ?? "");
-  const [smsInfo, setSmsInfo] = useState(true);
-  const [smsReminder, setSmsReminder] = useState(false);
+  // Hastaya mesaj seçimleri kurumun varsayılanıyla gelir (İletişim › Otomatik
+  // mesajlar); önceden her açılışta sabit "bilgi açık, hatırlatma kapalı" idi.
+  const [smsInfo, setSmsInfo] = useState(() => settings?.sms.info ?? true);
+  const [smsReminder, setSmsReminder] = useState(() => settings?.sms.reminder ?? false);
+  const smsTouchedRef = useRef(false);
 
   const [dayAppointments, setDayAppointments] = useState<Appointment[]>([]);
   const [dayBlocks, setDayBlocks] = useState<DoctorBlock[]>([]);
@@ -137,42 +172,89 @@ export function AppointmentFormModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showNewPatient, setShowNewPatient] = useState(false);
+  const [newPatientInitial, setNewPatientInitial] = useState<PatientFormInitialValues | undefined>(undefined);
   const [sourceMatchState, setSourceMatchState] = useState<"idle" | "searching" | "found" | "missing">("idle");
+  const [patientContext, setPatientContext] = useState<PatientContext | null>(null);
+  // Hasta, gün ve saat düğme/arama ile seçildiği için pencerenin otomatik
+  // "değişti" algısı bunları görmüyordu: seçim yapılmış form Esc ile sormadan
+  // kapanıyordu. Yalnız kullanıcının seçimi sayılır (otomatik ilk boş saat değil).
+  const [userTouched, setUserTouched] = useState(false);
   // Takvimde tıklanan saat kullanıcı seçimidir; online talep/bekleme listesindeki
   // saat ise yalnız tercihtir (o saatten sonraki ilk boş saat seçilir).
   const userPickedTimeRef = useRef(Boolean(appointment) || (initial?.minutes !== undefined && initial?.minutes !== null && !source));
   const sourceSearchedRef = useRef(false);
 
-  // Online talepte hasta önce talepteki TC/telefonla otomatik aranır; bulunursa
-  // seçili gelir. Bulunamazsa "Yeni hasta olarak kaydet" yolu açıkça gösterilir.
+  // Ayarlar form açıldıktan sonra gelirse varsayılanlar o zaman uygulanır
+  // (kullanıcı kutulara dokunmadıysa).
+  useEffect(() => {
+    if (!settings || smsTouchedRef.current) return;
+    setSmsInfo(settings.sms.info);
+    setSmsReminder(settings.sms.reminder);
+  }, [settings]);
+
+  // Online talepte kayıtlı hasta sunucuda (TC ya da telefonla) aranır; bulunursa
+  // seçili gelir. Telefon görme yetkisi olmayan rollerde de çalışır (denetim G7).
   useEffect(() => {
     if (source?.type !== "online" || patient || sourceSearchedRef.current) return;
     sourceSearchedRef.current = true;
-    const request = source.request;
-    const term = request.tcNo || phoneDigits(request.phone);
-    if (!term || term.length < 4) { setSourceMatchState("missing"); return; }
     const controller = new AbortController();
+    let finished = false;
     setSourceMatchState("searching");
-    fetch(`/api/patients?q=${encodeURIComponent(term)}&take=5&summary=false`, { cache: "no-store", signal: controller.signal })
-      .then(async (response) => {
-        const data = await response.json().catch(() => null);
-        const list: PickedPatient[] = Array.isArray(data?.patients) ? data.patients : [];
-        const match = list.find((item) => (request.tcNo && item.tcNo === request.tcNo) || (phoneDigits(item.phone).length === 10 && phoneDigits(item.phone) === phoneDigits(request.phone)));
+    fetchBookingRequestMatch(source.request.id, controller.signal)
+      .then((match) => {
         if (controller.signal.aborted) return;
+        finished = true;
         if (match) {
-          setPatient({ id: match.id, fullName: match.fullName, phone: match.phone || null, tcNo: match.tcNo || null });
+          setPatient({ id: match.id, fullName: match.fullName });
           setSourceMatchState("found");
         } else {
           setSourceMatchState("missing");
         }
       })
-      .catch(() => { if (!controller.signal.aborted) setSourceMatchState("missing"); });
-    return () => controller.abort();
+      .catch(() => {
+        if (controller.signal.aborted) return;
+        finished = true;
+        setSourceMatchState("missing");
+      });
+    return () => {
+      controller.abort();
+      // Arama bitmeden kapandıysa (ör. geliştirme modunda çift çalıştırma) yeniden denensin.
+      if (!finished) sourceSearchedRef.current = false;
+    };
   }, [source, patient]);
 
+  // Seçili hastanın bağlamı: mesaj gider mi, yaklaşan randevusu, bulaşıcı hastalık.
+  const patientId = patient?.id || "";
+  useEffect(() => {
+    setPatientContext(null);
+    if (!patientId) return;
+    const controller = new AbortController();
+    fetchPatientContext(patientId, appointment?.id, controller.signal)
+      .then((context) => { if (!controller.signal.aborted) setPatientContext(context); })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [patientId, appointment?.id]);
+
+  // Hekim önerisi: son tamamlanan randevunun hekimi, yoksa yaklaşan randevunun
+  // hekimi. Yalnız yeni randevuda ve doktor boşken (ya da önceki hastaya
+  // önerilmiş olarak duruyorken) uygulanır; asistan her randevuda hekimi elle
+  // seçmek zorunda kalıyordu.
+  useEffect(() => {
+    if (isEdit || !patientContext || doctorTouchedRef.current) return;
+    if (doctorId && doctorId !== suggestedDoctorId) return;
+    const candidate = [patientContext.lastAppointmentDoctorId, patientContext.nextAppointment?.doctorId]
+      .find((id): id is string => Boolean(id) && doctors.some((doctor) => doctor.id === id));
+    if (candidate) {
+      if (candidate !== doctorId) setDoctorId(candidate);
+      setSuggestedDoctorId(candidate);
+    } else if (suggestedDoctorId) {
+      setDoctorId(initial?.doctorId || (doctors.length === 1 ? doctors[0].id : ""));
+      setSuggestedDoctorId(null);
+    }
+  }, [patientContext, doctors, isEdit, doctorId, suggestedDoctorId, initial?.doctorId]);
+
   // Seçili doktorun o günkü randevuları ve kapalı zamanları — takvimde başka
-  // bir gün açıkken de çakışma doğru gösterilsin (önceden yalnız ekrandaki
-  // aralığa bakılıyordu).
+  // bir gün açıkken de saatler doğru gösterilsin.
   useEffect(() => {
     if (!doctorId || !dateKey) { setDayAppointments([]); setDayBlocks([]); return; }
     const controller = new AbortController();
@@ -188,12 +270,12 @@ export function AppointmentFormModal({
         if (controller.signal.aborted) return;
         setDayAppointments(appts);
         setDayBlocks(blocksResponse.ok && Array.isArray(blocks) ? blocks : []);
-        if (!blocksResponse.ok) setDayError("Doktorun kapalı zamanları yüklenemedi; kayıt sırasında yine kontrol edilir.");
+        if (!blocksResponse.ok) setDayError("Doktorun kapalı zamanları yüklenemedi; kayıt sırasında yine denetlenir.");
       } catch (loadError) {
         if (controller.signal.aborted) return;
         setDayAppointments([]);
         setDayBlocks([]);
-        setDayError(loadError instanceof Error ? `${loadError.message} Çakışma kayıt sırasında kontrol edilir.` : "Doktorun programı yüklenemedi.");
+        setDayError(loadError instanceof Error ? `${loadError.message} Uygunluk kayıt sırasında denetlenir.` : "Doktorun programı yüklenemedi.");
       } finally {
         if (!controller.signal.aborted) setDayLoading(false);
       }
@@ -206,6 +288,7 @@ export function AppointmentFormModal({
   const dayHours = useMemo(() => (dayDate && settings ? getDayHours(settings.dailySchedules, dayDate, settings.openingTime, settings.closingTime) : null), [dayDate, settings]);
   const isPastDay = Boolean(dateKey) && dateKey < todayKey;
 
+  // Dolu saatlerde hasta adı tutulmaz: saat düğmeleri yalnız "dolu" der.
   const busyItems = useMemo(() => {
     const items: Array<{ start: number; end: number; label: string }> = [];
     for (const item of dayAppointments) {
@@ -213,9 +296,10 @@ export function AppointmentFormModal({
       if (item.status === "IPTAL" || item.status === "GELMEDI") continue;
       if (doctorId && item.doctor?.id && item.doctor.id !== doctorId) continue;
       const start = minutesOfDay(new Date(item.startAt));
-      items.push({ start, end: start + durationBetween(item.startAt, item.endAt), label: `dolu: ${item.patient?.fullName || "randevu"}` });
+      items.push({ start, end: start + durationBetween(item.startAt, item.endAt), label: "dolu" });
     }
     for (const block of dayBlocks) {
+      if (doctorId && block.doctorId && block.doctorId !== doctorId) continue;
       const start = parseClock(block.startTime);
       const end = parseClock(block.endTime);
       if (start === null || end === null) continue;
@@ -250,7 +334,7 @@ export function AppointmentFormModal({
     if (slotOptions.length === 0 || dayLoading) return;
     const current = slotOptions.find((option) => option.minutes === minutes);
     if (minutes !== null && current) {
-      // Kullanıcının kendi seçtiği saat korunur (uyarılar ayrıca gösterilir).
+      // Kullanıcının kendi seçtiği saat korunur (uyarı ayrıca gösterilir).
       if (userPickedTimeRef.current) return;
       if (!current.busyReason) return;
     }
@@ -261,16 +345,7 @@ export function AppointmentFormModal({
   }, [slotOptions, dayLoading, minutes, dateKey]);
 
   const selectedOption = slotOptions.find((option) => option.minutes === minutes);
-  const selectedStart = minutes === null ? null : dateAtMinutes(dateKey, minutes);
-  const softConflict = selectedOption?.busyReason?.startsWith("dolu") ? selectedOption.busyReason.replace(/^dolu: /, "") : null;
-  const nearbyFree = useMemo(() => {
-    if (!softConflict || minutes === null) return [] as SlotOption[];
-    return slotOptions
-      .filter((option) => !option.busyReason)
-      .sort((a, b) => Math.abs(a.minutes - minutes) - Math.abs(b.minutes - minutes))
-      .slice(0, 4)
-      .sort((a, b) => a.minutes - b.minutes);
-  }, [softConflict, minutes, slotOptions]);
+  const selectedKind = selectedOption ? slotKind(selectedOption) : null;
 
   const durationOptions = useMemo(() => {
     const list = [1, 2, 3, 4, 6, 8].map((multiplier) => multiplier * slotInterval).filter((value) => value <= 240);
@@ -279,8 +354,6 @@ export function AppointmentFormModal({
   }, [slotInterval, durationMin]);
 
   const activeUnits = clinicUnits.filter((unit) => unit.isActive || unit.id === clinicUnitId);
-  const freeCount = slotOptions.filter((option) => !option.busyReason).length;
-  const doctorDayCount = dayAppointments.filter((item) => item.status !== "IPTAL" && item.id !== appointment?.id).length;
 
   const dayProblem = !dateKey
     ? "Tarih seçin."
@@ -292,16 +365,34 @@ export function AppointmentFormModal({
           ? "Geçmiş bir güne randevu verilemez."
           : null;
 
-  const blockingReason = selectedOption && isHardBlocked(selectedOption) && !isEdit
+  // Kesin engel: kapalı zaman, öğle arası, mesai dışı, geçmiş saat (sunucu da reddeder).
+  const blockingReason = selectedOption && selectedOption.busyReason && selectedKind !== "busy" && !isEdit
     ? `Seçilen saat uygun değil: ${selectedOption.busyReason}.`
     : null;
+  const softConflict = selectedKind === "busy";
+
+  // Hızlı günler: yeni randevuda bugün + sonraki açık günler; "sonraki
+  // randevu"da kontrol aralıkları. Tarih alanı her zaman görünür.
+  const quickDates = useMemo<QuickDateOption[]>(() => {
+    if (initial?.quickDates === "sonraki") {
+      return [
+        { label: "1 hafta sonra", days: 7 },
+        { label: "2 hafta sonra", days: 14 },
+        { label: "1 ay sonra", days: 30 },
+      ];
+    }
+    if (!settings) return [{ label: "Bugün", days: 0 }, { label: "Yarın", days: 1 }];
+    const today = turkeyDateKey();
+    return openDayKeys(settings.dailySchedules, today, 5).map((key) => ({ label: quickDayLabel(key, today), date: key }));
+  }, [initial?.quickDates, settings]);
 
   const preferredDoctorName = source?.type === "online" ? source.request.doctor?.fullName : source?.type === "waitlist" ? source.entry.doctor?.fullName : null;
   const preferredDoctorId = source?.type === "online" ? source.request.doctor?.id : source?.type === "waitlist" ? source.entry.doctor?.id : null;
+  const notifyAvailable = settings ? settings.sms.enabled || hasFeature("whatsapp") : true;
 
   const save = async () => {
     setError(null);
-    if (!patient) { setError("Hasta seçin. Listede yoksa “Yeni hasta ekle” ile kaydedin."); return; }
+    if (!patient) { setError("Hasta seçin. Listede yoksa “Yeni hasta” ile kaydedin."); return; }
     if (!doctorId) { setError("Doktor seçin."); return; }
     if (dayProblem) { setError(dayProblem); return; }
     if (minutes === null) { setError("Saat seçin."); return; }
@@ -318,6 +409,8 @@ export function AppointmentFormModal({
       && new Date(appointment.endAt).getTime() === end.getTime();
 
     setSaving(true);
+    // Düzenlemede durum gönderilmez: sunucu mevcut durumu korur (arada
+    // işaretlenen "Geldi" ya da "Planlandı'ya geri al" geri yazılmasın).
     const result = isEdit && appointment
       ? await saveAppointment(`/api/appointments/${appointment.id}`, "PUT", {
           patientId: patient.id,
@@ -326,7 +419,6 @@ export function AppointmentFormModal({
           startAt: sameTime ? appointment.startAt : start.toISOString(),
           endAt: sameTime ? appointment.endAt : end.toISOString(),
           type: appointment.type || "STANDART",
-          status: appointment.status,
           colorCode: color,
           note: buildNoteSafe(parsedNote?.followUp || "YOK", note, treatment),
         })
@@ -352,204 +444,243 @@ export function AppointmentFormModal({
       return;
     }
 
+    // Bilgi mesajı gitmediyse nedeni söylenir (önceden yalnız "gönderildi" ve
+    // "gönderilemedi" yazıyordu; izin yokken sessiz kalıyordu — canlı test H5).
     const sms = result.data.smsStatus;
-    const smsText = !isEdit && sms
-      ? [sms.info === "sent" ? sms.infoMessage : sms.info === "failed" ? `Bilgi mesajı gönderilemedi: ${sms.infoMessage}` : "", sms.reminder === "scheduled" ? "Hatırlatma bir gün önce gönderilecek." : ""].filter(Boolean).join(" ")
-      : "";
-    const when = `${formatDayShort(start)} ${timeLabel(minutes)}`;
+    let tone: AppointmentFormSaved["tone"] = "success";
+    let smsText = "";
+    // Kurumda SMS kapalı ve WhatsApp yoksa "Hastaya mesaj" satırı hiç
+    // gösterilmez; her kayıtta "mesaj gitmedi" bildirimi de çıkmaz (gürültü).
+    if (!isEdit && sms && smsInfo && notifyAvailable) {
+      if (sms.info === "sent") smsText = sms.infoMessage;
+      else if (sms.info === "failed") { smsText = `Bilgi mesajı gönderilemedi: ${sms.infoMessage}`; tone = "error"; }
+      else if (sms.info === "skipped") { smsText = `Bilgi mesajı gitmedi: ${sms.infoMessage}`; tone = "info"; }
+    }
     onSaved({
       appointment: result.data,
-      message: [`${patient.fullName} · ${when}`, smsText].filter(Boolean).join(" — "),
-      tone: sms?.info === "failed" ? "error" : "success",
+      message: [`${patient.fullName} · ${formatDayShort(start)} ${timeLabel(minutes)}`, smsText].filter(Boolean).join(" — "),
+      tone,
     });
   };
 
-  const footer = (
-    <>
-      <Button variant="secondary" onClick={onClose}>Vazgeç</Button>
-      <Button onClick={() => void save()} loading={saving} disabled={!settings}>Kaydet</Button>
-    </>
-  );
+  // Yeni hasta: online talepte talep sahibinin bilgileri, aksi halde aramaya
+  // yazılan metin forma taşınır (aynı bilgi ikinci kez yazılmaz).
+  const openNewPatient = (query?: string) => {
+    if (source?.type === "online") {
+      const request = source.request;
+      const phone = request.phone ? normalizeLocalPhone(request.phone, "+90") : "";
+      setNewPatientInitial({
+        fullName: request.fullName,
+        ...(phone ? { phone, phoneCountryCode: "+90" } : {}),
+        ...(request.tcNo && /^\d{11}$/.test(request.tcNo) ? { tcNo: request.tcNo } : {}),
+      });
+    } else {
+      setNewPatientInitial(initialFromQuery(query));
+    }
+    setShowNewPatient(true);
+  };
 
-  const sourceBanner = source?.type === "online" ? (
-    <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2.5 text-sm text-sky-900">
-      <p className="flex items-center gap-1.5 font-bold"><Globe2 className="h-4 w-4" aria-hidden="true" /> Online talep: {source.request.fullName}</p>
-      <p className="mt-0.5 text-xs text-sky-800">
-        {[
-          canSeePhone && source.request.phone ? formatPhoneDisplay(source.request.phone) : "",
-          canSeePhone && source.request.tcNo ? `TC ${source.request.tcNo}` : "",
-          (() => {
-            const key = preferredDateKeyOf(source.request.preferredFrom);
-            const day = fromDateKey(key);
-            return day ? `Tercih: ${formatDayShort(day)} · ${preferredPeriodLabel(preferredMinutesOf(source.request.preferredFrom))}` : "";
-          })(),
-          source.request.doctor?.fullName ? `Doktor tercihi: ${source.request.doctor.fullName}` : "",
-        ].filter(Boolean).join(" · ")}
-      </p>
-      {source.request.note && <p className="mt-1 text-xs text-sky-800">Hastanın notu: {source.request.note}</p>}
-      {sourceMatchState === "searching" && <p className="mt-1 text-xs text-sky-700">Kayıtlı hasta aranıyor…</p>}
-      {sourceMatchState === "missing" && !patient && (
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <p className="text-xs font-semibold text-sky-900">Bu bilgilerle kayıtlı hasta bulunamadı.</p>
-          <Button size="sm" variant="secondary" icon={UserPlus} onClick={() => setShowNewPatient(true)}>Yeni hasta olarak kaydet</Button>
-        </div>
-      )}
-    </div>
+  // Hasta aramasında Enter formu göndermesin (sonuç seçilmemişse "Hasta seçin" hatası çıkıyordu).
+  const keepSearchEnter = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Enter" && (event.target as HTMLElement).getAttribute("role") === "combobox") event.preventDefault();
+  };
+
+  // Talebin notu Not alanına aktarıldığı için burada tekrar yazılmaz; yeni
+  // hasta kaydı Hasta alanının yanındaki "Yeni hasta" düğmesiyle (tek yol).
+  const sourceCallout = source?.type === "online" ? (
+    <Callout tone="info" icon={Globe2} title={`Online talep: ${source.request.fullName}`}>
+      {[
+        canSeePhone && source.request.phone ? formatPhoneDisplay(source.request.phone) : "",
+        (() => {
+          const day = fromDateKey(preferredDateKeyOf(source.request.preferredFrom));
+          return day ? `Tercih: ${formatDayShort(day)} · ${preferredPeriodLabel(preferredMinutesOf(source.request.preferredFrom))}` : "";
+        })(),
+      ].filter(Boolean).join(" · ")}
+      {sourceMatchState === "searching" && <span className="block text-xs opacity-80">Kayıtlı hasta aranıyor…</span>}
+      {sourceMatchState === "found" && patient && <span className="block text-xs opacity-80">Kayıtlı hasta bulundu: {patient.fullName}</span>}
+      {sourceMatchState === "missing" && !patient && <span className="block text-xs opacity-80">Bu bilgilerle kayıtlı hasta bulunamadı; “Yeni hasta” ile kaydedin.</span>}
+    </Callout>
   ) : source?.type === "waitlist" ? (
-    <div className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2.5 text-sm text-violet-900">
-      <p className="flex items-center gap-1.5 font-bold"><ListChecks className="h-4 w-4" aria-hidden="true" /> Bekleme listesinden: {source.entry.patient.fullName}</p>
-      {(source.entry.note || source.entry.doctor?.fullName) && (
-        <p className="mt-0.5 text-xs text-violet-800">{[source.entry.doctor?.fullName ? `Doktor tercihi: ${source.entry.doctor.fullName}` : "", source.entry.note || ""].filter(Boolean).join(" · ")}</p>
-      )}
-    </div>
+    <Callout tone="neutral" icon={ListChecks} title={`Bekleme listesinden: ${source.entry.patient.fullName}`}>
+      {source.entry.note ? source.entry.note.split("\n")[0] : undefined}
+    </Callout>
   ) : null;
+
+  // Saat seçilemiyorsa nedeni saat alanının yerinde yazar (doktor yok, kapalı
+  // ya da geçmiş gün); saat bölümünde aynı anda tek uyarı görünür.
+  const slotBlockedMessage = !doctorId
+    ? "Önce doktor seçin; boş saatler doktorun programına göre listelenir."
+    : dayProblem && settings
+      ? dayProblem
+      : null;
+  const slotCallout = slotBlockedMessage ? null : blockingReason ? (
+    <Callout tone="critical" compact>{blockingReason}</Callout>
+  ) : softConflict ? (
+    <Callout tone="warning" compact>Bu saatte doktorun başka randevusu var; kaydederseniz onayınız istenir.</Callout>
+  ) : dayError ? (
+    <Callout tone="warning" compact>{dayError}</Callout>
+  ) : null;
+
+  const nextAppt = patientContext?.nextAppointment;
 
   return (
     <>
-      <Modal
+      <FormModal
         open
         module="calendar"
         onClose={onClose}
         size="lg"
         title={isEdit ? "Randevuyu düzenle" : "Yeni randevu"}
-        description={isEdit ? "Saat, doktor, tedavi veya notu değiştirip kaydedin." : "Hastayı, doktoru ve boş bir saati seçin."}
-        footer={footer}
+        description={isEdit && appointment
+          ? `${appointment.patient?.fullName || "Hasta"} · şu an ${formatDayShort(new Date(appointment.startAt))} ${formatClock(appointment.startAt)} · ${appointment.doctor?.fullName || ""}`
+          : undefined}
+        onSubmit={() => save()}
+        submitting={saving}
+        submitDisabled={!settings}
+        error={error}
+        isDirty={userTouched}
       >
-        <div className="space-y-4">
-          {sourceBanner}
-          <FormErrorBanner message={error} />
+        {sourceCallout}
 
-          <FormField label="Hasta" required htmlFor="appt-patient">
-            <PatientPicker
-              id="appt-patient"
-              value={patient}
-              onChange={(next) => { setPatient(next); setError(null); }}
-              onCreateNew={() => setShowNewPatient(true)}
-            />
-          </FormField>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <FormField
-              label="Doktor"
-              required
-              htmlFor="appt-doctor"
-              hint={preferredDoctorName && preferredDoctorId && preferredDoctorId !== doctorId ? `Hastanın tercihi: ${preferredDoctorName}` : undefined}
-            >
-              <DoctorSelect id="appt-doctor" value={doctorId} doctors={doctors} onChange={(id) => { setDoctorId(id); setError(null); }} />
-            </FormField>
-            <FormField label="Tedavi" htmlFor="appt-treatment">
-              <Select id="appt-treatment" value={treatment} onChange={(event) => setTreatment(event.target.value)}>
-                {!treatments.some((item) => item.value === treatment) && <option value={treatment}>{treatment}</option>}
-                {treatments.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-              </Select>
-            </FormField>
-            <FormField label="Tarih" required htmlFor="appt-date">
-              <Input
-                id="appt-date"
-                type="date"
-                value={dateKey}
-                min={isEdit ? undefined : todayKey}
-                onChange={(event) => { setDateKey(event.target.value); userPickedTimeRef.current = false; setError(null); }}
+        <FormField label="Hasta" required as="div" htmlFor="appt-patient">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start" onKeyDown={keepSearchEnter}>
+            <div className="min-w-0 flex-1">
+              <PatientPicker
+                id="appt-patient"
+                required
+                value={patient}
+                onChange={(next) => { setPatient(next); setUserTouched(true); setError(null); }}
+                onCreateNew={(query) => openNewPatient(query)}
               />
-            </FormField>
-            <FormField label="Saat" required htmlFor="appt-time" hint={!doctorId ? "Önce doktor seçin; boş saatler doktora göre listelenir." : undefined}>
-              <Select
-                id="appt-time"
-                value={minutes === null ? "" : String(minutes)}
-                disabled={!doctorId || slotOptions.length === 0}
-                onChange={(event) => { setMinutes(event.target.value === "" ? null : Number(event.target.value)); userPickedTimeRef.current = true; setError(null); }}
-              >
-                {minutes === null && <option value="">{dayLoading ? "Program yükleniyor…" : "Saat seçin"}</option>}
-                {slotOptions.map((option) => (
-                  <option key={option.minutes} value={option.minutes} disabled={isHardBlocked(option) && option.minutes !== minutes}>
-                    {option.label}{option.busyReason ? ` — ${option.busyReason}` : ""}
+            </div>
+            {!patient && (
+              <Button variant="secondary" icon={UserPlus} onClick={() => openNewPatient()} className="shrink-0">Yeni hasta</Button>
+            )}
+          </div>
+        </FormField>
+        {patient && patientContext?.contagious && (
+          <Callout tone="critical" compact title="Bulaşıcı hastalık">{patientContext.contagious.note || "Hasta kartında işaretli."}</Callout>
+        )}
+        {patient && nextAppt && (
+          <p className="-mt-2 flex items-center gap-1.5 text-xs text-slate-500">
+            <CalendarClock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            Yaklaşan randevusu: {formatDayShort(new Date(nextAppt.startAt))} {formatClock(nextAppt.startAt)}{nextAppt.doctorName ? ` · ${nextAppt.doctorName}` : ""}
+          </p>
+        )}
+
+        <FormField
+          label="Doktor"
+          required
+          htmlFor="appt-doctor"
+          className="sm:max-w-sm"
+          hint={preferredDoctorName && preferredDoctorId && preferredDoctorId !== doctorId
+            ? `Hastanın tercihi: ${preferredDoctorName}`
+            : suggestedDoctorId && suggestedDoctorId === doctorId ? "Hastanın kendi hekimi önerildi; değiştirebilirsiniz." : undefined}
+        >
+          <DoctorSelect id="appt-doctor" value={doctorId} doctors={doctors} onChange={(id) => { doctorTouchedRef.current = true; setDoctorId(id); setError(null); }} />
+        </FormField>
+
+        <QuickDatePicker
+          label="Tarih"
+          required
+          id="appt-date"
+          value={dateKey}
+          options={quickDates}
+          min={isEdit ? undefined : todayKey}
+          onChange={(next) => { if (!next) return; setDateKey(next); setUserTouched(true); userPickedTimeRef.current = false; setError(null); }}
+        />
+
+        <div className="space-y-2">
+          <SlotPicker
+            label="Saat"
+            required
+            options={slotOptions}
+            value={minutes}
+            durationMin={durationMin}
+            loading={dayLoading}
+            blockedMessage={slotBlockedMessage}
+            onChange={(next) => { setMinutes(next); setUserTouched(true); userPickedTimeRef.current = true; setError(null); }}
+          />
+          {slotCallout}
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <FormField label="Süre" htmlFor="appt-duration">
+            <Select id="appt-duration" value={durationMin} onChange={(event) => setDurationMin(Number(event.target.value))}>
+              {durationOptions.map((value) => <option key={value} value={value}>{value} dakika</option>)}
+            </Select>
+          </FormField>
+          <FormField label="Tedavi" htmlFor="appt-treatment">
+            <Select id="appt-treatment" value={treatment} onChange={(event) => setTreatment(event.target.value)}>
+              {!treatments.some((item) => item.value === treatment) && <option value={treatment}>{treatment}</option>}
+              {treatments.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+            </Select>
+          </FormField>
+        </div>
+
+        <FormField label="Not" htmlFor="appt-note">
+          <Textarea id="appt-note" rows={2} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ör. 36 numaralı diş, kanal tedavisi 2. seans" />
+        </FormField>
+
+        {activeUnits.length > 0 && (
+          <Disclosure
+            title="Diğer seçenekler"
+            summary={clinicUnitId ? `Tedavi alanı: ${activeUnits.find((unit) => unit.id === clinicUnitId)?.name || ""}` : "Tedavi alanı"}
+            defaultOpen={Boolean(clinicUnitId)}
+          >
+            <FormField label="Tedavi alanı" htmlFor="appt-unit" hint="Koltuk/oda çakışması kayıtta denetlenir.">
+              <Select id="appt-unit" value={clinicUnitId} onChange={(event) => setClinicUnitId(event.target.value)}>
+                <option value="">Seçilmedi</option>
+                {activeUnits.map((unit) => (
+                  <option key={unit.id} value={unit.id} disabled={!unit.isActive}>
+                    {unit.name}{unit.code ? ` · ${unit.code}` : ""}{!unit.isActive ? " (arşivde)" : ""}
                   </option>
                 ))}
               </Select>
             </FormField>
-            <FormField label="Süre" htmlFor="appt-duration">
-              <Select id="appt-duration" value={durationMin} onChange={(event) => setDurationMin(Number(event.target.value))}>
-                {durationOptions.map((value) => <option key={value} value={value}>{value} dakika</option>)}
-              </Select>
-            </FormField>
-            {activeUnits.length > 0 && (
-              <FormField label="Tedavi alanı" htmlFor="appt-unit" hint="İsteğe bağlı — koltuk/oda çakışması kontrol edilir.">
-                <Select id="appt-unit" value={clinicUnitId} onChange={(event) => setClinicUnitId(event.target.value)}>
-                  <option value="">Seçilmedi</option>
-                  {activeUnits.map((unit) => (
-                    <option key={unit.id} value={unit.id} disabled={!unit.isActive}>
-                      {unit.name}{unit.code ? ` · ${unit.code}` : ""}{!unit.isActive ? " (arşivde)" : ""}
-                    </option>
-                  ))}
-                </Select>
-              </FormField>
-            )}
-          </div>
+          </Disclosure>
+        )}
 
-          {/* Seçili günün özeti ve uyarılar */}
-          {doctorId && dateKey && (
-            <div className="space-y-2" aria-live="polite">
-              {dayProblem ? (
-                <p className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
-                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" /> {dayProblem}
-                </p>
-              ) : !dayLoading && selectedDoctor && dayDate ? (
-                <p className="flex items-center gap-2 text-xs text-slate-500">
-                  <CalendarClock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                  {selectedDoctor.fullName} · {formatDayShort(dayDate)}: {doctorDayCount} randevu, {freeCount} boş saat
-                  {selectedStart ? ` · seçilen: ${formatTimeRange(selectedStart, new Date(selectedStart.getTime() + durationMin * 60_000))}` : ""}
-                </p>
-              ) : null}
-              {dayError && <p className="text-xs font-semibold text-amber-700">{dayError}</p>}
-              {blockingReason && <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">{blockingReason}</p>}
-              {softConflict && (
-                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                  <p className="font-semibold">Bu saatte doktorun başka randevusu var ({softConflict}). Kaydederseniz onayınız istenir.</p>
-                  {nearbyFree.length > 0 && (
-                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                      <span>Yakındaki boş saatler:</span>
-                      {nearbyFree.map((option) => (
-                        <Button key={option.minutes} size="sm" variant="secondary" onClick={() => { setMinutes(option.minutes); userPickedTimeRef.current = true; }}>
-                          {option.label}
-                        </Button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          <FormField label="Not" htmlFor="appt-note" hint="İsteğe bağlı — doktorun görmesi gereken kısa bilgi.">
-            <Textarea id="appt-note" rows={2} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ör. sol alt 36 kanal, penisilin alerjisi" />
-          </FormField>
-
-          {!isEdit && (
-            <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50/60 p-3">
-              <Switch
+        {!isEdit && notifyAvailable && (
+          <FormField label="Hastaya mesaj" as="div">
+            <div className="flex flex-wrap gap-x-6 gap-y-2">
+              <Checkbox
+                label="Bilgilendirme"
                 checked={smsInfo}
-                onChange={setSmsInfo}
-                label="Randevu bilgisini hastaya şimdi gönder"
-                description="Kanal (SMS veya WhatsApp) ve hastanın iletişim izni sistem tarafından kontrol edilir."
+                onChange={(checked) => { smsTouchedRef.current = true; setSmsInfo(checked); }}
               />
-              <Switch
+              <Checkbox
+                label="Hatırlatma"
                 checked={smsReminder}
-                onChange={setSmsReminder}
-                label="Randevudan bir gün önce hatırlatma gönder"
+                onChange={(checked) => { smsTouchedRef.current = true; setSmsReminder(checked); }}
               />
             </div>
-          )}
-        </div>
-      </Modal>
+            {patientContext && !patientContext.notify.canNotify && (smsInfo || smsReminder) ? (
+              <p className="mt-1.5 text-xs font-medium text-amber-700" role="status">{patientContext.notify.reason}</p>
+            ) : (
+              <p className="mt-1.5 text-xs text-slate-500">Bilgilendirme açıksa saat değişince ve iptalde de mesaj gider.</p>
+            )}
+          </FormField>
+        )}
+      </FormModal>
 
       {showNewPatient && (
         <PatientFormModal
           open
-          hidePhoneField={!canSeePhone}
+          initialValues={newPatientInitial}
           onClose={() => setShowNewPatient(false)}
           onSaved={(created) => {
             const full = created as PickedPatient;
             setPatient({ id: full.id, fullName: full.fullName, phone: full.phone || null, tcNo: full.tcNo || null });
+            setUserTouched(true);
+            // Yeni kayıt: "kayıtlı hasta bulundu" yazısı çıkmasın.
+            setSourceMatchState("idle");
+            setShowNewPatient(false);
+          }}
+          // Mükerrer kayıt uyarısında "Bu hastayı seç": var olan hasta randevu formuna seçilir.
+          onPickExisting={(existing) => {
+            setPatient({ id: existing.id, fullName: existing.fullName });
+            setUserTouched(true);
             setSourceMatchState("found");
             setShowNewPatient(false);
           }}

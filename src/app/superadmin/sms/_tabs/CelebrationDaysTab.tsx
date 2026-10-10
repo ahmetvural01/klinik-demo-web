@@ -4,9 +4,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pencil, Plus, Power, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
-import { Modal } from "@/components/ui/Modal";
+import { FormModal } from "@/components/ui/FormModal";
 import { Input, Select, Textarea } from "@/components/ui/Input";
-import { FormErrorBanner, FormField } from "@/components/ui/FormField";
+import { FormField } from "@/components/ui/FormField";
 import { Switch } from "@/components/ui/Switch";
 import { ChoiceCards } from "@/components/ui/ChoiceCards";
 import { Toolbar } from "@/components/ui/Toolbar";
@@ -18,7 +18,7 @@ import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
 import { SMS_PLACEHOLDERS, renderSmsPreview, toReadableText, toStoredText } from "@/lib/sms-template-placeholders";
 import { PROFESSIONS } from "@/lib/professions";
-import { TabIntro } from "@/components/superadmin/TabIntro";
+import { ToggleChips } from "@/components/ui/ToggleChips";
 import { codeFromTitle } from "@/components/superadmin/sa-labels";
 import { errorMessage, isAbort, saGet, saSend } from "@/components/superadmin/sa-fetch";
 import {
@@ -82,6 +82,8 @@ export default function CelebrationDaysTab() {
   const [editing, setEditing] = useState<CelebrationDay | null>(null);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<FormState>(EMPTY);
+  // Pencere açılırkenki değerler: kirli formda kapatırken onay sorulur.
+  const [initialForm, setInitialForm] = useState<FormState>(EMPTY);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -116,13 +118,14 @@ export default function CelebrationDaysTab() {
   const openCreate = () => {
     setEditing(null);
     setForm(EMPTY);
+    setInitialForm(EMPTY);
     setFormError(null);
     setOpen(true);
   };
 
   const openEdit = (item: CelebrationDay) => {
     setEditing(item);
-    setForm({
+    const next: FormState = {
       title: item.title,
       rule: (["FIXED", "NTH_WEEKDAY", "DATE_OVERRIDES"].includes(item.recurrenceRule) ? item.recurrenceRule : "FIXED") as CelebrationRule,
       month: item.month,
@@ -133,7 +136,9 @@ export default function CelebrationDaysTab() {
       targetProfessions: item.targetProfessions,
       messageTemplate: toReadableText(item.messageTemplate),
       isActive: item.isActive,
-    });
+    };
+    setForm(next);
+    setInitialForm(next);
     setFormError(null);
     setOpen(true);
   };
@@ -175,9 +180,9 @@ export default function CelebrationDaysTab() {
   const toggleActive = async (item: CelebrationDay) => {
     if (item.isActive) {
       const ok = await confirmDialog({
-        title: "Kutlama günü durdurulsun mu?",
+        title: "Kutlama günü pasife alınsın mı?",
         message: `"${item.title}" hiçbir klinikte gönderilmez.${item.enabledClinicCount > 0 ? ` Şu an ${item.enabledClinicCount} klinik bu günü açmış; tercihleri korunur, yeniden aktif ettiğinizde gönderim sürer.` : ""}`,
-        confirmText: "Durdur",
+        confirmText: "Pasife al",
         cancelText: "Vazgeç",
         danger: true,
       });
@@ -186,7 +191,7 @@ export default function CelebrationDaysTab() {
     setBusyId(item.id);
     try {
       await saSend("/api/superadmin/celebration-days", "PUT", { id: item.id, isActive: !item.isActive }, "Durum değiştirilemedi.");
-      showToastSafe({ type: "success", message: item.isActive ? `${item.title} durduruldu.` : `${item.title} yeniden aktif.`, icon: "sms" });
+      showToastSafe({ type: "success", message: item.isActive ? `${item.title} pasife alındı.` : `${item.title} yeniden aktif.`, icon: "sms" });
       reload();
     } catch (error) {
       showToastSafe({ type: "error", message: errorMessage(error, "Durum değiştirilemedi.") });
@@ -198,7 +203,7 @@ export default function CelebrationDaysTab() {
   const remove = async (item: CelebrationDay) => {
     const ok = await confirmDialog({
       title: "Kutlama günü silinsin mi?",
-      message: `"${item.title}" katalogdan kalıcı olarak silinir.${item.enabledClinicCount > 0 ? ` Bu günü açmış ${item.enabledClinicCount} kliniğin tercihi de silinir.` : ""} Yalnız durdurmak istiyorsanız Vazgeç deyip “Durdur”u kullanın.`,
+      message: `"${item.title}" katalogdan kalıcı olarak silinir.${item.enabledClinicCount > 0 ? ` Bu günü açmış ${item.enabledClinicCount} kliniğin tercihi de silinir.` : ""} Yalnız göndermeyi kapatmak istiyorsanız Vazgeç deyip “Pasife al”ı kullanın.`,
       confirmText: "Sil",
       cancelText: "Vazgeç",
       danger: true,
@@ -216,8 +221,14 @@ export default function CelebrationDaysTab() {
     }
   };
 
+  // Hiçbir klinik bu günü açmadıysa tarih soluk yazılır: o gün mesaj gitmez
+  // (önceden "Sonraki gönderim" gönderim olacakmış gibi görünüyordu).
   const nextCell = (item: CelebrationDay & { next: string | null }) => item.next
-    ? <span className="tabular-nums">{formatDateKey(item.next)}</span>
+    ? (
+      <span className={`tabular-nums ${item.enabledClinicCount === 0 ? "text-slate-400" : ""}`} title={item.enabledClinicCount === 0 ? "Bu günü açan klinik yok; mesaj gitmez" : undefined}>
+        {formatDateKey(item.next)}
+      </span>
+    )
     : <Badge tone="warning" title="Tarih listesine yeni yılların tarihlerini ekleyin">Tarih listesi bitti</Badge>;
 
   const targetText = (item: CelebrationDay) => (item.targetProfessions.length === 0 ? "Tüm hastalar" : item.targetProfessions.join(", "));
@@ -225,7 +236,7 @@ export default function CelebrationDaysTab() {
   const actions = (item: CelebrationDay) => (
     <div className="flex items-center justify-end gap-1.5">
       <IconButton icon={Pencil} title="Düzenle" size="sm" onClick={() => openEdit(item)} />
-      <IconButton icon={Power} title={item.isActive ? "Durdur" : "Yeniden aktif et"} tone={item.isActive ? "neutral" : "primary"} size="sm" disabled={busyId === item.id} onClick={() => void toggleActive(item)} />
+      <IconButton icon={Power} title={item.isActive ? "Pasife al" : "Yeniden aktif et"} tone={item.isActive ? "neutral" : "primary"} size="sm" disabled={busyId === item.id} onClick={() => void toggleActive(item)} />
       {!item.isBuiltIn && <IconButton icon={Trash2} title="Sil" tone="danger" size="sm" disabled={busyId === item.id} onClick={() => void remove(item)} />}
     </div>
   );
@@ -242,9 +253,9 @@ export default function CelebrationDaysTab() {
       ),
     },
     { key: "rule", header: "Tarih kuralı", render: (item) => <span className="text-sm text-slate-700">{describeSchedule(item)}</span> },
-    { key: "next", header: "Sonraki gönderim", render: nextCell },
+    { key: "next", header: "Sonraki tarih", render: nextCell },
     { key: "clinics", header: "Açan klinik", align: "right", render: (item) => <span className="tabular-nums">{item.enabledClinicCount}</span> },
-    { key: "status", header: "Durum", render: (item) => <Badge tone={item.isActive ? "success" : "neutral"}>{item.isActive ? "Aktif" : "Durduruldu"}</Badge> },
+    { key: "status", header: "Durum", render: (item) => <Badge tone={item.isActive ? "success" : "neutral"}>{item.isActive ? "Aktif" : "Pasif"}</Badge> },
     { key: "actions", header: "", align: "right", render: actions },
   ];
 
@@ -261,11 +272,9 @@ export default function CelebrationDaysTab() {
 
   return (
     <section className="space-y-3">
-      <TabIntro
-        text="Tüm klinikler için ortak liste. Her klinik hangi günde hastalarına mesaj gideceğini kendi Ayarlar ekranından seçer; buraya eklemek kendiliğinden mesaj göndermez."
-        actions={<Button icon={Plus} onClick={openCreate}>Yeni gün</Button>}
-      />
       <ListTable
+        subtitle="Ortak liste; mesajın gideceği günleri her klinik kendisi seçer (buraya eklemek mesaj göndermez)."
+        actions={<Button size="sm" variant="secondary" icon={Plus} onClick={openCreate}>Yeni gün</Button>}
         header={
           <Toolbar>
             <SearchInput value={query} onChange={setQuery} placeholder="Gün adı veya meslek" wrapperClassName="flex-1 min-w-[220px]" />
@@ -275,7 +284,9 @@ export default function CelebrationDaysTab() {
         rows={rows}
         rowKey={(item) => item.id}
         loading={loading}
-        error={loadError}
+        // Veri varken yenileme hatası listeyi silmez; üstte şerit olarak görünür.
+        error={days.length > 0 ? null : loadError}
+        staleError={days.length > 0 ? loadError : null}
         onRetry={reload}
         rowClassName={(item) => (item.isActive ? "" : "opacity-60")}
         emptyText={query ? "Bu aramaya uyan gün yok" : "Henüz kutlama günü yok"}
@@ -285,7 +296,7 @@ export default function CelebrationDaysTab() {
           <div className="space-y-1">
             <div className="flex items-start justify-between gap-2">
               <p className="min-w-0 font-semibold text-slate-900">{item.title}</p>
-              <Badge tone={item.isActive ? "success" : "neutral"}>{item.isActive ? "Aktif" : "Durduruldu"}</Badge>
+              <Badge tone={item.isActive ? "success" : "neutral"}>{item.isActive ? "Aktif" : "Pasif"}</Badge>
             </div>
             <p className="text-xs text-slate-500">{describeSchedule(item)} · {targetText(item)}</p>
             <div className="flex items-center justify-between gap-2 text-xs text-slate-600">
@@ -296,94 +307,77 @@ export default function CelebrationDaysTab() {
         )}
       />
 
-      <Modal
+      <FormModal
         open={open}
         onClose={() => setOpen(false)}
         title={editing ? "Kutlama gününü düzenle" : "Yeni kutlama günü"}
         description={editing?.isBuiltIn ? "Yerleşik gün: silinemez, durdurulabilir." : undefined}
         size="lg"
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => setOpen(false)}>Vazgeç</Button>
-            <Button loading={saving} onClick={() => void save()}>Kaydet</Button>
-          </>
-        }
+        onSubmit={() => save()}
+        submitting={saving}
+        error={formError}
+        isDirty={JSON.stringify(form) !== JSON.stringify(initialForm)}
       >
-        <div className="space-y-4">
-          <FormErrorBanner message={formError} />
-          <FormField label="Günün adı" htmlFor="celebration-title" required hint="Ör. 14 Mart Tıp Bayramı">
-            <Input id="celebration-title" value={form.title} onChange={(event) => set("title", event.target.value)} />
-          </FormField>
+        <FormField label="Günün adı" htmlFor="celebration-title" required hint="Ör. 14 Mart Tıp Bayramı">
+          <Input id="celebration-title" value={form.title} onChange={(event) => set("title", event.target.value)} />
+        </FormField>
 
-          <ChoiceCards label="Hangi gün gönderilsin?" variant="pills" options={ruleOptions} value={form.rule} onChange={(value) => set("rule", value)} />
+        <ChoiceCards label="Hangi gün gönderilsin?" variant="pills" options={ruleOptions} value={form.rule} onChange={(value) => set("rule", value)} />
 
-          {form.rule === "FIXED" && (
-            <div className="grid grid-cols-2 gap-3">
-              <FormField label="Ay" htmlFor="celebration-month" required>
-                <Select id="celebration-month" value={form.month} onChange={(event) => { const month = Number(event.target.value); setForm((current) => ({ ...current, month, day: Math.min(current.day, DAYS_IN_MONTH[month - 1]) })); }}>
-                  {MONTH_NAMES.map((name, index) => <option key={name} value={index + 1}>{name}</option>)}
-                </Select>
-              </FormField>
-              <FormField label="Gün" htmlFor="celebration-day" required>
-                <Select id="celebration-day" value={form.day} onChange={(event) => set("day", Number(event.target.value))}>
-                  {Array.from({ length: DAYS_IN_MONTH[form.month - 1] }, (_, index) => index + 1).map((value) => <option key={value} value={value}>{value}</option>)}
-                </Select>
-              </FormField>
-            </div>
-          )}
-
-          {form.rule === "NTH_WEEKDAY" && (
-            <div className="grid gap-3 sm:grid-cols-3">
-              <FormField label="Ay" htmlFor="celebration-nth-month" required>
-                <Select id="celebration-nth-month" value={form.month} onChange={(event) => set("month", Number(event.target.value))}>
-                  {MONTH_NAMES.map((name, index) => <option key={name} value={index + 1}>{name}</option>)}
-                </Select>
-              </FormField>
-              <FormField label="Kaçıncı hafta" htmlFor="celebration-week" required>
-                <Select id="celebration-week" value={form.weekOfMonth} onChange={(event) => set("weekOfMonth", Number(event.target.value))}>
-                  {[1, 2, 3, 4].map((value) => <option key={value} value={value}>{value}.</option>)}
-                </Select>
-              </FormField>
-              <FormField label="Gün" htmlFor="celebration-weekday" required>
-                <Select id="celebration-weekday" value={form.weekday} onChange={(event) => set("weekday", Number(event.target.value))}>
-                  {WEEKDAY_NAMES.map((name, index) => <option key={name} value={index}>{name}</option>)}
-                </Select>
-              </FormField>
-            </div>
-          )}
-
-          {form.rule === "DATE_OVERRIDES" && (
-            <FormField label="Tarihler" htmlFor="celebration-dates" required hint="Her satıra bir tarih yazın (gg.aa.yyyy). Dini bayramlar gibi her yıl değişen günler için; yeni yılların tarihlerini zamanında ekleyin.">
-              <Textarea id="celebration-dates" rows={5} value={form.datesText} onChange={(event) => set("datesText", event.target.value)} placeholder={"20.03.2026\n09.03.2027"} />
+        {form.rule === "FIXED" && (
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="Ay" htmlFor="celebration-month" required>
+              <Select id="celebration-month" value={form.month} onChange={(event) => { const month = Number(event.target.value); setForm((current) => ({ ...current, month, day: Math.min(current.day, DAYS_IN_MONTH[month - 1]) })); }}>
+                {MONTH_NAMES.map((name, index) => <option key={name} value={index + 1}>{name}</option>)}
+              </Select>
             </FormField>
-          )}
-          {preview && <p className="text-xs font-semibold text-slate-600">{preview}</p>}
+            <FormField label="Gün" htmlFor="celebration-day" required>
+              <Select id="celebration-day" value={form.day} onChange={(event) => set("day", Number(event.target.value))}>
+                {Array.from({ length: DAYS_IN_MONTH[form.month - 1] }, (_, index) => index + 1).map((value) => <option key={value} value={value}>{value}</option>)}
+              </Select>
+            </FormField>
+          </div>
+        )}
 
-          <fieldset>
-            <legend className="mb-1.5 text-xs font-bold text-slate-800">Kime gönderilsin?</legend>
-            <p className="mb-2 text-xs text-slate-500">Hiçbiri seçilmezse tüm hastalara; seçilirse yalnız mesleği bunlardan biri olan hastalara gider.</p>
-            <div className="flex flex-wrap gap-1.5">
-              {PROFESSIONS.filter((p) => p !== "Diğer").map((profession) => {
-                const selected = form.targetProfessions.includes(profession);
-                return (
-                  <button
-                    type="button"
-                    key={profession}
-                    aria-pressed={selected}
-                    onClick={() => set("targetProfessions", selected ? form.targetProfessions.filter((item) => item !== profession) : [...form.targetProfessions, profession])}
-                    className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${selected ? "border-primary bg-primary text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}
-                  >
-                    {profession}
-                  </button>
-                );
-              })}
-            </div>
-          </fieldset>
+        {form.rule === "NTH_WEEKDAY" && (
+          <div className="grid gap-3 sm:grid-cols-3">
+            <FormField label="Ay" htmlFor="celebration-nth-month" required>
+              <Select id="celebration-nth-month" value={form.month} onChange={(event) => set("month", Number(event.target.value))}>
+                {MONTH_NAMES.map((name, index) => <option key={name} value={index + 1}>{name}</option>)}
+              </Select>
+            </FormField>
+            <FormField label="Kaçıncı hafta" htmlFor="celebration-week" required>
+              <Select id="celebration-week" value={form.weekOfMonth} onChange={(event) => set("weekOfMonth", Number(event.target.value))}>
+                {[1, 2, 3, 4].map((value) => <option key={value} value={value}>{value}.</option>)}
+              </Select>
+            </FormField>
+            <FormField label="Gün" htmlFor="celebration-weekday" required>
+              <Select id="celebration-weekday" value={form.weekday} onChange={(event) => set("weekday", Number(event.target.value))}>
+                {WEEKDAY_NAMES.map((name, index) => <option key={name} value={index}>{name}</option>)}
+              </Select>
+            </FormField>
+          </div>
+        )}
 
-          <SmsMessageEditor value={form.messageTemplate} onChange={(messageTemplate) => set("messageTemplate", messageTemplate)} placeholders={SMS_PLACEHOLDERS} />
-          <Switch checked={form.isActive} onChange={(checked) => set("isActive", checked)} label="Aktif" description="Durdurulan gün hiçbir klinikte gönderilmez; kliniklerin tercihleri korunur." />
-        </div>
-      </Modal>
+        {form.rule === "DATE_OVERRIDES" && (
+          <FormField label="Tarihler" htmlFor="celebration-dates" required hint="Her satıra bir tarih yazın (gg.aa.yyyy). Dini bayramlar gibi her yıl değişen günler için; yeni yılların tarihlerini zamanında ekleyin.">
+            <Textarea id="celebration-dates" rows={5} value={form.datesText} onChange={(event) => set("datesText", event.target.value)} placeholder={"20.03.2026\n09.03.2027"} />
+          </FormField>
+        )}
+        {preview && <p className="text-xs font-semibold text-slate-600">{preview}</p>}
+
+        <ToggleChips<string>
+          label="Kime gönderilsin?"
+          hint="Hiçbiri seçilmezse tüm hastalara; seçilirse yalnız mesleği bunlardan biri olan hastalara gider."
+          size="sm"
+          value={form.targetProfessions}
+          onChange={(value) => set("targetProfessions", value)}
+          options={PROFESSIONS.filter((p) => p !== "Diğer").map((profession) => ({ value: profession, label: profession }))}
+        />
+
+        <SmsMessageEditor value={form.messageTemplate} onChange={(messageTemplate) => set("messageTemplate", messageTemplate)} placeholders={SMS_PLACEHOLDERS} />
+        <Switch checked={form.isActive} onChange={(checked) => set("isActive", checked)} label="Bu gün kliniklerde gönderilebilsin" description="Kapatılan gün hiçbir klinikte gönderilmez; kliniklerin tercihleri korunur." />
+      </FormModal>
     </section>
   );
 }

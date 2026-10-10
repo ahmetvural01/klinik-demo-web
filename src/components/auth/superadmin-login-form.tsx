@@ -1,11 +1,14 @@
 "use client";
 
-import { FormEvent, useState } from "react";
-import Link from "next/link";
-import { ArrowRight, ShieldCheck } from "lucide-react";
-import { showToastSafe } from "@/lib/toast-client";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
-import { ModuleIcon } from "@/components/ui/ModuleIcon";
+import { Callout } from "@/components/ui/Callout";
+import { FormField } from "@/components/ui/FormField";
+import { Input } from "@/components/ui/Input";
+import { AuthLayout, AuthLink } from "@/components/auth/AuthLayout";
+import { PasswordInput } from "@/components/auth/PasswordInput";
+import { TwoFactorStep } from "@/components/auth/TwoFactorStep";
+import { focusFirstEmpty, normalizeIdentityNo, readFormText } from "@/components/auth/form-values";
 
 export function SuperadminLoginForm() {
   const [identityNo, setIdentityNo] = useState("");
@@ -14,160 +17,133 @@ export function SuperadminLoginForm() {
   const [loading, setLoading] = useState(false);
   // Şifre doğrulandı ama TOTP/yedek kod bekleniyor (2FA zaten kuruluysa).
   const [pendingToken, setPendingToken] = useState<string | null>(null);
-  const [code, setCode] = useState("");
+  const formRef = useRef<HTMLFormElement>(null);
+  const identityRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
 
-  const onSubmit = async (event: FormEvent) => {
-    if (loading) { event?.preventDefault(); return; }
+  useEffect(() => {
+    // Hidrasyondan önce yazılan / otomatik doldurulan değerler kaybolmasın (bkz. form-values.ts).
+    const typedIdentity = normalizeIdentityNo(readFormText(formRef.current, "username"));
+    const typedPassword = readFormText(formRef.current, "password");
+    if (typedIdentity) setIdentityNo(typedIdentity);
+    if (typedPassword) setPassword(typedPassword);
+    focusFirstEmpty([identityRef.current, passwordRef.current]);
+  }, []);
+
+  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (loading) return;
+    const form = event.currentTarget;
+    const credentials = {
+      identityNo: normalizeIdentityNo(readFormText(form, "username") || identityNo),
+      password: readFormText(form, "password") || password,
+    };
+    setIdentityNo(credentials.identityNo);
+    setPassword(credentials.password);
+    setError(null);
+    setLoading(true);
+    // Başarılı girişte sayfa değişene kadar düğme yükleniyor kalır (ikinci istek gitmesin).
+    let navigating = false;
     try {
-      event.preventDefault();
-      setLoading(true);
-      setError(null);
-
       const res = await fetch("/api/auth/superadmin/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ identityNo, password }),
+        body: JSON.stringify(credentials),
       });
-
       const data = await res.json().catch(() => ({}));
-
       if (!res.ok) {
-        const msg = data.message || "Giriş başarısız";
-        setError(msg);
-        try { showToastSafe({ title: 'Hata', message: msg, type: 'error' }); } catch {}
+        setError(data.message || "Giriş yapılamadı.");
         return;
       }
-
       if (data.requiresTwoFactor) {
         setPendingToken(data.pendingToken);
         return;
       }
-
+      navigating = true;
       window.location.href = "/superadmin/panel";
-
     } catch {
+      navigating = false;
       setError("Bağlantı kurulamadı. Bilgilerinizi kontrol edip yeniden deneyin.");
     } finally {
-      setLoading(false);
+      if (!navigating) setLoading(false);
     }
   };
 
-  const onSubmitCode = async (event: FormEvent) => {
-    if (loading) { event?.preventDefault(); return; }
+  const onSubmitCode = async (code: string) => {
+    if (!pendingToken || loading) return;
+    setError(null);
+    setLoading(true);
+    let navigating = false;
     try {
-      event.preventDefault();
-      if (!pendingToken || code.trim().length < 6) return;
-      setLoading(true);
-      setError(null);
-
       const res = await fetch("/api/auth/superadmin/verify-2fa", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pendingToken, code: code.trim() }),
+        body: JSON.stringify({ pendingToken, code }),
       });
       const data = await res.json().catch(() => ({}));
-
       if (!res.ok) {
-        const msg = data.message || "Kod hatalı";
-        setError(msg);
-        try { showToastSafe({ title: 'Hata', message: msg, type: 'error' }); } catch {}
+        setError(data.message || "Kod hatalı.");
         return;
       }
-
+      navigating = true;
       window.location.href = "/superadmin/panel";
-
     } catch {
+      navigating = false;
       setError("Bağlantı kurulamadı. Bilgilerinizi kontrol edip yeniden deneyin.");
     } finally {
-      setLoading(false);
+      if (!navigating) setLoading(false);
     }
   };
 
+  const links = <AuthLink href="/klinik/giris">Klinik girişi</AuthLink>;
+
+  if (pendingToken) {
+    return (
+      <AuthLayout variant="platform" links={links}>
+        <TwoFactorStep
+          loading={loading}
+          error={error}
+          onSubmit={onSubmitCode}
+          onBack={() => { setPendingToken(null); setError(null); }}
+        />
+      </AuthLayout>
+    );
+  }
+
   return (
-    <main className="auth-shell auth-shell-dark flex min-h-screen items-center justify-center p-4">
-      {pendingToken ? (
-        <form method="post" onSubmit={onSubmitCode} className="auth-panel auth-panel-dark w-full max-w-md p-7 text-white">
-          <div className="auth-brand-row mb-6">
-            <span className="auth-panel-icon auth-panel-icon-dark"><ShieldCheck className="h-5 w-5" /></span>
-            <div>
-            <p className="auth-eyebrow auth-eyebrow-dark">İki faktörlü doğrulama</p>
-            <h1 className="mt-2 text-3xl font-black">Doğrulama Kodu</h1>
-            <p className="mt-1 text-sm text-slate-300">Kimlik doğrulayıcı uygulamanızdaki 6 haneli kodu veya bir yedek kodu girin.</p>
-            </div>
-          </div>
-
-          <label className="auth-label auth-label-dark mb-4 block text-sm font-semibold">
-            Kod
-            <input
-              className="auth-input auth-input-dark mt-1 w-full px-3 py-2.5 text-center text-lg tracking-widest"
-              value={code}
-              autoComplete="one-time-code"
-              onChange={(e) => setCode(e.target.value)}
-              autoFocus
-              required
-            />
-          </label>
-
-          {error && <p role="alert" className="auth-status auth-status-error-dark mb-3 text-sm">{error}</p>}
-
-          <Button type="submit" loading={loading} fullWidth icon={ArrowRight} className="auth-submit-dark">
-            {loading ? "Doğrulanıyor..." : "Doğrula ve Giriş Yap"}
-          </Button>
-          <Button
-            type="button" variant="ghost"
-            onClick={() => { setPendingToken(null); setCode(""); setError(null); }}
-            fullWidth className="auth-back-dark mt-3"
-          >
-            Geri dön
-          </Button>
-        </form>
-      ) : (
-        <form method="post" onSubmit={onSubmit} className="auth-panel auth-panel-dark w-full max-w-md p-7 text-white">
-          <div className="auth-brand-row mb-6">
-            <span className="auth-panel-icon auth-panel-icon-dark"><ModuleIcon module="settings" size="md" /></span>
-            <div>
-            <p className="auth-eyebrow auth-eyebrow-dark">Platform yönetimi</p>
-            <h1 className="mt-2 text-3xl font-black">Süperadmin Girişi</h1>
-            <p className="mt-1 text-sm text-slate-300">Kurumları ve platformu yönetmek için süperadmin hesabınızla giriş yapın.</p>
-            </div>
-          </div>
-
-          <label className="auth-label auth-label-dark mb-4 block text-sm font-semibold">
-            TC Kimlik No
-            <input
-              className="auth-input auth-input-dark mt-1 w-full px-3 py-2.5 text-sm"
-              value={identityNo}
-              autoComplete="username"
-              inputMode="numeric"
-              maxLength={11}
-              onChange={(e) => setIdentityNo(e.target.value)}
-              placeholder="11 haneli"
-              required
-            />
-          </label>
-
-          <label className="auth-label auth-label-dark mb-4 block text-sm font-semibold">
-            Şifre
-            <input
-              className="auth-input auth-input-dark mt-1 w-full px-3 py-2.5 text-sm"
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
-          </label>
-
-          {error && <p role="alert" className="auth-status auth-status-error-dark mb-3 text-sm">{error}</p>}
-
-          <Button type="submit" loading={loading} fullWidth icon={ArrowRight} className="auth-submit-dark">
-            {loading ? "Doğrulanıyor..." : "Sisteme Giriş"}
-          </Button>
-          <Link href="/klinik/giris" className="mt-4 block text-center text-sm font-semibold text-slate-300 hover:text-white">
-            Klinik paneline giriş
-          </Link>
-        </form>
-      )}
-    </main>
+    <AuthLayout variant="platform" links={links}>
+      <form ref={formRef} method="post" onSubmit={onSubmit} className="space-y-4">
+        <div>
+          <p className="text-xs font-bold text-slate-500">Platform yönetimi</p>
+          <h1 className="mt-1 font-display text-xl font-extrabold text-slate-900">Süperadmin girişi</h1>
+        </div>
+        <FormField label="TC kimlik no" required>
+          <Input
+            ref={identityRef}
+            name="username"
+            value={identityNo}
+            onChange={(event) => setIdentityNo(normalizeIdentityNo(event.target.value))}
+            inputMode="numeric"
+            autoComplete="username"
+            placeholder="11 haneli"
+            required
+          />
+        </FormField>
+        <FormField label="Şifre" required>
+          <PasswordInput
+            ref={passwordRef}
+            name="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            autoComplete="current-password"
+            required
+          />
+        </FormField>
+        {error && <Callout tone="critical" role="alert">{error}</Callout>}
+        <Button type="submit" loading={loading} fullWidth>
+          {loading ? "Giriş yapılıyor…" : "Giriş yap"}
+        </Button>
+      </form>
+    </AuthLayout>
   );
 }

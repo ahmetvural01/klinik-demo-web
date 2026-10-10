@@ -1,27 +1,53 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import dynamic from "next/dynamic";
 import { usePathname, useSearchParams } from "next/navigation";
-import { Send } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { Callout, type CalloutTone } from "@/components/ui/Callout";
+import { ListRowSkeleton } from "@/components/ui/ListSkeleton";
+import { LoadErrorState } from "@/components/ui/LoadErrorState";
 import { PageHeader, type PageHeaderStat } from "@/components/ui/PageHeader";
+import { PageSkeleton, Skeleton } from "@/components/ui/PageSkeleton";
+import { Section } from "@/components/ui/Section";
 import { Tabs, useTabParam, type TabItem } from "@/components/ui/Tabs";
 import { usePermissions } from "@/components/auth/PermissionProvider";
-import { useCommunicationStatus } from "@/components/sms/communication-status";
-import { formatCount } from "@/components/sms/communication-labels";
+import {
+  useCelebrationDays,
+  useCommunicationStatus,
+  useMessageTemplates,
+  type AutomationState,
+} from "@/components/sms/communication-status";
+import { SMS_CREDIT_REQUEST_HREF, formatCount } from "@/components/sms/communication-labels";
 import type { PickedPatient } from "@/components/patient/PatientPicker";
 import SendTab from "./_tabs/SendTab";
-import HistoryTab from "./_tabs/HistoryTab";
-import AutomationsTab from "./_tabs/AutomationsTab";
-import SettingsTab from "./_tabs/SettingsTab";
+
+// En sık açılan bölüm (Mesaj gönder) sayfayla gelir; diğerleri yalnız
+// açılınca indirilir (sayfa paketinden ~4 sekmenin hepsi ilk açılışta iniyordu).
+const listSkeleton = (rows: number) => (
+  <Section padding="none"><ListRowSkeleton variant="row" leading="icon" rows={rows} /></Section>
+);
+const AutomationsTab = dynamic(() => import("./_tabs/AutomationsTab"), { loading: () => listSkeleton(10) });
+const HistoryTab = dynamic(() => import("./_tabs/HistoryTab"), { loading: () => <PageSkeleton header={false} toolbar body="table" rows={8} /> });
+const SettingsTab = dynamic(() => import("./_tabs/SettingsTab"), { loading: () => listSkeleton(3) });
 
 type CommunicationTab = "gonder" | "gecmis" | "otomatik" | "ayarlar";
 
 const TAB_LABELS: Record<CommunicationTab, string> = {
-  gonder: "Mesaj Gönder",
-  gecmis: "Gönderim Geçmişi",
-  otomatik: "Otomatik Mesajlar",
-  ayarlar: "Ayarlar",
+  gonder: "Mesaj gönder",
+  gecmis: "Gönderim geçmişi",
+  otomatik: "Otomatik mesajlar",
+  // Genel "Ayarlar" sayfasıyla karışmasın; sekme kanal seçimini ve krediyi yönetir.
+  ayarlar: "Kanal ve kredi",
+};
+
+// Telefonda (<640 px) dört sekme ekrana sığsın: uzun adlar kısalır
+// ("Gönderim geçmişi" ve "Kanal ve kredi" ekran dışında kalıyordu). Kısa ad
+// CSS ile seçilir (Tabs shortLabel): ilk karede uzun ad görünüp kısalmaz.
+const TAB_SHORT_LABELS: Partial<Record<CommunicationTab, string>> = {
+  otomatik: "Otomatik",
+  gecmis: "Geçmiş",
+  ayarlar: "Kanal",
 };
 
 // Panelde WhatsApp sohbet ekranı yok (klinik sahibinin kararı): gelen mesajlar
@@ -34,10 +60,12 @@ const TAB_ALIASES: Record<string, { tab: CommunicationTab; anchor?: string }> = 
   kayitlar: { tab: "gecmis" },
   toplu: { tab: "gonder" },
   sablonlar: { tab: "otomatik" },
-  "kutlama-gunleri": { tab: "otomatik", anchor: "ozel-gunler" },
+  "kutlama-gunleri": { tab: "otomatik" },
   baglanti: { tab: "ayarlar", anchor: "whatsapp-baglanti" },
   whatsapp: { tab: "ayarlar", anchor: "whatsapp-baglanti" },
 };
+
+type PageNotice = { tone: CalloutTone; title: string; text: string; action?: ReactNode };
 
 export default function SmsPage() {
   const pathname = usePathname();
@@ -53,6 +81,7 @@ export default function SmsPage() {
   const canManageSettings = canWriteSms && can("settings:read") && can("settings:write");
   const canManageChannel = canManageSettings && canWriteWhatsapp;
   const canResetTexts = canWriteSms && (!whatsappFeature || canWriteWhatsapp);
+  const canResendConsent = can("patients:write");
   const canSend = canWriteSms || canBulk;
 
   const visibleTabs = useMemo(() => TAB_ORDER.filter((key) => (
@@ -87,25 +116,73 @@ export default function SmsPage() {
     setMountedTabs((current) => (current.has(tab) ? current : new Set([...current, tab])));
   }, [tab]);
 
-  const { status, reload: reloadStatus } = useCommunicationStatus();
+  const { status, loaded: statusLoaded, error: statusError, reload: reloadStatus, patch: patchStatus } = useCommunicationStatus();
+  // Metinler ve özel gün kataloğu sayfada BİR kez yüklenir (Mesaj gönder ve
+  // Otomatik mesajlar ortak kullanır); yalnız bu sekmelerden biri açılınca.
+  const needsTexts = mountedTabs.has("gonder") || mountedTabs.has("otomatik");
+  const templates = useMessageTemplates(needsTexts);
+  const celebrations = useCelebrationDays(needsTexts);
 
-  const initialPatient = useMemo<PickedPatient | null>(() => {
-    const id = searchParams.get("patientId");
-    if (!id) return null;
-    return { id, fullName: searchParams.get("patientName") || "Seçilen hasta" };
-  }, [searchParams]);
+  // Hasta dosyasından gelen bağlantı: nesne yalnız adres değişince yenilenir.
+  const patientIdParam = searchParams.get("patientId") || "";
+  const patientNameParam = searchParams.get("patientName") || "";
+  const initialPatient = useMemo<PickedPatient | null>(() => (
+    patientIdParam ? { id: patientIdParam, fullName: patientNameParam || "Seçilen hasta" } : null
+  ), [patientIdParam, patientNameParam]);
 
+  const sms = status?.sms ?? null;
+  const lowCredit = Boolean(sms && sms.balance > 0 && sms.balance < sms.lowBalanceThreshold);
+  const noCredit = Boolean(sms && sms.balance <= 0);
+
+  // Durum bilgisi tek yerde: kredi ve WhatsApp başlıkta; "Kanal ve kredi"
+  // sekmesinde ayrıntısıyla durduğu için orada başlıkta tekrar yazılmaz.
+  // Değer gelmeden önce yer tutucu: başlık sonradan kaymaz, "0" görünmez.
   const stats: PageHeaderStat[] = [];
-  if (status?.sms) {
-    const low = status.sms.balance < status.sms.lowBalanceThreshold;
-    stats.push({ label: "SMS", value: status.sms.enabled ? "Açık" : "Kapalı", color: status.sms.enabled ? "text-emerald-700" : "text-red-700" });
-    stats.push({ label: "Kalan kredi", value: formatCount(status.sms.balance), color: low ? "text-red-700" : undefined });
-  }
-  if (status?.whatsapp) {
-    stats.push({ label: "WhatsApp", value: status.whatsapp.connected ? "Bağlı" : "Bağlı değil", color: status.whatsapp.connected ? "text-emerald-700" : "text-slate-600" });
+  if (tab !== "ayarlar") {
+    if (canReadSms && (sms || !statusLoaded)) {
+      stats.push({
+        label: "Kalan kredi",
+        value: sms ? `${formatCount(sms.balance)}${noCredit ? " (bitti)" : lowCredit ? " (az)" : ""}` : <Skeleton className="inline-block h-3 w-10 align-middle" />,
+        color: noCredit || lowCredit ? "text-red-700" : undefined,
+      });
+    }
+    if (canReadWhatsapp && (status?.whatsapp || !statusLoaded)) {
+      stats.push({
+        label: "WhatsApp",
+        value: status?.whatsapp ? (status.whatsapp.connected ? "Bağlı" : "Bağlı değil") : <Skeleton className="inline-block h-3 w-12 align-middle" />,
+        color: status?.whatsapp?.connected ? "text-emerald-700" : status?.whatsapp ? "text-slate-600" : undefined,
+      });
+    }
   }
 
-  const tabItems: TabItem<CommunicationTab>[] = visibleTabs.map((key) => ({ key, label: TAB_LABELS[key] }));
+  // İstisnai durum TEK şeritte (öncelik sırasıyla); "her şey yolunda"yken hiçbir şey görünmez.
+  // "Kanal ve kredi" sekmesi bu durumları kendi satırlarında gösterir; orada şerit çıkmaz.
+  const goToSettings = canManageSettings && tab !== "ayarlar" && visibleTabs.includes("ayarlar")
+    ? <Button variant="secondary" size="sm" onClick={() => setTab("ayarlar")}>Kanal ve kredi</Button>
+    : undefined;
+  const notice: PageNotice | null = (() => {
+    if (!status || tab === "ayarlar") return null;
+    if (sms && !sms.enabled) {
+      return { tone: "critical", title: "SMS gönderimi kapalı", text: canManageSettings ? "Hatırlatmalar dahil hiçbir SMS gitmez." : "Hatırlatmalar dahil hiçbir SMS gitmez. Açmayı klinik yöneticisi yapar.", action: goToSettings };
+    }
+    if (noCredit) {
+      return { tone: "critical", title: "SMS krediniz bitti", text: "Kredi yüklenene kadar SMS'ler gitmez.", action: canManageSettings ? <Button variant="secondary" size="sm" href={SMS_CREDIT_REQUEST_HREF}>Kredi iste</Button> : undefined };
+    }
+    if (lowCredit) {
+      return { tone: "warning", title: "SMS krediniz azaldı", text: "Bitince SMS'ler gitmez.", action: canManageSettings ? <Button variant="secondary" size="sm" href={SMS_CREDIT_REQUEST_HREF}>Kredi iste</Button> : undefined };
+    }
+    if (status.whatsapp && !status.whatsapp.connected && status.defaultChannel === "WHATSAPP") {
+      return status.whatsappSmsFallback
+        ? { tone: "warning", title: "WhatsApp bağlı değil", text: "Mesajlar SMS ile gidiyor.", action: goToSettings }
+        : { tone: "critical", title: "WhatsApp bağlı değil", text: "Kanal “Yalnız WhatsApp” olduğu için mesajlar gitmiyor.", action: goToSettings };
+    }
+    if (!status.consentLink.ready && canManageSettings) {
+      return { tone: "critical", title: "İzin bağlantısı hastanın telefonunda açılmıyor", text: "Yeni hastalar SMS izni veremez; sistem yöneticinize bildirin." };
+    }
+    return null;
+  })();
+
+  const tabItems: TabItem<CommunicationTab>[] = visibleTabs.map((key) => ({ key, label: TAB_LABELS[key], shortLabel: TAB_SHORT_LABELS[key] }));
 
   const panel = (key: CommunicationTab, content: ReactNode) => (
     mountedTabs.has(key) && visibleTabs.includes(key) ? (
@@ -115,43 +192,50 @@ export default function SmsPage() {
     ) : null
   );
 
+  const onAutomationsChange = (next: AutomationState) => patchStatus((current) => ({ ...current, automations: next }));
+
   return (
     <div className="space-y-4">
-      <PageHeader
-        icon="sms"
-        title="İletişim"
-        description="Hastalara WhatsApp veya SMS ile mesaj gönderin, otomatik mesajları yönetin."
-        stats={stats}
-        actions={canSend && tab !== "gonder" ? <Button icon={Send} onClick={() => setTab("gonder")}>Mesaj gönder</Button> : undefined}
-      />
+      <PageHeader icon="sms" title="İletişim" stats={stats} />
 
       {tabItems.length > 1 && (
         <Tabs ariaLabel="İletişim bölümleri" items={tabItems} value={tab} onChange={setTab} panelIdPrefix="iletisim" />
       )}
 
+      {statusError && !status && (
+        <LoadErrorState compact message={statusError} onRetry={() => void reloadStatus()} />
+      )}
+      {notice && (
+        <Callout tone={notice.tone} title={notice.title} action={notice.action}>{notice.text}</Callout>
+      )}
+
       {panel("gonder", (
         <SendTab
           status={status}
+          templates={templates}
+          celebrations={celebrations}
           canSingle={canWriteSms}
           canBulk={canBulk}
           canReadSms={canReadSms}
           canWriteWhatsapp={canWriteWhatsapp}
           canDeleteTexts={canResetTexts}
+          canResendConsent={canResendConsent}
           initialPatient={initialPatient}
           onSent={() => void reloadStatus()}
         />
       ))}
-      {panel("gecmis", <HistoryTab showChannel={canReadWhatsapp} canResendConsent={can("patients:write")} />)}
+      {panel("gecmis", <HistoryTab showChannel={canReadWhatsapp} canResendConsent={canResendConsent} />)}
       {panel("otomatik", (
         <AutomationsTab
           status={status}
+          templates={templates}
+          celebrations={celebrations}
           canManageAutomations={canManageSettings}
           canWriteSms={canWriteSms}
-          canReadWhatsapp={canReadWhatsapp}
           canWriteWhatsapp={canWriteWhatsapp}
           canResetTexts={canResetTexts}
           canToggleCelebrations={canBulk}
-          onSettingsSaved={() => void reloadStatus()}
+          onAutomationsChange={onAutomationsChange}
         />
       ))}
       {panel("ayarlar", (
@@ -160,7 +244,8 @@ export default function SmsPage() {
           canManageSettings={canManageSettings}
           canManageChannel={canManageChannel}
           canManageWhatsappConnection={canManageWhatsappConnection}
-          onChanged={() => void reloadStatus()}
+          onStatusChange={patchStatus}
+          onConnectionChanged={() => void reloadStatus()}
         />
       ))}
     </div>

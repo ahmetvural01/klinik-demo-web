@@ -1,14 +1,17 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Modal } from "@/components/ui/Modal";
-import { Button } from "@/components/ui/Button";
+import { FormModal } from "@/components/ui/FormModal";
 import { ChoiceCards } from "@/components/ui/ChoiceCards";
-import { FormErrorBanner, FormField } from "@/components/ui/FormField";
+import { FormField } from "@/components/ui/FormField";
 import { Input } from "@/components/ui/Input";
+import { MoneyInput } from "@/components/ui/MoneyInput";
+import { Callout } from "@/components/ui/Callout";
+import { formatDateText } from "@/components/ui/Money";
+import { ManagerRequestButton } from "@/components/takip/ManagerRequestButton";
 import { showToastSafe } from "@/lib/toast-client";
 import { formatCurrency } from "@/lib/format";
-import { formatDateText } from "@/components/ui/Money";
+import { moneyInputError, toMoneyValue } from "@/lib/money-input";
 import {
   expiryState,
   formatQuantity,
@@ -21,13 +24,20 @@ import {
 
 type MoveType = "CIKIS" | "IMHA" | "GIRIS";
 
-type LotPreview = { id: string; lotNo?: string | null; expiresAt?: string | null; receivedAt: string; quantityRemaining: number; status: string };
+/** Çıkış önizlemesi için parti bilgisi (ürün detayından gelir ya da burada okunur). */
+export type StockLotPreview = { id: string; lotNo?: string | null; expiresAt?: string | null; receivedAt: string; quantityRemaining: number; status: string };
+
+const TYPE_HINT: Record<MoveType, string> = {
+  CIKIS: "Tedavide kullanılan miktar stoktan düşülür.",
+  IMHA: "SKT'si geçen, kırılan ya da atılan miktar düşülür.",
+  GIRIS: "Sayım fazlası ya da hatalı çıkışın geri alınması.",
+};
 
 /**
  * Çıkışın hangi partilerden düşeceğini sunucudaki sırayla (en yakın SKT önce,
  * SKT'siz en son, sonra geliş tarihi) tahmin eder; yalnız bilgilendirme içindir.
  */
-function previewAllocation(lots: LotPreview[], quantity: number) {
+function previewAllocation(lots: StockLotPreview[], quantity: number) {
   const usable = lots
     .filter((lot) => lot.status === "AKTIF" && lot.quantityRemaining > 0)
     .sort((a, b) => {
@@ -36,7 +46,7 @@ function previewAllocation(lots: LotPreview[], quantity: number) {
       if (b.expiresAt) return 1;
       return a.receivedAt.localeCompare(b.receivedAt);
     });
-  const result: { lot: LotPreview; used: number }[] = [];
+  const result: { lot: StockLotPreview; used: number }[] = [];
   let remaining = quantity;
   for (const lot of usable) {
     if (remaining <= 0) break;
@@ -54,18 +64,22 @@ type StockMovementModalProps = {
   initialType?: MoveType;
   /** Maliyet alanı (finance:read); yoksa giriş ortalama maliyetle değerlenir. */
   canSeeCost?: boolean;
+  /**
+   * Ürün detayından açılınca partiler zaten yüklüdür; verilirse ikinci kez
+   * istenmez. Verilmezse (listeden açılış) parti önizlemesi burada okunur.
+   */
+  lots?: StockLotPreview[] | null;
   onClose: () => void;
   onSaved: (item: StockItem) => void;
 };
 
 /**
- * Stok hareketi: kullanım çıkışı veya sayım fazlası / iade girişi. Önceden
- * pencere yalnız "Stok Çıkışı"ydı; yanlış çıkışı geri almanın ya da sayım
- * farkını girmenin arayüzde yolu yoktu (API destekliyordu). Aynı istek
- * anahtarı ağ hatası sonrası "Kaydet"e yeniden basılınca miktarın ikinci kez
- * değişmesini önler.
+ * Stok hareketi: kullanım çıkışı, imha/fire veya sayım fazlası/iade girişi.
+ * Asistanın en sık işi "2 kartuş kullandım": miktar alanı açılışta odaktadır,
+ * Enter kaydeder. Aynı istek anahtarı ağ hatası sonrası "Kaydet"e yeniden
+ * basılınca miktarın ikinci kez değişmesini önler.
  */
-export function StockMovementModal({ open, item, initialType = "CIKIS", canSeeCost = true, onClose, onSaved }: StockMovementModalProps) {
+export function StockMovementModal({ open, item, initialType = "CIKIS", canSeeCost = true, lots: lotsProp, onClose, onSaved }: StockMovementModalProps) {
   const [type, setType] = useState<MoveType>(initialType);
   const [quantity, setQuantity] = useState("");
   const [note, setNote] = useState("");
@@ -73,39 +87,45 @@ export function StockMovementModal({ open, item, initialType = "CIKIS", canSeeCo
   const [errors, setErrors] = useState<{ quantity?: string; note?: string; unitCost?: string }>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [lots, setLots] = useState<LotPreview[]>([]);
+  const [fetchedLots, setFetchedLots] = useState<StockLotPreview[]>([]);
   const requestKeyRef = useRef("");
   const itemId = item?.id || "";
+  const hasLotsProp = Array.isArray(lotsProp);
 
   useEffect(() => {
-    if (!open || !itemId) return;
+    if (!open || !itemId || hasLotsProp) return;
     let cancelled = false;
-    setLots([]);
+    setFetchedLots([]);
     fetch(`/api/stock/${itemId}`, { cache: "no-store" })
       .then((response) => (response.ok ? response.json() : null))
-      .then((body) => { if (!cancelled && Array.isArray(body?.lots)) setLots(body.lots); })
+      .then((body) => { if (!cancelled && Array.isArray(body?.lots)) setFetchedLots(body.lots); })
       .catch(() => { /* parti önizlemesi yalnız bilgi amaçlı */ });
     return () => { cancelled = true; };
-  }, [open, itemId]);
+  }, [open, itemId, hasLotsProp]);
 
+  // Önerilen maliyet son çizimden okunur; form yalnız pencere açılırken (ya da
+  // başka ürüne geçince) sıfırlanır — açıkken liste yenilenince yazılanlar silinmez.
+  const averageCostRef = useRef<number | null | undefined>(null);
+  useEffect(() => { averageCostRef.current = item?.averageUnitPrice; });
   useEffect(() => {
     if (!open) return;
     setType(initialType);
     setQuantity("");
     setNote("");
-    setUnitCost(item?.averageUnitPrice ? String(item.averageUnitPrice) : "");
+    setUnitCost(toMoneyValue(averageCostRef.current) ?? "");
     setErrors({});
     setFormError(null);
     requestKeyRef.current = newRequestKey("stock-move");
-  }, [open, initialType, item]);
+  }, [open, initialType, itemId]);
 
   if (!item) return null;
+  const lots = hasLotsProp ? (lotsProp as StockLotPreview[]) : fetchedLots;
   const maxOut = maxStockOut(item);
   const gap = lotGap(item);
   const isOut = type !== "GIRIS";
   const previewQuantity = /^\d+$/.test(quantity.trim()) ? Math.min(Number(quantity), maxOut) : 0;
   const allocation = isOut && previewQuantity > 0 ? previewAllocation(lots, previewQuantity) : [];
-  const expiredUsed = allocation.filter((entry) => expiryState(entry.lot.expiresAt) === "expired");
+  const expiredUsed = allocation.some((entry) => expiryState(entry.lot.expiresAt) === "expired");
 
   const submit = async () => {
     if (saving) return;
@@ -120,7 +140,10 @@ export function StockMovementModal({ open, item, initialType = "CIKIS", canSeeCo
     }
     if (type === "GIRIS" && !note.trim()) next.note = "Girişin nedenini yazın (ör. sayım fazlası, hatalı çıkışın geri alınması).";
     if (type === "IMHA" && !note.trim()) next.note = "İmha nedenini yazın (ör. son kullanma tarihi geçti, kutu hasarlı).";
-    if (type === "GIRIS" && unitCost.trim() !== "" && (!Number.isFinite(Number(unitCost)) || Number(unitCost) < 0)) next.unitCost = "Geçerli bir tutar girin.";
+    if (type === "GIRIS" && canSeeCost && unitCost.trim() !== "") {
+      const costError = moneyInputError(unitCost, { allowZero: true });
+      if (costError) next.unitCost = costError;
+    }
     setErrors(next);
     if (Object.values(next).some(Boolean)) return;
 
@@ -136,7 +159,7 @@ export function StockMovementModal({ open, item, initialType = "CIKIS", canSeeCo
           type: type === "GIRIS" ? "GIRIS" : "CIKIS",
           quantity: Number(raw),
           note: type === "IMHA" ? `İmha: ${note.trim()}` : note.trim() || undefined,
-          ...(type === "GIRIS" && canSeeCost && unitCost.trim() !== "" ? { unitPrice: Number(unitCost) } : {}),
+          ...(type === "GIRIS" && canSeeCost && unitCost.trim() !== "" ? { unitPrice: unitCost } : {}),
         }),
       });
       const body = await response.json().catch(() => null);
@@ -145,7 +168,7 @@ export function StockMovementModal({ open, item, initialType = "CIKIS", canSeeCo
       }
       requestKeyRef.current = "";
       showToastSafe({
-        title: type === "GIRIS" ? "Giriş kaydedildi" : type === "IMHA" ? "İmha kaydedildi" : "Çıkış kaydedildi",
+        title: type === "GIRIS" ? "Giriş kaydedildi" : type === "IMHA" ? "İmha kaydedildi" : "Stoktan düşüldü",
         message: `${item.name}: ${isOut ? "−" : "+"}${formatQuantity(Number(raw), item.unit)} · kalan ${formatQuantity(Number(body?.quantity ?? 0), item.unit)}`,
         type: "success",
         icon: "box",
@@ -161,97 +184,101 @@ export function StockMovementModal({ open, item, initialType = "CIKIS", canSeeCo
   };
 
   return (
-    <Modal
+    <FormModal
       open={open}
       onClose={onClose}
       module="box"
       title="Stok hareketi"
       description={`${item.name} · Mevcut ${formatQuantity(item.quantity, item.unit)}`}
-      footer={(
-        <>
-          <Button variant="secondary" onClick={onClose} disabled={saving}>Vazgeç</Button>
-          <Button onClick={() => void submit()} loading={saving}>Kaydet</Button>
-        </>
-      )}
+      onSubmit={() => submit()}
+      submitting={saving}
+      error={formError}
     >
-      <div className="space-y-4">
-        <FormErrorBanner message={formError} />
-        <ChoiceCards<MoveType>
-          label="Hareket"
-          value={type}
-          onChange={(value) => { setType(value); setErrors({}); }}
-          columns={3}
-          options={[
-            { value: "CIKIS", label: "Kullanım", description: "Tedavide kullanıldı." },
-            { value: "IMHA", label: "İmha / fire", description: "SKT geçti, kırıldı, atıldı." },
-            { value: "GIRIS", label: "Giriş", description: "Sayım fazlası, hatalı çıkışın geri alınması." },
-          ]}
-        />
-        {isOut && gap > 0 && (
-          <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
-            Bu ürünün {formatQuantity(gap, item.unit)} kadarının parti (lot) kaydı yok; çıkış yalnız partili {formatQuantity(maxOut, item.unit)} için yapılabilir.
-            Kalan miktar için yöneticinize bildirin.
-          </p>
-        )}
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <FormField
-            label="Miktar"
-            htmlFor="stock-move-quantity"
-            required
-            error={errors.quantity}
-            hint={isOut ? `En fazla ${formatQuantity(maxOut, item.unit)}` : `Birim: ${item.unit}`}
-          >
-            <Input
-              id="stock-move-quantity"
-              type="number"
-              inputMode="numeric"
-              min="1"
-              step="1"
-              max={isOut ? maxOut : undefined}
-              value={quantity}
-              onChange={(event) => { setQuantity(event.target.value); setErrors((current) => ({ ...current, quantity: undefined })); }}
-              data-autofocus
+      <ChoiceCards<MoveType>
+        label="Hareket"
+        variant="pills"
+        value={type}
+        onChange={(value) => { setType(value); setErrors({}); }}
+        hint={TYPE_HINT[type]}
+        options={[
+          { value: "CIKIS", label: "Kullanım" },
+          { value: "IMHA", label: "İmha / fire" },
+          { value: "GIRIS", label: "Giriş" },
+        ]}
+      />
+      {isOut && gap > 0 && (
+        <Callout
+          tone="warning"
+          compact
+          action={(
+            <ManagerRequestButton
+              label="Yöneticiye bildir"
+              taskTitle={`Partisiz stok için açılış partisi gerekli: ${item.name}`}
+              taskDetails={`${formatQuantity(gap, item.unit)} için parti (lot) kaydı yok; bu miktardan stok çıkışı yapılamıyor.`}
+              taskType="PARCA_SIPARIS"
             />
-          </FormField>
-          {type === "GIRIS" && canSeeCost && (
-            <FormField
-              label="Birim maliyet (₺)"
-              htmlFor="stock-move-cost"
-              error={errors.unitCost}
-              hint={item.averageUnitPrice ? `Ortalama maliyet önerildi (${formatCurrency(item.averageUnitPrice)}).` : "Bilmiyorsanız boş bırakın."}
-            >
-              <Input id="stock-move-cost" type="number" inputMode="decimal" min="0" step="0.01" value={unitCost} onChange={(event) => setUnitCost(event.target.value)} />
-            </FormField>
           )}
-        </div>
-        {allocation.length > 0 && (
-          <div className={`rounded-lg border px-3 py-2 text-xs leading-5 ${expiredUsed.length > 0 && type === "CIKIS" ? "border-amber-200 bg-amber-50 text-amber-900" : "border-slate-200 bg-slate-50 text-slate-600"}`}>
-            <p className="font-semibold">Düşülecek parti</p>
-            {allocation.map((entry) => (
-              <p key={entry.lot.id}>
-                {entry.lot.lotNo || "Lot no yok"} · SKT {entry.lot.expiresAt ? formatDateText(entry.lot.expiresAt) : "yok"} · {formatQuantity(entry.used, item.unit)}
-                {expiryState(entry.lot.expiresAt) === "expired" ? " (süresi geçmiş)" : ""}
-              </p>
-            ))}
-            {expiredUsed.length > 0 && type === "CIKIS" && (
-              <p className="mt-1 font-semibold">Süresi geçmiş partiden düşülecek. Ürün hastada kullanılmadıysa “İmha / fire” seçin.</p>
-            )}
-          </div>
-        )}
+        >
+          {formatQuantity(gap, item.unit)} için parti (lot) kaydı yok; çıkış yalnız partili {formatQuantity(maxOut, item.unit)} için yapılabilir. Partisiz stok için açılış partisi gerekli.
+        </Callout>
+      )}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <FormField
-          label={type === "CIKIS" ? "Açıklama" : "Neden"}
-          htmlFor="stock-move-note"
-          required={type !== "CIKIS"}
-          error={errors.note}
+          label="Miktar"
+          htmlFor="stock-move-quantity"
+          required
+          error={errors.quantity}
+          hint={isOut ? `En fazla ${formatQuantity(maxOut, item.unit)}` : `Birim: ${item.unit}`}
         >
           <Input
-            id="stock-move-note"
-            value={note}
-            onChange={(event) => { setNote(event.target.value); setErrors((current) => ({ ...current, note: undefined })); }}
-            placeholder={type === "GIRIS" ? "Ör. Sayımda 2 adet fazla çıktı" : type === "IMHA" ? "Ör. Son kullanma tarihi geçti" : "Ör. Ayşe Yılmaz implant tedavisi"}
+            id="stock-move-quantity"
+            type="number"
+            inputMode="numeric"
+            min="1"
+            step="1"
+            max={isOut ? maxOut : undefined}
+            value={quantity}
+            onChange={(event) => { setQuantity(event.target.value); setErrors((current) => ({ ...current, quantity: undefined })); }}
+            data-autofocus
           />
         </FormField>
+        {type === "GIRIS" && canSeeCost && (
+          <FormField
+            label="Birim maliyet"
+            htmlFor="stock-move-cost"
+            error={errors.unitCost}
+            hint={item.averageUnitPrice ? `Ortalama maliyet önerildi (${formatCurrency(item.averageUnitPrice)}).` : "Bilmiyorsanız boş bırakın."}
+          >
+            <MoneyInput id="stock-move-cost" value={unitCost} onChange={(value) => { setUnitCost(value); setErrors((current) => ({ ...current, unitCost: undefined })); }} />
+          </FormField>
+        )}
       </div>
-    </Modal>
+      {allocation.length > 0 && (
+        <Callout tone={expiredUsed && type === "CIKIS" ? "warning" : "neutral"} compact title="Düşülecek parti">
+          {allocation.map((entry) => (
+            <span key={entry.lot.id} className="block">
+              {entry.lot.lotNo || "Lot no yok"} · SKT {entry.lot.expiresAt ? formatDateText(entry.lot.expiresAt) : "yok"} · {formatQuantity(entry.used, item.unit)}
+              {expiryState(entry.lot.expiresAt) === "expired" ? " (süresi geçmiş)" : ""}
+            </span>
+          ))}
+          {expiredUsed && type === "CIKIS" && (
+            <span className="mt-1 block font-semibold">Süresi geçmiş partiden düşülecek. Ürün hastada kullanılmadıysa “İmha / fire” seçin.</span>
+          )}
+        </Callout>
+      )}
+      <FormField
+        label={type === "CIKIS" ? "Açıklama" : "Neden"}
+        htmlFor="stock-move-note"
+        required={type !== "CIKIS"}
+        error={errors.note}
+      >
+        <Input
+          id="stock-move-note"
+          value={note}
+          onChange={(event) => { setNote(event.target.value); setErrors((current) => ({ ...current, note: undefined })); }}
+          placeholder={type === "GIRIS" ? "Ör. Sayımda 2 adet fazla çıktı" : type === "IMHA" ? "Ör. Son kullanma tarihi geçti" : "Ör. 36 numara kanal tedavisi"}
+        />
+      </FormField>
+    </FormModal>
   );
 }

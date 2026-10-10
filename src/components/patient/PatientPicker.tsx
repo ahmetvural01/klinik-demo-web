@@ -1,14 +1,20 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { UserRound, X } from "lucide-react";
+import { UserRound } from "lucide-react";
+import { Button } from "@/components/ui/Button";
 import { SearchSelect } from "@/components/ui/SearchSelect";
+import { foldTurkish, formatPatientPhone, maskedIdentityLabel, patientAge } from "@/lib/patient-display";
 
 export type PickedPatient = {
   id: string;
   fullName: string;
   tcNo?: string | null;
   phone?: string | null;
+  /** İsteğe bağlı: aynı adlı iki hastayı ayırt etmek için yaş ve ülke kodlu telefon gösterilir. */
+  birthDate?: string | null;
+  phoneCountryCode?: string | null;
+  isForeigner?: boolean | null;
 };
 
 type PatientPickerProps = {
@@ -23,12 +29,47 @@ type PatientPickerProps = {
   "aria-describedby"?: string;
   /** Seçili hastayı değiştirmeye izin verilmesin (ör. hasta dosyasından açılan formlar). */
   locked?: boolean;
+  /**
+   * "finance": finans formlarının araması (tahsilat, taksit planı). Hasta
+   * listesini göremeyen muhasebe rolü de hasta seçebilir; sunucu yalnız ad,
+   * telefon ve TC'nin son 4 hanesini döndürür (sağlık verisi yok).
+   */
+  scope?: "patients" | "finance";
+  /**
+   * Zorunlu alan: arama kutusu ekran okuyucuya "zorunlu" olarak bildirilir.
+   * (FormField as="div" etiketindeki "(zorunlu)" bu kutuya ulaşmaz; kutunun
+   * adı aria-label'dan gelir.)
+   */
+  required?: boolean;
 };
 
 const NEW_OPTION_ID = "__new_patient__";
 
+/** "41 yaş · TC ••••8950 · (0532) 123-4567" — maskeli ("***") değerler yazılmaz. */
 function patientMeta(patient: PickedPatient) {
-  return [patient.tcNo ? `TC ${patient.tcNo}` : "", patient.phone || ""].filter(Boolean).join(" · ");
+  const age = patientAge(patient.birthDate);
+  return [
+    age !== null ? `${age} yaş` : "",
+    maskedIdentityLabel(patient),
+    formatPatientPhone(patient.phone, patient.phoneCountryCode),
+  ].filter(Boolean).join(" · ");
+}
+
+/** Adı aranan sözcükle başlayan hasta üstte; API sonuçları "son eklenen" sırasıyla gelir. */
+function rankByQuery(results: PickedPatient[], term: string) {
+  const folded = foldTurkish(term.trim());
+  if (!folded) return results;
+  const rank = (patient: PickedPatient) => {
+    const name = foldTurkish(patient.fullName);
+    if (name === folded) return 0;
+    if (name.startsWith(folded)) return 1;
+    if (name.split(/\s+/).some((part) => part.startsWith(folded))) return 2;
+    return 3;
+  };
+  return results
+    .map((patient, index) => ({ patient, index, rank: rank(patient) }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map((item) => item.patient);
 }
 
 /**
@@ -48,11 +89,15 @@ export function PatientPicker({
   "aria-label": ariaLabel = "Hasta",
   "aria-describedby": ariaDescribedBy,
   locked = false,
+  scope = "patients",
+  required = false,
 }: PatientPickerProps) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<PickedPatient[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  // "Tekrar dene": aynı arama yeniden yapılır (sayaç etkiyi yeniden çalıştırır).
+  const [retryKey, setRetryKey] = useState(0);
 
   useEffect(() => {
     const term = query.trim();
@@ -62,20 +107,25 @@ export function PatientPicker({
       setError("");
       return;
     }
+    // Yazarken her tuşta istek atılmaz (250 ms); yeni yazı eski isteği iptal
+    // eder, böylece ekrana yalnız SON aramanın sonucu düşer.
     const controller = new AbortController();
     setLoading(true);
     const timer = window.setTimeout(async () => {
       try {
-        const response = await fetch(`/api/patients?q=${encodeURIComponent(term)}&take=10&summary=false`, { cache: "no-store", signal: controller.signal });
+        const url = scope === "finance"
+          ? `/api/patients?mode=finans&q=${encodeURIComponent(term)}&take=10`
+          : `/api/patients?q=${encodeURIComponent(term)}&take=10&summary=false`;
+        const response = await fetch(url, { cache: "no-store", signal: controller.signal });
         const data = await response.json().catch(() => null);
         if (!response.ok) throw new Error(data?.message || "Hasta araması yapılamadı.");
         if (controller.signal.aborted) return;
-        setResults(Array.isArray(data?.patients) ? data.patients : []);
+        setResults(rankByQuery(Array.isArray(data?.patients) ? data.patients : [], term));
         setError("");
       } catch (searchError) {
         if (controller.signal.aborted) return;
         setResults([]);
-        setError(searchError instanceof Error ? searchError.message : "Hasta araması yapılamadı.");
+        setError(searchError instanceof Error && searchError.message !== "Failed to fetch" ? searchError.message : "Hasta araması yapılamadı. Bağlantınızı kontrol edin.");
       } finally {
         if (!controller.signal.aborted) setLoading(false);
       }
@@ -84,26 +134,30 @@ export function PatientPicker({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [query]);
+  }, [query, scope, retryKey]);
 
   if (value) {
+    const meta = patientMeta(value);
     return (
-      <div className="ui-picked-patient flex min-h-10 items-center gap-3 rounded-lg border border-primary/25 bg-primary/[0.04] px-3 py-2">
+      <div className="ui-picked-patient flex min-h-10 items-center gap-3 rounded-lg border border-primary/25 bg-primary/[0.04] px-3 py-1.5">
         <UserRound className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-bold text-slate-900">{value.fullName}</p>
-          {patientMeta(value) && <p className="truncate text-xs text-slate-500">{patientMeta(value)}</p>}
-        </div>
+        {/* <output>: seçici bir <label> içine konduğunda etiketin bağlandığı
+            ilk öğe bu olur. Önceden "Değiştir" düğmesiydi; "Hasta" etiketine,
+            ipucuna ya da hastanın adına tıklamak seçimi siliyordu (denetim E1). */}
+        <output id={id} aria-describedby={ariaDescribedBy} className="block min-w-0 flex-1">
+          <span className="block truncate text-sm font-bold text-slate-900">{value.fullName}</span>
+          {meta && <span className="block truncate text-xs text-slate-500">{meta}</span>}
+        </output>
         {!locked && !disabled && (
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => { onChange(null); setQuery(""); }}
-            className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-white hover:text-slate-900"
-            aria-label={`${value.fullName} seçimini kaldır ve başka hasta ara`}
+            aria-label={`${value.fullName} yerine başka hasta seç`}
+            className="shrink-0"
           >
-            <X className="h-3.5 w-3.5" aria-hidden="true" />
             Değiştir
-          </button>
+          </Button>
         )}
       </div>
     );
@@ -121,14 +175,15 @@ export function PatientPicker({
       id={id}
       aria-label={ariaLabel}
       aria-describedby={ariaDescribedBy}
+      aria-required={required}
       query={query}
       onQueryChange={setQuery}
       options={disabled ? [] : options}
       loading={loading}
       error={error || undefined}
+      onRetry={() => setRetryKey((key) => key + 1)}
       placeholder={placeholder}
       emptyText={query.trim().length < 2 ? "Aramak için en az 2 harf yazın" : "Bu bilgiyle kayıtlı hasta bulunamadı"}
-      className="ui-control"
       onSelect={(option) => {
         if (option.id === NEW_OPTION_ID) {
           onCreateNew?.(query.trim());

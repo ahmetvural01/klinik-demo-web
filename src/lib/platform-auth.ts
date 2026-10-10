@@ -22,17 +22,29 @@ export type PlatformUser = Pick<User, "id" | "role" | "fullName" | "tokenVersion
 
 type Verified = { ok: true; user: User } | { ok: false; response: NextResponse };
 
-export async function verifyPlatformCredentials(request: NextRequest, identityNo: string, password: string): Promise<Verified> {
+export async function verifyPlatformCredentials(
+  request: NextRequest,
+  identityNo: string,
+  password: string,
+  /** Klinik giriş ekranı kendi metinlerini verir: kimliğin platform hesabı olduğu yanıttan anlaşılmasın. */
+  options?: { failureMessage?: string; blockedMessage?: string },
+): Promise<Verified> {
   const attemptKey = `${getClientIpFromHeaders(request.headers)}:${identityNo}`;
   if (await isFailureBlocked(attemptKey, MAX_ATTEMPT)) {
-    return { ok: false, response: NextResponse.json({ message: "Çok fazla hatalı deneme yapıldı. Lütfen daha sonra tekrar deneyin." }, { status: 429 }) };
+    return {
+      ok: false,
+      response: NextResponse.json({ message: options?.blockedMessage ?? "Çok fazla hatalı deneme yapıldı. Lütfen daha sonra tekrar deneyin." }, { status: 429 }),
+    };
   }
 
   const user = await prisma.user.findFirst({ where: { identityNo, role: "SUPERADMIN", isActive: true } });
   const valid = user ? await verifyPassword(password, user.passwordHash) : false;
   if (!user || !valid) {
     await recordFailure(attemptKey, BLOCK_MINUTES * 60_000);
-    return { ok: false, response: NextResponse.json({ message: "Kullanıcı adı veya şifre hatalı" }, { status: 401 }) };
+    return {
+      ok: false,
+      response: NextResponse.json({ message: options?.failureMessage ?? "TC kimlik no veya şifre hatalı." }, { status: 401 }),
+    };
   }
 
   await clearFailures(attemptKey);
@@ -98,7 +110,11 @@ export async function superadminClinicLogin(
   request: NextRequest,
   input: { institution: string; identityNo: string; password: string },
 ) {
-  const verified = await verifyPlatformCredentials(request, input.identityNo, input.password);
+  // Hata ve kilit metinleri klinik girişindekiyle aynı: kimliğin platform hesabı olduğu sızmaz.
+  const verified = await verifyPlatformCredentials(request, input.identityNo, input.password, {
+    failureMessage: "Kurum adı, TC kimlik no veya şifre hatalı.",
+    blockedMessage: "Çok fazla hatalı deneme. 15 dakika bekleyin.",
+  });
   if (!verified.ok) return verified.response;
 
   const clinic = isPlatformLoginName(input.institution) ? null : await findInstitutionByLoginName(input.institution);
@@ -107,7 +123,7 @@ export async function superadminClinicLogin(
   // 2FA açıksa kod sonrası (superadmin/verify-2fa) aynı kliniğe girilir.
   if (verified.user.twoFactorEnabled) return startPendingTwoFactor(verified.user);
 
-  return enterClinic(verified.user, clinic, "Superadmin klinik giris ekranindan giris yapti");
+  return enterClinic(verified.user, clinic, "Süperadmin klinik giriş ekranından giriş yaptı");
 }
 
 /**

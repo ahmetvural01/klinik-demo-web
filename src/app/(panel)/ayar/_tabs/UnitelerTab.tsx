@@ -1,17 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Armchair, Pencil, Plus, Power } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
 import { FormField } from "@/components/ui/FormField";
+import { FormModal } from "@/components/ui/FormModal";
 import { Input } from "@/components/ui/Input";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
-import { Modal } from "@/components/ui/Modal";
 import { showToastSafe } from "@/lib/toast-client";
 import { invalidateCachedGet } from "@/lib/client-cache";
-import { usePermissions } from "@/components/auth/PermissionProvider";
-import { SettingsListHeader } from "./SettingsListHeader";
 
 type ClinicUnit = {
   id: string;
@@ -25,10 +23,14 @@ type UnitForm = { id: string | null; name: string; code: string; isActive: boole
 
 const NETWORK_ERROR = "Bağlantınızı kontrol edin ve tekrar deneyin.";
 
-export default function UnitelerTab() {
-  const { can } = usePermissions();
-  const canWriteSettings = can("settings:write");
+/**
+ * Ayarlar > Randevu > Koltuk / oda (şubeye özel). Aynı kavram önceden beş
+ * farklı adla geçiyordu ("Tedavi alanları", "Tedavi alanı", "Koltuk / oda"…);
+ * her yerde "Koltuk / oda". Silme yok, yalnız pasife alma.
+ */
+export default function KoltukOda({ canWrite, scopeBadge }: { canWrite: boolean; scopeBadge?: ReactNode }) {
   const [items, setItems] = useState<ClinicUnit[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [form, setForm] = useState<UnitForm | null>(null);
@@ -42,11 +44,12 @@ export default function UnitelerTab() {
     try {
       const response = await fetch("/api/clinic-units", { cache: "no-store" });
       const data = await response.json().catch(() => null);
-      if (!response.ok || !Array.isArray(data)) throw new Error(data?.message || "Tedavi alanları yüklenemedi.");
+      if (!response.ok || !Array.isArray(data)) throw new Error(data?.message || "Koltuk / oda listesi yüklenemedi.");
       // Pasif koltuk/odalar listenin sonunda.
       setItems([...data].sort((a: ClinicUnit, b: ClinicUnit) => Number(b.isActive) - Number(a.isActive) || a.name.localeCompare(b.name, "tr")));
+      setLoaded(true);
     } catch (error) {
-      setLoadError(error instanceof Error ? error.message : "Tedavi alanları yüklenemedi.");
+      setLoadError(error instanceof Error ? error.message : "Koltuk / oda listesi yüklenemedi.");
     } finally {
       setLoading(false);
     }
@@ -65,7 +68,7 @@ export default function UnitelerTab() {
     if (!form) return;
     const name = form.name.trim();
     if (name.length < 2) {
-      setFormError("Koltuk / oda adı en az 2 karakter olmalıdır.");
+      setFormError("Ad en az 2 karakter olmalıdır.");
       return;
     }
     setSaving(true);
@@ -80,22 +83,22 @@ export default function UnitelerTab() {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        setFormError(data?.message || "Tedavi alanı kaydedilemedi.");
+        setFormError(data?.message || "Koltuk / oda kaydedilemedi.");
         return;
       }
-      showToastSafe({ message: form.id ? "Tedavi alanı güncellendi." : `${name} eklendi. Randevu formunda seçilebilir.`, type: "success" });
+      showToastSafe({ message: form.id ? `${name} güncellendi.` : `${name} eklendi. Randevu formunda seçilebilir.`, type: "success" });
       invalidateCachedGet("/api/clinic-units");
       setForm(null);
       await load();
     } catch {
-      setFormError(`Tedavi alanı kaydedilemedi. ${NETWORK_ERROR}`);
+      setFormError(`Koltuk / oda kaydedilemedi. ${NETWORK_ERROR}`);
     } finally {
       setSaving(false);
     }
   };
 
   const toggleActive = async (item: ClinicUnit) => {
-    if (actionId) return;
+    if (actionId === item.id) return;
     setActionId(item.id);
     try {
       const response = await fetch("/api/clinic-units", {
@@ -104,109 +107,112 @@ export default function UnitelerTab() {
         body: JSON.stringify({ id: item.id, isActive: !item.isActive }),
       });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data?.message || "Tedavi alanı güncellenemedi.");
+      if (!response.ok) throw new Error(data?.message || "Koltuk / oda güncellenemedi.");
       showToastSafe({ message: item.isActive ? `${item.name} pasife alındı; yeni randevuda seçilemez.` : `${item.name} yeniden kullanıma açıldı.`, type: "success" });
       invalidateCachedGet("/api/clinic-units");
       await load();
     } catch (error) {
-      showToastSafe({ message: error instanceof Error ? error.message : "Tedavi alanı güncellenemedi.", type: "error" });
+      showToastSafe({ message: error instanceof Error ? error.message : "Koltuk / oda güncellenemedi.", type: "error" });
     } finally {
       setActionId(null);
     }
   };
 
-  // Yalnız istisna (pasif) işaretlenir; her satırda "seçilebilir" yazmak gereksizdi.
+  // Yalnız istisna (pasif) işaretlenir.
   const nameCell = (item: ClinicUnit) => (
     <span className="flex min-w-0 flex-wrap items-center gap-2">
       <span className="font-semibold text-slate-800">{item.name}</span>
       {item.code ? <span className="text-xs font-medium text-slate-400">{item.code}</span> : null}
-      {!item.isActive && <Badge tone="neutral">Pasif · randevuda seçilemez</Badge>}
+      {!item.isActive && <Badge tone="neutral">Pasif</Badge>}
     </span>
   );
 
+  // Yalnız işlem süren satır kilitlenir (önceden bir satırda işlem sürerken tüm satırlar kilitleniyordu).
   const rowActions = (item: ClinicUnit) => (
     <div className="flex shrink-0 justify-end gap-1.5">
-      <IconButton icon={Pencil} title="Düzenle" size="sm" disabled={Boolean(actionId)} onClick={() => openForm(item)} />
-      <IconButton icon={Power} title={item.isActive ? "Pasife al" : "Yeniden kullanıma aç"} size="sm" disabled={Boolean(actionId)} onClick={() => void toggleActive(item)} />
+      <IconButton icon={Pencil} title="Düzenle" size="sm" disabled={actionId === item.id} onClick={() => openForm(item)} />
+      <IconButton icon={Power} title={item.isActive ? "Pasife al" : "Yeniden kullanıma aç"} size="sm" disabled={actionId === item.id} onClick={() => void toggleActive(item)} />
     </div>
   );
+
+  const usageText = (item: ClinicUnit) => {
+    const count = item._count?.appointments || 0;
+    return count ? `${count.toLocaleString("tr-TR")} randevu` : "Kullanılmadı";
+  };
 
   const columns: ListTableColumn<ClinicUnit>[] = [
     { key: "name", header: "Koltuk / oda", render: nameCell },
     {
       key: "appointments",
-      header: "Randevu sayısı",
+      header: "Randevu",
       align: "right",
-      render: (item) => <span className="tabular-nums text-slate-600">{item._count?.appointments || 0}</span>,
+      render: (item) => <span className="text-sm tabular-nums text-slate-600">{usageText(item)}</span>,
     },
-    ...(canWriteSettings ? [{ key: "actions", header: "", align: "right" as const, render: rowActions }] : []),
+    ...(canWrite ? [{ key: "actions", header: "", align: "right" as const, render: rowActions }] : []),
   ];
 
   return (
-    <div className="space-y-3">
-      <SettingsListHeader
-        title="Tedavi alanları (koltuk / oda)"
-        description="Aynı saatte aynı koltuğa ikinci randevu verilmesin istiyorsanız koltuk ve odalarınızı ekleyin. Tek koltuklu kliniklerde boş bırakılabilir."
-        action={canWriteSettings ? <Button icon={Plus} onClick={() => openForm()}>Yeni tedavi alanı</Button> : null}
-      />
+    <>
       <ListTable
+        title="Koltuk / oda"
+        badge={scopeBadge}
+        subtitle="Eklerseniz aynı saatte aynı koltuğa ikinci randevu verilmez."
+        actions={canWrite ? <Button variant="secondary" size="sm" icon={Plus} onClick={() => openForm()}>Yeni koltuk / oda</Button> : undefined}
         columns={columns}
         rows={items}
         rowKey={(item) => item.id}
-        loading={loading}
-        error={loadError}
+        loading={loading && !loaded}
+        error={loaded ? null : loadError}
+        staleError={loaded ? loadError : null}
         onRetry={() => void load()}
         emptyIcon={Armchair}
-        emptyText="Henüz tedavi alanı yok"
-        emptyDescription="Koltuk veya oda çakışmasını takip etmeyecekseniz bu bölümü boş bırakabilirsiniz."
+        emptyText="Koltuk takibi kapalı"
+        emptyDescription="Tek koltukta çalışıyorsanız boş bırakabilirsiniz."
         rowClassName={(item) => (item.isActive ? "" : "opacity-70")}
         mobileCard={(item) => (
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               {nameCell(item)}
-              <p className="mt-1 text-xs text-slate-500">{item._count?.appointments || 0} randevu</p>
+              <p className="mt-1 text-xs text-slate-500">{usageText(item)}</p>
             </div>
-            {canWriteSettings && rowActions(item)}
+            {canWrite && rowActions(item)}
           </div>
         )}
       />
 
-      <Modal
+      <FormModal
         open={Boolean(form)}
         onClose={() => setForm(null)}
-        title={form?.id ? "Tedavi alanını düzenle" : "Yeni tedavi alanı"}
+        title={form?.id ? "Koltuk / odayı düzenle" : "Yeni koltuk / oda"}
         size="sm"
-        footer={(
-          <>
-            <Button variant="secondary" onClick={() => setForm(null)}>Vazgeç</Button>
-            <Button onClick={() => void save()} loading={saving}>Kaydet</Button>
-          </>
-        )}
+        onSubmit={() => save()}
+        submitting={saving}
       >
         {form && (
-          <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); void save(); }}>
-            <FormField label="Koltuk / oda adı" htmlFor="unite-adi" required error={formError || undefined}>
+          <>
+            <FormField label="Ad" htmlFor="koltuk-adi" required error={formError || undefined}>
               <Input
-                id="unite-adi"
+                id="koltuk-adi"
+                autoFocus
                 maxLength={80}
                 value={form.name}
-                placeholder="örn: Koltuk 1, Cerrahi oda"
+                placeholder="ör. Koltuk 1, Cerrahi oda"
                 onChange={(event) => setForm((current) => (current ? { ...current, name: event.target.value } : current))}
               />
             </FormField>
-            <FormField label="Kısa kod (isteğe bağlı)" htmlFor="unite-kod" hint="Randevu formunda adın yanında görünür (örn: Koltuk 1 · K1).">
+            <FormField label="Kısa kod (isteğe bağlı)" htmlFor="koltuk-kod" hint="Randevu formunda adın yanında görünür (ör. Koltuk 1 · K1).">
               <Input
-                id="unite-kod"
+                id="koltuk-kod"
                 maxLength={20}
                 value={form.code}
-                placeholder="örn: K1"
+                placeholder="ör. K1"
                 className="uppercase"
                 onChange={(event) => setForm((current) => (current ? { ...current, code: event.target.value } : current))}
               />
             </FormField>
-          </form>
+          </>
         )}
-      </Modal>
-    </div>
+      </FormModal>
+    </>
   );
 }

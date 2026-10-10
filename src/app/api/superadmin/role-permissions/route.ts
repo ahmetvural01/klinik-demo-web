@@ -95,6 +95,9 @@ export async function POST(req: NextRequest) {
   if (!Number.isInteger(expectedVersion) || expectedVersion < 1) {
     return NextResponse.json({ message: "Yetki matrisi sürümü zorunludur." }, { status: 400 });
   }
+  // Denetim kaydı neyin değiştiğini yazar (PUT ile aynı fark özeti); önceden
+  // yalnız "varsayılana döndürüldü" deniyordu.
+  const before = await getPermissionMap();
   let next;
   try {
     next = await resetRolePermissionMap(auth.user.fullName || auth.user.id, expectedVersion);
@@ -104,7 +107,7 @@ export async function POST(req: NextRequest) {
     }
     throw error;
   }
-  await writeAudit(auth.user.id, "SUPERADMIN_ROLE_PERMISSIONS_RESET", `Rol yetki matrisi varsayılana döndürüldü. Versiyon: ${next.version}`);
+  await writeAudit(auth.user.id, "SUPERADMIN_ROLE_PERMISSIONS_RESET", `Rol yetki matrisi varsayılana döndürüldü (sürüm ${next.version}): ${describeDiff(before, next.map)}`);
   return NextResponse.json({
     ok: true,
     version: next.version,

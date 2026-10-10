@@ -2,14 +2,16 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
-import { CheckCircle2, Info, Link2Off, QrCode, RefreshCw, Send, Smartphone } from "lucide-react";
+import { CheckCircle2, Link2Off, QrCode, RefreshCw, Send, Smartphone } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { Callout } from "@/components/ui/Callout";
+import { ChoiceCards } from "@/components/ui/ChoiceCards";
+import { Disclosure } from "@/components/ui/Disclosure";
 import { FormField } from "@/components/ui/FormField";
 import { Input } from "@/components/ui/Input";
 import { LoadErrorState } from "@/components/ui/LoadErrorState";
 import { Spinner } from "@/components/ui/Spinner";
-import { Tabs } from "@/components/ui/Tabs";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
 import type { WhatsappWebStatusResponse } from "@/lib/whatsapp-web/types";
@@ -17,7 +19,8 @@ import type { WhatsappWebStatusResponse } from "@/lib/whatsapp-web/types";
 type Method = "qr" | "code";
 
 const POLL_PAIRING_MS = 2_500;
-const POLL_IDLE_MS = 30_000;
+// Bağlıyken yalnız kopma/günlük sayı için seyrek bakılır.
+const POLL_IDLE_MS = 60_000;
 
 function formatDateTime(value: string | null) {
   if (!value) return "";
@@ -42,6 +45,7 @@ export function WhatsappWebConnect({ onChanged }: { onChanged?: () => void }) {
   const [phone, setPhone] = useState("");
   const [busy, setBusy] = useState<"" | "connect" | "test" | "disconnect">("");
   const previousState = useRef<string | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
   const onChangedRef = useRef(onChanged);
   onChangedRef.current = onChanged;
 
@@ -70,11 +74,13 @@ export function WhatsappWebConnect({ onChanged }: { onChanged?: () => void }) {
   useEffect(() => { void load(); }, [load]);
 
   // Eşleştirme sırasında QR/kod birkaç saniyede bir yenilenir; bağlıyken seyrek.
+  // Kart görünmüyorsa (başka sekmeye geçildi, pencere arka planda) sorulmaz.
   const pairing = status?.state === "QR" || status?.state === "CONNECTING";
   useEffect(() => {
     if (!status) return;
     const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") void load(true);
+      const visible = document.visibilityState === "visible" && Boolean(rootRef.current?.offsetParent);
+      if (visible) void load(true);
     }, pairing ? POLL_PAIRING_MS : POLL_IDLE_MS);
     return () => window.clearInterval(timer);
   }, [load, pairing, status]);
@@ -160,40 +166,41 @@ export function WhatsappWebConnect({ onChanged }: { onChanged?: () => void }) {
 
   if (loading) {
     return (
-      <div role="status" className="flex items-center gap-2 py-6 text-sm text-slate-500">
+      <div ref={rootRef} role="status" className="flex items-center gap-2 py-4 text-sm text-slate-500">
         <Spinner className="h-4 w-4" /> WhatsApp bağlantı durumu kontrol ediliyor…
       </div>
     );
   }
   if (blockedMessage) {
     return (
-      <div className="flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-        <Info className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" aria-hidden="true" />
-        <p>WhatsApp ile mesaj göndermek için platform yöneticinizden kliniğinize WhatsApp kullanımını açmasını isteyin. Açılana kadar mesajlar SMS ile gider.</p>
+      <div ref={rootRef}>
+        <Callout tone="neutral">
+          WhatsApp ile mesaj göndermek için platform yöneticinizden kliniğinize WhatsApp kullanımını açmasını isteyin. Açılana kadar mesajlar SMS ile gider.
+        </Callout>
       </div>
     );
   }
   if (loadError || !status) {
-    return <LoadErrorState message={loadError || "WhatsApp bağlantı durumu okunamadı."} onRetry={() => void load()} />;
+    return <div ref={rootRef}><LoadErrorState message={loadError || "WhatsApp bağlantı durumu okunamadı."} onRetry={() => void load()} /></div>;
   }
 
   const restrictedUntil = formatDateTime(status.restrictedUntil);
-  const infoBox = (
-    <div className="flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-600">
-      <Info className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
-      <p>
+  // Uzun açıklama her durumda açık duruyordu; gerektiğinde açılır.
+  const howItWorks = (
+    <Disclosure title="Nasıl çalışır?">
+      <p className="text-xs leading-5 text-slate-600">
         Bu bağlantı WhatsApp&apos;ın &quot;bağlı cihaz&quot; özelliğini kullanır. Numaranızı korumak için mesajlar kısa aralıklarla ve
         günde en fazla {status.dailyLimit} adet gönderilir. Gelen mesajlarınız ve sohbetleriniz sisteme alınmaz. Telefonunuz en az
         14 günde bir internete bağlanmalıdır. Bağlantı koparsa, kanal ayarı “Önce WhatsApp, olmazsa SMS” ise mesajlar SMS ile gider.
       </p>
-    </div>
+    </Disclosure>
   );
 
   // ── Bağlı ────────────────────────────────────────────────────────────────
   if (status.state === "CONNECTED") {
     return (
-      <div className="space-y-4" aria-live="polite">
-        <div className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50/60 px-4 py-3">
+      <div ref={rootRef} className="space-y-3" aria-live="polite">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-3">
             <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" aria-hidden="true" />
             <div className="min-w-0">
@@ -202,10 +209,12 @@ export function WhatsappWebConnect({ onChanged }: { onChanged?: () => void }) {
                 <Badge tone="success">Bağlı</Badge>
               </div>
               <p className="mt-0.5 text-xs text-slate-600">
-                {status.name ? `${status.name} · ` : ""}
-                {status.connectedAt ? `${formatDateTime(status.connectedAt)} tarihinden beri bağlı` : "Bağlı"}
+                {[
+                  status.name,
+                  status.connectedAt ? `${formatDateTime(status.connectedAt)} tarihinden beri` : "",
+                ].filter(Boolean).join(" · ")}
               </p>
-              <p className="mt-1 text-xs text-slate-600">
+              <p className="mt-0.5 text-xs text-slate-600">
                 Bugün gönderilen: <span className="font-bold tabular-nums">{status.dailySentCount}</span> / {status.dailyLimit}
               </p>
             </div>
@@ -218,12 +227,12 @@ export function WhatsappWebConnect({ onChanged }: { onChanged?: () => void }) {
           )}
         </div>
         {restrictedUntil && (
-          <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          <Callout tone="warning" compact>
             WhatsApp bu numaranın gönderimini {restrictedUntil} tarihine kadar sınırladı. Bu sürede mesajlar SMS ile gider.
-          </p>
+          </Callout>
         )}
-        {status.notice && <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{status.notice}</p>}
-        {infoBox}
+        {status.notice && <Callout tone="warning" compact>{status.notice}</Callout>}
+        {howItWorks}
       </div>
     );
   }
@@ -232,8 +241,8 @@ export function WhatsappWebConnect({ onChanged }: { onChanged?: () => void }) {
   if (status.state === "QR" && (status.qrDataUrl || status.pairingCode)) {
     const byCode = Boolean(status.pairingCode);
     return (
-      <div className="space-y-4" aria-live="polite">
-        <div className="grid gap-5 rounded-lg border border-slate-200 p-4 sm:grid-cols-[auto_minmax(0,1fr)] sm:items-center">
+      <div ref={rootRef} className="space-y-3" aria-live="polite">
+        <div className="grid gap-5 sm:grid-cols-[auto_minmax(0,1fr)] sm:items-center">
           <div className="flex justify-center">
             {byCode ? (
               <div className="rounded-xl border border-primary/25 bg-primary/[0.04] px-6 py-5 text-center">
@@ -255,7 +264,7 @@ export function WhatsappWebConnect({ onChanged }: { onChanged?: () => void }) {
                 ? <li><strong>Bunun yerine telefon numarasıyla bağla</strong>&apos;ya dokunup yukarıdaki kodu yazın.</li>
                 : <li>Telefonu bu ekrandaki QR koda tutun. Telefon hata verirse bu ekrandaki QR yenilenir; yeni QR&apos;ı tekrar okutun.</li>}
             </ol>
-            {status.notice && <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{status.notice}</p>}
+            {status.notice && <Callout tone="warning" compact className="mt-3">{status.notice}</Callout>}
             <p className="mt-3 flex items-center gap-2 text-xs text-slate-500">
               <Spinner className="h-3.5 w-3.5" /> {byCode ? "Kod yazılınca bağlantı kendiliğinden tamamlanır." : "Kod birkaç saniyede bir yenilenir; okutunca bağlantı kendiliğinden tamamlanır."}
             </p>
@@ -266,14 +275,14 @@ export function WhatsappWebConnect({ onChanged }: { onChanged?: () => void }) {
             )}
           </div>
         </div>
-        {infoBox}
+        {howItWorks}
       </div>
     );
   }
 
   if (status.state === "CONNECTING") {
     return (
-      <div role="status" aria-live="polite" className="flex items-center gap-2 rounded-lg border border-slate-200 px-4 py-4 text-sm text-slate-700">
+      <div ref={rootRef} role="status" aria-live="polite" className="flex items-center gap-2 py-2 text-sm text-slate-700">
         <Spinner className="h-4 w-4" /> WhatsApp&apos;a bağlanılıyor…
       </div>
     );
@@ -281,31 +290,25 @@ export function WhatsappWebConnect({ onChanged }: { onChanged?: () => void }) {
 
   // ── Bağlı değil / hata ───────────────────────────────────────────────────
   return (
-    <div className="space-y-4" aria-live="polite">
-      {status.state === "ERROR" && status.error && (
-        <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{status.error}</p>
-      )}
-      {status.pairingExpired && (
-        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">Kodun süresi doldu. Yeniden başlatıp tekrar deneyin.</p>
-      )}
-      {status.notice && <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{status.notice}</p>}
+    <div ref={rootRef} className="space-y-3" aria-live="polite">
+      {status.state === "ERROR" && status.error && <Callout tone="critical" role="alert" compact>{status.error}</Callout>}
+      {status.pairingExpired && <Callout tone="warning" compact>Kodun süresi doldu. Yeniden başlatıp tekrar deneyin.</Callout>}
+      {status.notice && <Callout tone="warning" compact>{status.notice}</Callout>}
 
       {!status.canManage ? (
         <p className="text-sm text-slate-600">WhatsApp numarası bağlı değil. Bağlantıyı klinik yöneticisi kurabilir; o zamana kadar mesajlar SMS ile gider.</p>
       ) : (
-        <div className="space-y-4 rounded-lg border border-slate-200 p-4">
-          <div>
-            <p className="text-sm font-bold text-slate-900">WhatsApp numaranızı bağlayın</p>
-            <p className="mt-0.5 text-sm text-slate-600">Hatırlatma ve bilgilendirme mesajları kendi WhatsApp numaranızdan gider. Kurumsal numara gerekmez.</p>
-          </div>
-          <Tabs<Method>
-            ariaLabel="Bağlama yöntemi"
-            size="sm"
+        <>
+          <p className="text-sm text-slate-600">Kliniğinizin WhatsApp numarasını bağlayın; mesajlar bu numaradan gider. Kurumsal numara gerekmez.</p>
+          <ChoiceCards<Method>
+            label="Bağlama yöntemi"
+            labelHidden
+            variant="pills"
             value={method}
             onChange={setMethod}
-            items={[
-              { key: "qr", label: "QR kodu okut" },
-              { key: "code", label: "Telefon numarasıyla bağla" },
+            options={[
+              { value: "qr", label: "QR kodu okut" },
+              { value: "code", label: "Telefon numarasıyla bağla" },
             ]}
           />
           {method === "code" && (
@@ -313,19 +316,21 @@ export function WhatsappWebConnect({ onChanged }: { onChanged?: () => void }) {
               <Input id="wa-pair-phone" type="tel" inputMode="tel" autoComplete="tel" placeholder="0532 123 45 67" value={phone} onChange={(event) => setPhone(event.target.value)} />
             </FormField>
           )}
-          <Button
-            icon={method === "qr" ? QrCode : Smartphone}
-            loading={busy === "connect"}
-            onClick={() => void startPairing()}
-          >
-            {method === "qr" ? "QR kodu göster" : "Eşleştirme kodunu al"}
-          </Button>
-          {status.state === "ERROR" && (
-            <Button variant="ghost" size="sm" icon={RefreshCw} onClick={() => void load()}>Durumu yenile</Button>
-          )}
-        </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              icon={method === "qr" ? QrCode : Smartphone}
+              loading={busy === "connect"}
+              onClick={() => void startPairing()}
+            >
+              {method === "qr" ? "QR kodu göster" : "Eşleştirme kodunu al"}
+            </Button>
+            {status.state === "ERROR" && (
+              <Button variant="ghost" size="sm" icon={RefreshCw} onClick={() => void load()}>Durumu yenile</Button>
+            )}
+          </div>
+        </>
       )}
-      {infoBox}
+      {howItWorks}
     </div>
   );
 }

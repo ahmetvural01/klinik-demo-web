@@ -1,17 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { MessageCircle, Route, Smartphone } from "lucide-react";
+import { useState } from "react";
+import { Coins, Smartphone } from "lucide-react";
+import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { Callout } from "@/components/ui/Callout";
 import { ChoiceCards } from "@/components/ui/ChoiceCards";
-import { FormSection } from "@/components/ui/FormField";
-import { Switch } from "@/components/ui/Switch";
-import { SaveBar } from "@/components/ui/SaveBar";
-import { LoadErrorState } from "@/components/ui/LoadErrorState";
-import PanelLoading from "@/components/ui/PanelLoading";
+import { ListRowSkeleton } from "@/components/ui/ListSkeleton";
+import { Section } from "@/components/ui/Section";
+import { SettingsList, SettingsRow } from "@/components/ui/SettingsList";
 import { WhatsappWebConnect } from "@/components/whatsapp/WhatsappWebConnect";
 import type { CommunicationStatus } from "@/components/sms/communication-status";
-import { formatCount } from "@/components/sms/communication-labels";
+import { SMS_CREDIT_REQUEST_HREF, formatCount } from "@/components/sms/communication-labels";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
 
@@ -24,70 +24,63 @@ type SettingsTabProps = {
   /** Gönderim kanalı: yukarıdakine ek olarak WhatsApp yazma yetkisi (modül açık). */
   canManageChannel: boolean;
   canManageWhatsappConnection: boolean;
-  onChanged: () => void;
+  /** Kaydedilen ayarı sayfa durumuna yansıtır (sunucuya yeniden sormadan). */
+  onStatusChange: (updater: (current: CommunicationStatus) => CommunicationStatus) => void;
+  /** WhatsApp bağlantısı değişti — durum yeniden okunur. */
+  onConnectionChanged: () => void;
 };
 
+function messageOf(data: unknown, fallback: string) {
+  const message = data && typeof data === "object" ? (data as { message?: unknown }).message : undefined;
+  return typeof message === "string" && message.trim() ? message : fallback;
+}
+
 /**
- * İletişim ayarları üç soruya cevap verir: WhatsApp numaramız bağlı mı,
- * mesajlar hangi kanaldan gitsin, SMS açık mı ve ne kadar kredi kaldı.
- * Değişiklik yapılınca altta Vazgeç/Kaydet çubuğu çıkar; yalnız bu ekranın
- * alanları kaydedilir.
+ * Kanal ve kredi — WhatsApp numarası bağlı mı, mesajlar hangi kanaldan
+ * gitsin, SMS açık mı ve ne kadar kredi kaldı. Seçimler ANINDA kaydedilir
+ * (SMS'i kapatmak onay ister); önceden iki alan için altta SaveBar vardı ve
+ * WhatsApp durumu değişince kaydedilmemiş seçim eziliyordu. Değerler sayfanın
+ * ortak durumundan (api/sms/status) gelir; ayrıca /api/settings okunmaz.
  */
-export default function SettingsTab({ status, canManageSettings, canManageChannel, canManageWhatsappConnection, onChanged }: SettingsTabProps) {
+export default function SettingsTab({ status, canManageSettings, canManageChannel, canManageWhatsappConnection, onStatusChange, onConnectionChanged }: SettingsTabProps) {
   const whatsappConnected = Boolean(status?.whatsapp?.connected);
-  const [smsEnabled, setSmsEnabled] = useState<boolean | null>(null);
-  const [savedSmsEnabled, setSavedSmsEnabled] = useState<boolean | null>(null);
-  const [mode, setMode] = useState<ChannelMode | null>(null);
-  const [savedMode, setSavedMode] = useState<ChannelMode | null>(null);
-  const [loading, setLoading] = useState(canManageSettings);
-  const [loadError, setLoadError] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [pendingMode, setPendingMode] = useState<ChannelMode | null>(null);
+  const [savingSms, setSavingSms] = useState(false);
 
-  const load = useCallback(async () => {
-    if (!canManageSettings) return;
-    setLoading(true);
-    setLoadError("");
+  const savedMode: ChannelMode = status?.defaultChannel === "WHATSAPP"
+    ? (status.whatsappSmsFallback ? "WHATSAPP_FALLBACK" : "WHATSAPP")
+    : "SMS";
+  const mode = pendingMode ?? savedMode;
+
+  const changeMode = async (next: ChannelMode) => {
+    if (next === mode || pendingMode) return;
+    setPendingMode(next);
     try {
-      const [settingsResponse, providerResponse] = await Promise.all([
-        fetch("/api/settings", { cache: "no-store" }),
-        canManageChannel ? fetch("/api/whatsapp/provider", { cache: "no-store" }) : Promise.resolve(null),
-      ]);
-      const settingsData = await settingsResponse.json().catch(() => null);
-      if (!settingsResponse.ok || !settingsData || typeof settingsData !== "object") throw new Error(settingsData?.message || "İletişim ayarları yüklenemedi.");
-      const nextSms = settingsData.smsEnabled !== false;
-      setSmsEnabled(nextSms);
-      setSavedSmsEnabled(nextSms);
-      if (providerResponse) {
-        const providerData = await providerResponse.json().catch(() => null);
-        const preferenceMode = providerResponse.ok ? providerData?.preferences?.mode : null;
-        const nextMode: ChannelMode = preferenceMode === "WHATSAPP" ? "WHATSAPP" : preferenceMode === "WHATSAPP_FALLBACK" ? "WHATSAPP_FALLBACK" : "SMS";
-        setMode(nextMode);
-        setSavedMode(nextMode);
-      }
+      // Mesaj türü bazında ayrı WhatsApp anahtarı yok: seçilen kanal bütün
+      // otomatik ve toplu mesajlar için geçerlidir.
+      const response = await fetch("/api/whatsapp/provider", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: next, appointment: true, payment: true, info: true }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(messageOf(data, "Gönderim kanalı kaydedilemedi."));
+      onStatusChange((current) => ({
+        ...current,
+        defaultChannel: next === "SMS" ? "SMS" : "WHATSAPP",
+        whatsappSmsFallback: next === "WHATSAPP_FALLBACK",
+      }));
+      showToastSafe({ message: "Gönderim kanalı kaydedildi.", type: "success" });
     } catch (error) {
-      setSmsEnabled(null);
-      setSavedSmsEnabled(null);
-      setLoadError(error instanceof Error ? error.message : "İletişim ayarları yüklenemedi.");
+      showToastSafe({ title: "Kaydedilemedi", message: error instanceof Error ? error.message : "Gönderim kanalı kaydedilemedi.", type: "error" });
     } finally {
-      setLoading(false);
+      setPendingMode(null);
     }
-  }, [canManageChannel, canManageSettings]);
+  };
 
-  useEffect(() => { void load(); }, [load]);
-
-  const smsDirty = smsEnabled !== null && smsEnabled !== savedSmsEnabled;
-  const modeDirty = mode !== null && mode !== savedMode;
-  const dirty = smsDirty || modeDirty;
-
-  useEffect(() => {
-    if (!dirty) return;
-    const onBeforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); };
-    window.addEventListener("beforeunload", onBeforeUnload);
-    return () => window.removeEventListener("beforeunload", onBeforeUnload);
-  }, [dirty]);
-
-  const save = async () => {
-    if (smsDirty && savedSmsEnabled && smsEnabled === false) {
+  const toggleSms = async (on: boolean) => {
+    if (!status?.sms || savingSms) return;
+    if (!on) {
       const ok = await confirmDialog({
         title: "SMS gönderimi kapatılsın mı?",
         message: "Kapatınca hatırlatmalar, kutlamalar ve yeni hastalara giden izin SMS'i dahil hiçbir SMS gönderilmez.",
@@ -97,115 +90,102 @@ export default function SettingsTab({ status, canManageSettings, canManageChanne
       });
       if (!ok) return;
     }
-    setSaving(true);
+    setSavingSms(true);
     try {
-      if (smsDirty) {
-        const response = await fetch("/api/settings", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ smsEnabled }),
-        });
-        const data = await response.json().catch(() => null);
-        if (!response.ok) throw new Error(data?.message || "Ayarlar kaydedilemedi.");
-        setSavedSmsEnabled(smsEnabled);
-      }
-      if (modeDirty && mode) {
-        // Mesaj türü bazında ayrı WhatsApp anahtarı yok: seçilen kanal bütün
-        // otomatik ve toplu mesajlar için geçerlidir.
-        const response = await fetch("/api/whatsapp/provider", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mode, appointment: true, payment: true, info: true }),
-        });
-        const data = await response.json().catch(() => null);
-        if (!response.ok) throw new Error(data?.message || "Gönderim kanalı kaydedilemedi.");
-        setSavedMode(mode);
-      }
-      showToastSafe({ message: "İletişim ayarları kaydedildi.", type: "success" });
-      onChanged();
+      const response = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ smsEnabled: on }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(messageOf(data, "Ayar kaydedilemedi."));
+      onStatusChange((current) => (current.sms ? { ...current, sms: { ...current.sms, enabled: on } } : current));
+      showToastSafe({ message: on ? "SMS gönderimi açıldı." : "SMS gönderimi kapatıldı.", type: "success" });
     } catch (error) {
-      showToastSafe({ title: "Kaydedilemedi", message: error instanceof Error ? error.message : "Ayarlar kaydedilemedi.", type: "error" });
+      showToastSafe({ title: "Kaydedilemedi", message: error instanceof Error ? error.message : "Ayar kaydedilemedi.", type: "error" });
     } finally {
-      setSaving(false);
+      setSavingSms(false);
     }
   };
 
-  const discard = () => {
-    setSmsEnabled(savedSmsEnabled);
-    setMode(savedMode);
-  };
-
   const balance = status?.sms?.balance;
-  const lowBalance = typeof balance === "number" && status?.sms ? balance < status.sms.lowBalanceThreshold : false;
+  const creditBadge = typeof balance === "number" && status?.sms
+    ? balance <= 0
+      ? <Badge tone="critical">Bitti</Badge>
+      : balance < status.sms.lowBalanceThreshold ? <Badge tone="warning">Azaldı</Badge> : undefined
+    : undefined;
   const whatsappReason = "Önce WhatsApp numaranızı bağlayın.";
 
   return (
     <div className="space-y-4">
       {canManageWhatsappConnection && (
-        <div id="whatsapp-baglanti" className="scroll-mt-4">
-          <FormSection icon={MessageCircle} title="WhatsApp numarası" description="Kliniğinizin WhatsApp numarasını QR kod ile bağlayın; mesajlar bu numaradan gider.">
-            <WhatsappWebConnect onChanged={() => { onChanged(); void load(); }} />
-          </FormSection>
-        </div>
+        <Section id="whatsapp-baglanti" title="WhatsApp">
+          <WhatsappWebConnect onChanged={onConnectionChanged} />
+        </Section>
       )}
 
-      {canManageSettings && loading && <PanelLoading />}
-      {canManageSettings && !loading && loadError && <LoadErrorState message={loadError} onRetry={() => void load()} />}
-
-      {canManageSettings && canManageChannel && mode && (
-        <FormSection icon={Route} title="Mesajlar hangi kanaldan gitsin?" description="Otomatik ve toplu mesajların tamamı için geçerlidir.">
-          <ChoiceCards<ChannelMode>
-            label="Gönderim kanalı"
-            columns={3}
-            value={mode}
-            onChange={setMode}
-            options={[
-              {
-                value: "WHATSAPP_FALLBACK",
-                label: "Önce WhatsApp, olmazsa SMS",
-                description: "Önerilen. Mesaj WhatsApp'tan gider; gidemezse SMS ile gider.",
-                disabled: !whatsappConnected && savedMode !== "WHATSAPP_FALLBACK",
-                disabledReason: whatsappReason,
-              },
-              {
-                value: "WHATSAPP",
-                label: "Yalnız WhatsApp",
-                description: "SMS kredisi harcanmaz; WhatsApp'tan gidemeyen mesaj gönderilmez.",
-                disabled: !whatsappConnected && savedMode !== "WHATSAPP",
-                disabledReason: whatsappReason,
-              },
-              { value: "SMS", label: "Yalnız SMS", description: "Bütün mesajlar SMS ile gider." },
-            ]}
-          />
-          {!whatsappConnected && mode !== "SMS" && (
-            <p className="mt-3 text-xs font-semibold text-amber-700">WhatsApp numarası bağlı değil; bağlanana kadar WhatsApp mesajları gönderilemez.</p>
-          )}
-        </FormSection>
-      )}
-
-      {canManageSettings && smsEnabled !== null && (
-        <FormSection icon={Smartphone} title="SMS" description="SMS yalnız izin veren hastalara gider ve SMS kredisinden düşer.">
+      {canManageSettings && canManageChannel && status && (
+        <Section title="Gönderim kanalı" description="Otomatik ve toplu mesajların tamamı için geçerlidir.">
           <div className="space-y-3">
-            <Switch
-              checked={smsEnabled}
-              onChange={setSmsEnabled}
-              label="SMS gönderimi açık"
-              description={smsEnabled ? "İzni olan hastalara SMS gider." : "Kapalı: hiçbir SMS gönderilmez."}
+            <ChoiceCards<ChannelMode>
+              label="Gönderim kanalı"
+              labelHidden
+              columns={3}
+              value={mode}
+              onChange={(value) => void changeMode(value)}
+              options={[
+                {
+                  value: "WHATSAPP_FALLBACK",
+                  label: "Önce WhatsApp, olmazsa SMS",
+                  description: "Önerilen. WhatsApp'tan gidemeyen mesaj SMS ile gider.",
+                  disabled: Boolean(pendingMode) || (!whatsappConnected && savedMode !== "WHATSAPP_FALLBACK"),
+                  disabledReason: whatsappConnected ? undefined : whatsappReason,
+                },
+                {
+                  value: "WHATSAPP",
+                  label: "Yalnız WhatsApp",
+                  description: "SMS kredisi harcanmaz; WhatsApp'tan gidemeyen mesaj gitmez.",
+                  disabled: Boolean(pendingMode) || (!whatsappConnected && savedMode !== "WHATSAPP"),
+                  disabledReason: whatsappConnected ? undefined : whatsappReason,
+                },
+                { value: "SMS", label: "Yalnız SMS", description: "Bütün mesajlar SMS ile gider.", disabled: Boolean(pendingMode) },
+              ]}
             />
-            {typeof balance === "number" && (
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2">
-                <p className={`text-sm ${lowBalance ? "font-semibold text-red-700" : "text-slate-700"}`}>
-                  Kalan SMS kredisi: <span className="tabular-nums font-bold">{formatCount(balance)}</span>
-                  {lowBalance ? " — azaldı. Kredi bitince SMS gönderilemez." : ""}
-                </p>
-                <Button variant="secondary" size="sm" href="/destek">Kredi iste</Button>
-              </div>
+            {!whatsappConnected && mode !== "SMS" && (
+              <Callout tone="warning" compact>WhatsApp numarası bağlı değil; bağlanana kadar WhatsApp mesajları gönderilemez.</Callout>
             )}
           </div>
-        </FormSection>
+        </Section>
       )}
 
-      <SaveBar dirty={dirty} saving={saving} onSave={() => void save()} onDiscard={discard} message="İletişim ayarlarında kaydedilmemiş değişiklik var" />
+      {canManageSettings && (!status || status.sms) && (
+        <Section title="SMS" padding="none">
+          {status?.sms ? (
+            <SettingsList aria-label="SMS ayarları">
+              <SettingsRow
+                icon={Smartphone}
+                title="SMS gönderimi"
+                description="İzni olan hastalara gider · her SMS 1 kredi"
+                toggle={{
+                  checked: status.sms.enabled,
+                  disabled: savingSms,
+                  label: "Hastalara SMS gönderilsin",
+                  onChange: (on) => void toggleSms(on),
+                }}
+              />
+              <SettingsRow
+                icon={Coins}
+                title="SMS kredisi"
+                description={`Kalan ${formatCount(status.sms.balance)} kredi`}
+                status={creditBadge}
+                actions={<Button variant="secondary" size="sm" href={SMS_CREDIT_REQUEST_HREF}>Kredi iste</Button>}
+              />
+            </SettingsList>
+          ) : (
+            <ListRowSkeleton variant="row" leading="icon" rows={2} />
+          )}
+        </Section>
+      )}
     </div>
   );
 }

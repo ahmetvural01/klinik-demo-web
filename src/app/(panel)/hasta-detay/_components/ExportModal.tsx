@@ -1,15 +1,13 @@
 "use client";
 
-import { useState } from "react";
-import { Download } from "lucide-react";
-import { Modal } from "@/components/ui/Modal";
-import { Button } from "@/components/ui/Button";
+import { useMemo, useState } from "react";
+import { FormModal } from "@/components/ui/FormModal";
 import { ChoiceCards } from "@/components/ui/ChoiceCards";
 import { Switch } from "@/components/ui/Switch";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { formatDateText } from "@/components/ui/Money";
-import { addPdfSection, createPdfDoc, pdfSafeText } from "@/lib/pdf-export";
 import { showToastSafe } from "@/lib/toast-client";
+import { turkeyDateKey } from "@/lib/tz";
 import { examStatusKind, isChargeableExamStatus } from "@/lib/examination-status";
 import { LAB_STAGE_LABEL, getOrderSummary } from "@/lib/lab-workflow";
 import { usePatientFile } from "./PatientFileContext";
@@ -17,28 +15,28 @@ import { appointmentStatusView, appointmentTypeLabel, genderLabel, healthFlagsOf
 
 type SectionKey = "profile" | "completedTreatments" | "plannedTreatments" | "payments" | "balance" | "appointments" | "labOrders" | "prescriptions" | "documents" | "notes";
 type Format = "pdf" | "excel";
+type Mode = "treatment" | "all" | "custom";
 type Section = { title: string; headers: string[]; rows: (string | number)[][] };
 type Raw = Record<string, unknown>;
 
-const SECTIONS: { key: SectionKey; label: string; description: string }[] = [
-  { key: "profile", label: "Hasta bilgileri", description: "Kimlik, iletişim, sağlık uyarıları" },
-  { key: "completedTreatments", label: "Yapılan tedaviler", description: "Borca yansıyan tedaviler" },
-  { key: "plannedTreatments", label: "Yapılacak tedaviler", description: "Muayene listesi ve tedavi planı adımları" },
-  { key: "payments", label: "Tahsilatlar", description: "Tarih, tutar, yöntem, POS" },
-  { key: "balance", label: "Hesap özeti", description: "Tedavi toplamı, indirim, tahsilat, kalan" },
-  { key: "appointments", label: "Randevular", description: "Geçmiş ve gelecek randevular" },
-  { key: "labOrders", label: "Laboratuvar", description: "Lab işleri, durumları, faturaları" },
-  { key: "prescriptions", label: "Reçeteler", description: "Yazılan ilaçlar ve notlar" },
-  { key: "documents", label: "Belgeler ve onamlar", description: "Dosya listesi ve imzalı onamlar" },
-  { key: "notes", label: "Notlar", description: "Hasta notları" },
+/**
+ * Bölümler ve görmek için gereken okuma yetkisi (biri yeterli). Yetkisi
+ * olmayan bölüm listelenmez; sunucu da o bölümün verisini hiç döndürmez.
+ */
+const SECTIONS: { key: SectionKey; label: string; description: string; anyOf: string[] }[] = [
+  { key: "profile", label: "Hasta bilgileri", description: "Kimlik, iletişim, sağlık uyarıları", anyOf: ["patients:read"] },
+  { key: "completedTreatments", label: "Yapılan tedaviler", description: "Borca yansıyan tedaviler", anyOf: ["examinations:read"] },
+  { key: "plannedTreatments", label: "Yapılacak tedaviler", description: "Henüz yapılmamış tedaviler ve tedavi planı adımları", anyOf: ["examinations:read", "treatment:read"] },
+  { key: "payments", label: "Tahsilatlar", description: "Tarih, tutar, yöntem, POS", anyOf: ["payments:read"] },
+  { key: "balance", label: "Hesap özeti", description: "Tedavi toplamı, indirim, tahsilat, kalan", anyOf: ["payments:read", "finance:read"] },
+  { key: "appointments", label: "Randevular", description: "Geçmiş ve gelecek randevular", anyOf: ["appointments:read"] },
+  { key: "labOrders", label: "Laboratuvar", description: "Lab işleri, durumları, faturaları", anyOf: ["lab:read"] },
+  { key: "prescriptions", label: "Reçeteler", description: "Yazılan ilaçlar ve notlar", anyOf: ["prescriptions:read"] },
+  { key: "documents", label: "Belgeler ve onamlar", description: "Dosya listesi ve imzalı onamlar", anyOf: ["documents:read", "xray:read"] },
+  { key: "notes", label: "Notlar", description: "Hasta notları", anyOf: ["patients:read"] },
 ];
 
-const DEFAULT_SELECTION: SectionKey[] = ["profile", "completedTreatments", "plannedTreatments", "payments", "balance"];
-const PRESETS: { label: string; keys: SectionKey[] }[] = [
-  { label: "Tedavi ve ödeme", keys: DEFAULT_SELECTION },
-  { label: "Yalnız randevular", keys: ["appointments"] },
-  { label: "Tüm dosya", keys: SECTIONS.map((section) => section.key) },
-];
+const TREATMENT_SELECTION: SectionKey[] = ["profile", "completedTreatments", "plannedTreatments", "payments", "balance"];
 
 const list = (value: unknown): Raw[] => (Array.isArray(value) ? (value as Raw[]) : []);
 const str = (value: unknown) => (value === null || value === undefined || value === "" ? "-" : String(value));
@@ -96,10 +94,10 @@ function buildSections(patient: Raw, balance: PatientBalance, hidePhone: boolean
       headers: withDoctor(["Kaynak", "Tarih", "Tedavi", "Diş", "Tutar"], 5),
       rows: [
         ...exams.filter((exam) => examStatusKind(String(exam.status || "")) === "pending").map((exam) => [
-          "Muayene listesi", date(exam.diagnosedAt), str(exam.treatmentName), str(exam.toothNo), money(exam.amount), ...doctorCol(exam),
+          "Yapılacak tedavi", date(exam.diagnosedAt), str(exam.treatmentName), str(exam.toothNo), money(exam.amount), ...doctorCol(exam),
         ]),
         ...plannedFromPlans.map((step) => [
-          str(step.planTitle) === "-" ? "Tedavi planı" : str(step.planTitle), date(step.date), str(step.treatmentName), str(step.toothNo), money(step.amount), ...doctorCol(step as Raw),
+          str(step.planTitle) === "-" ? "Tedavi planı" : `Plan: ${str(step.planTitle)}`, date(step.date), str(step.treatmentName), str(step.toothNo), money(step.amount), ...doctorCol(step as Raw),
         ]),
       ],
     },
@@ -175,19 +173,34 @@ function escapeCell(value: unknown) {
 }
 
 /**
- * Hasta dosyasını seçilen bölümlerle PDF veya Excel olarak indirir. Dışa
+ * Hasta dosyasını seçilen bölümlerle PDF ya da Excel olarak indirir. Dışa
  * aktarım KVKK erişim kaydı olarak işlem kayıtlarına yazılır (sunucu).
+ * PDF kitaplığı (~134 KB) yalnız "PDF indir"e basılınca yüklenir; önceden
+ * hasta dosyasının her açılışında iniyordu.
  */
 export function ExportModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { data, balance, clinicName, hidePatientPhone } = usePatientFile();
+  const { data, balance, balanceKnown, getLetterhead, hidePatientPhone, can } = usePatientFile();
   const [format, setFormat] = useState<Format>("pdf");
-  const [selected, setSelected] = useState<string[]>(DEFAULT_SELECTION);
+  const [mode, setMode] = useState<Mode>("treatment");
+  const [custom, setCustom] = useState<string[]>(TREATMENT_SELECTION);
   const [hideDoctor, setHideDoctor] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
 
-  const keys = SECTIONS.map((section) => section.key).filter((key) => selected.includes(key));
+  // Yalnız kullanıcının görebildiği bölümler (KVKK: en az yetki).
+  // Bakiye bilinmiyorsa (sunucu bakiyesi okunamadı) "Hesap özeti" yanlış sıfırlarla yazılmaz.
+  const allowed = useMemo(
+    () => SECTIONS.filter((section) => section.anyOf.some((permission) => can(permission)) && (section.key !== "balance" || balanceKnown)),
+    [can, balanceKnown],
+  );
+  const allowedKeys = allowed.map((section) => section.key);
+  const selected: SectionKey[] = mode === "all"
+    ? allowedKeys
+    : mode === "treatment"
+      ? TREATMENT_SELECTION.filter((key) => allowedKeys.includes(key))
+      : allowedKeys.filter((key) => custom.includes(key));
 
-  const downloadExcel = (sections: Record<SectionKey, Section>, fileName: string) => {
+  const downloadExcel = (sections: Record<SectionKey, Section>, keys: SectionKey[], fileName: string, clinicName: string) => {
     const tables = keys.map((key) => {
       const section = sections[key];
       const body = section.rows.length
@@ -206,7 +219,10 @@ export function ExportModal({ open, onClose }: { open: boolean; onClose: () => v
     window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
   };
 
-  const downloadPdf = (sections: Record<SectionKey, Section>, fileName: string) => {
+  const downloadPdf = async (sections: Record<SectionKey, Section>, keys: SectionKey[], fileName: string, clinicName: string) => {
+    const { addPdfSection, createPdfDoc, pdfSafeText, preparePdfFonts, setPdfTextFont } = await import("@/lib/pdf-export");
+    // Türkçe font hazır olunca belge "Doğum tarihi", "Kadın" gibi harflerle yazılır.
+    await preparePdfFonts();
     const doc = createPdfDoc("l");
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
@@ -214,10 +230,11 @@ export function ExportModal({ open, onClose }: { open: boolean; onClose: () => v
       doc.setFillColor(15, 23, 42);
       doc.rect(0, 0, pageWidth, 20, "F");
       doc.setTextColor(255, 255, 255);
+      setPdfTextFont(doc);
       doc.setFontSize(14);
-      doc.text(pdfSafeText(`Hasta raporu${suffix}`), 14, 11);
+      doc.text(pdfSafeText(`Hasta raporu${suffix}`, doc), 14, 11);
       doc.setFontSize(8.5);
-      doc.text(pdfSafeText(`${clinicName || "Klinik"} · ${data.fullName} · ${formatDateText(new Date(), "datetime")}`), 14, 17);
+      doc.text(pdfSafeText(`${clinicName || "Klinik"} · ${data.fullName} · ${formatDateText(new Date(), "datetime")}`, doc), 14, 17);
       doc.setTextColor(17, 24, 39);
     };
     header();
@@ -233,31 +250,51 @@ export function ExportModal({ open, onClose }: { open: boolean; onClose: () => v
     const pages = doc.getNumberOfPages();
     for (let page = 1; page <= pages; page += 1) {
       doc.setPage(page);
+      setPdfTextFont(doc);
       doc.setFontSize(7.5);
       doc.setTextColor(100, 116, 139);
-      doc.text(pdfSafeText(`${clinicName || "Klinik"} · ${data.fullName}`), 14, pageHeight - 6);
-      doc.text(pdfSafeText(`Sayfa ${page}/${pages}`), pageWidth - 14, pageHeight - 6, { align: "right" });
+      doc.text(pdfSafeText(`${clinicName || "Klinik"} · ${data.fullName}`, doc), 14, pageHeight - 6);
+      doc.text(pdfSafeText(`Sayfa ${page}/${pages}`, doc), pageWidth - 14, pageHeight - 6, { align: "right" });
     }
     doc.save(`${fileName}.pdf`);
   };
 
   const run = async () => {
-    if (keys.length === 0 || busy) return;
+    if (selected.length === 0 || busy) return;
     setBusy(true);
+    setError("");
     try {
-      const response = await fetch(`/api/patients/${data.id}/export`, { cache: "no-store" });
+      const [response, clinic] = await Promise.all([
+        fetch(`/api/patients/${data.id}/export`, { cache: "no-store" }),
+        getLetterhead(),
+      ]);
       if (!response.ok) throw new Error("Hasta verileri okunamadı.");
       const payload = await response.json();
       const patient = (payload?.patient || data) as Raw;
+      // Sunucunun döndürmediği (yetkisiz) bölüm belgeye hiç yazılmaz.
+      const included = Array.isArray(payload?.includedSections) ? (payload.includedSections as string[]) : null;
+      const serverAllows = (key: SectionKey) => {
+        if (!included) return true;
+        if (key === "completedTreatments") return included.includes("examinations");
+        if (key === "plannedTreatments") return included.includes("examinations") || included.includes("treatmentPlans");
+        if (key === "payments") return included.includes("payments");
+        if (key === "appointments") return included.includes("appointments");
+        if (key === "labOrders") return included.includes("labOrders");
+        if (key === "prescriptions") return included.includes("prescriptions");
+        if (key === "documents") return included.includes("documents") || included.includes("consents");
+        return true;
+      };
+      const keys = selected.filter(serverAllows);
       const sections = buildSections(patient, balance, hidePatientPhone, hideDoctor);
       const safeName = data.fullName.trim().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "") || "hasta";
-      const fileName = `hasta-raporu-${safeName}-${new Date().toISOString().slice(0, 10)}`;
-      if (format === "pdf") downloadPdf(sections, fileName);
-      else downloadExcel(sections, fileName);
+      // Dosya adındaki tarih Türkiye günüdür (gece yarısından sonra UTC bir gün geride kalıyordu).
+      const fileName = `hasta-raporu-${safeName}-${turkeyDateKey()}`;
+      if (format === "pdf") await downloadPdf(sections, keys, fileName, clinic.name);
+      else downloadExcel(sections, keys, fileName, clinic.name);
       showToastSafe({ type: "success", message: `${format === "pdf" ? "PDF" : "Excel"} dosyası indirildi.` });
       onClose();
-    } catch (error) {
-      showToastSafe({ type: "error", message: error instanceof Error ? error.message : "Dışa aktarılamadı." });
+    } catch (exportError) {
+      setError(exportError instanceof Error ? exportError.message : "Dışa aktarılamadı.");
     } finally {
       setBusy(false);
     }
@@ -269,40 +306,44 @@ export function ExportModal({ open, onClose }: { open: boolean; onClose: () => v
   ];
 
   return (
-    <Modal
+    <FormModal
       open={open}
-      onClose={() => { if (!busy) onClose(); }}
+      onClose={onClose}
       title="Hasta dosyasını indir"
-      description="İhtiyacınız olan bölümleri seçin. İndirme, KVKK erişim kaydı olarak işlem kayıtlarına yazılır."
+      description="İndirme, KVKK erişim kaydı olarak işlem kayıtlarına yazılır."
       size="lg"
       trackFormChanges={false}
-      footer={(
-        <>
-          <Button variant="secondary" onClick={onClose} disabled={busy}>Vazgeç</Button>
-          <Button icon={Download} onClick={() => void run()} loading={busy} disabled={keys.length === 0}>{format === "pdf" ? "PDF indir" : "Excel indir"}</Button>
-        </>
-      )}
+      onSubmit={run}
+      submitting={busy}
+      submitDisabled={selected.length === 0}
+      submitLabel={format === "pdf" ? "PDF indir" : "Excel indir"}
+      error={error}
     >
-      <div className="space-y-4">
-        <ChoiceCards
-          label="Dosya türü"
-          variant="pills"
-          options={[{ value: "pdf" as Format, label: "PDF (yazdırmak için)" }, { value: "excel" as Format, label: "Excel (düzenlemek için)" }]}
-          value={format}
-          onChange={setFormat}
-        />
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-bold text-slate-800">Hızlı seçim:</span>
-          {PRESETS.map((preset) => (
-            <Button key={preset.label} size="sm" variant="ghost" onClick={() => setSelected(preset.keys)}>{preset.label}</Button>
-          ))}
-        </div>
+      <ChoiceCards
+        label="Dosya türü"
+        variant="pills"
+        options={[{ value: "pdf" as Format, label: "PDF (yazdırmak için)" }, { value: "excel" as Format, label: "Excel (düzenlemek için)" }]}
+        value={format}
+        onChange={setFormat}
+      />
+      <ChoiceCards
+        label="İçerik"
+        columns={3}
+        options={[
+          { value: "treatment" as Mode, label: "Tedavi ve ödeme", description: "Hasta bilgileri, tedaviler, tahsilatlar, hesap" },
+          { value: "all" as Mode, label: "Tüm dosya", description: `${allowed.length} bölümün hepsi` },
+          { value: "custom" as Mode, label: "Özel seçim", description: "Bölümleri tek tek seçin" },
+        ]}
+        value={mode}
+        onChange={setMode}
+      />
+      {mode === "custom" && (
         <ListTable
           columns={columns}
-          rows={SECTIONS}
+          rows={allowed}
           rowKey={(section) => section.key}
           getRowAriaLabel={(section) => section.label}
-          selection={{ selectedIds: selected, onChange: setSelected }}
+          selection={{ selectedIds: custom, onChange: setCustom }}
           mobileCard={(section) => (
             <div>
               <p className="text-sm font-medium text-slate-800">{section.label}</p>
@@ -310,8 +351,8 @@ export function ExportModal({ open, onClose }: { open: boolean; onClose: () => v
             </div>
           )}
         />
-        <Switch checked={hideDoctor} onChange={setHideDoctor} label="Hekim adlarını belgeye yazma" description="Hastaya verilecek çıktılarda hekim sütunları çıkarılır." />
-      </div>
-    </Modal>
+      )}
+      <Switch checked={hideDoctor} onChange={setHideDoctor} label="Hekim adlarını belgeye yazma" description="Hastaya verilecek çıktılarda hekim sütunları çıkarılır." />
+    </FormModal>
   );
 }

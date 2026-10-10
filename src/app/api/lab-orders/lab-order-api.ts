@@ -4,7 +4,7 @@
 // uç bunları ayrı yazıyordu; bazı uçlar (gönderim/geliş) hasta telefonunu
 // gizleme kuralına bakmadan döndürüyordu.
 import type { Prisma } from "@prisma/client";
-import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
+import { shouldHidePatientPhoneForRole, shouldHidePatientPhoneForUser } from "@/lib/patient-visibility-server";
 import { labSourceToken } from "@/lib/lab-firma-integration";
 import { BusinessRuleError } from "@/lib/public-error";
 
@@ -13,10 +13,20 @@ export const LAB_ORDER_INCLUDE = {
   patient: { select: { id: true, fullName: true, phone: true } },
   doctor: { select: { id: true, fullName: true } },
   trips: { orderBy: { order: "asc" } },
+  // "Dönüş gecikti — laboratuvarı arayın" derken numara ekranda olsun (firma
+  // kartındaki telefon; firma ekranı yetkisi gerektirmez, yalnız numara döner).
+  firma: { select: { phone: true } },
 } satisfies Prisma.LabOrderInclude;
 
-/** Yanıttan iç işlem anahtarlarını çıkarır; rol telefonu göremiyorsa maskeler. */
-export async function toPublicLabOrder(order: Record<string, unknown> | null | undefined, role?: string | null): Promise<Record<string, unknown> | null> {
+type LabOrderViewer = Parameters<typeof shouldHidePatientPhoneForUser>[0];
+
+/**
+ * Yanıttan iç işlem anahtarlarını çıkarır; kullanıcı telefonu göremiyorsa maskeler.
+ * Oturum kullanıcısı (auth.user) verilir: rol matrisi + kişiye özel şube izni
+ * (Personel › Şube erişimi) birlikte uygulanır. Yalnız rol adı verilirse eski
+ * (yalnız rol) kural geçerlidir.
+ */
+export async function toPublicLabOrder(order: Record<string, unknown> | null | undefined, viewer?: LabOrderViewer | string | null): Promise<Record<string, unknown> | null> {
   if (!order) return null;
   const { requestKey: _requestKey, ...rest } = order;
   const invoices = Array.isArray(rest.invoices)
@@ -27,7 +37,10 @@ export async function toPublicLabOrder(order: Record<string, unknown> | null | u
       })
     : rest.invoices;
   let patient: unknown = rest.patient;
-  if (role && patient && typeof patient === "object" && await shouldHidePatientPhoneForRole(role)) {
+  const hidePhone = !viewer
+    ? false
+    : typeof viewer === "string" ? await shouldHidePatientPhoneForRole(viewer) : await shouldHidePatientPhoneForUser(viewer);
+  if (hidePhone && patient && typeof patient === "object") {
     patient = { ...(patient as Record<string, unknown>), phone: "***" };
   }
   return { ...rest, invoices, patient };

@@ -3,15 +3,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { RotateCcw } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { Section } from "@/components/ui/Section";
+import { PageSkeleton } from "@/components/ui/PageSkeleton";
 import { Tabs, useTabParam } from "@/components/ui/Tabs";
 import { Toolbar } from "@/components/ui/Toolbar";
 import { SearchInput } from "@/components/ui/SearchInput";
 import { Select } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
+import { Disclosure } from "@/components/ui/Disclosure";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { LoadErrorState } from "@/components/ui/LoadErrorState";
-import { ListRowSkeleton } from "@/components/ui/ListSkeleton";
 import { SaveBar } from "@/components/ui/SaveBar";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
@@ -31,7 +33,13 @@ type Payload = {
   permissionDetails?: Record<string, PermissionDetail>;
   allPermissions: string[];
   map: Record<string, string[]>;
+  /** Matris hiç özelleştirilmemiş: önerilen varsayılan kullanılıyor. */
+  followsDefaults?: boolean;
+  /** Kayıtlı matristen önerilen varsayılana: "Varsayılana döndür" ile eklenecek / kaldırılacak yetkiler. */
+  differencesFromDefaults?: Partial<Record<string, { added: string[]; removed: string[] }>>;
 };
+
+type DefaultDiff = { role: string; added: string[]; removed: string[] };
 
 const CATEGORY_KEYS = ["tumu", "klinik", "finans", "yonetim", "iletisim", "sistem"] as const;
 const CATEGORY_LABELS: Record<(typeof CATEGORY_KEYS)[number], string> = {
@@ -149,6 +157,22 @@ export default function RolePermissionsPage() {
 
   const detail = useCallback((perm: string): PermissionDetail => payload?.permissionDetails?.[perm] ?? { code: perm, title: perm, description: "", risk: "dusuk" }, [payload]);
 
+  // Kayıtlı matrisin önerilen varsayılandan farkı (sunucu hesaplar): "Varsayılana
+  // döndür" neyi değiştireceğini önceden göstermek için. Önceden düğme neyin
+  // değişeceğini söylemeden bütün özelleştirmeleri siliyordu.
+  const defaultDiff = useMemo<DefaultDiff[]>(() => {
+    if (!payload) return [];
+    return payload.roles
+      .map((role) => ({ role, added: payload.differencesFromDefaults?.[role]?.added ?? [], removed: payload.differencesFromDefaults?.[role]?.removed ?? [] }))
+      .filter((item) => item.added.length > 0 || item.removed.length > 0);
+  }, [payload]);
+  const followsDefaults = Boolean(payload) && (payload?.followsDefaults || defaultDiff.length === 0);
+  const titles = (perms: string[], limit = 4) => `${perms.slice(0, limit).map((perm) => detail(perm).title).join(", ")}${perms.length > limit ? ` ve ${perms.length - limit} yetki daha` : ""}`;
+  const defaultDiffLine = (item: DefaultDiff) => [
+    item.added.length > 0 ? `+${item.added.length} eklenecek (${titles(item.added)})` : "",
+    item.removed.length > 0 ? `−${item.removed.length} kaldırılacak (${titles(item.removed)})` : "",
+  ].filter(Boolean).join("; ");
+
   const save = async () => {
     if (!payload) return;
     const lines = diff.map((item) => `• ${roleLabel(item.role)}: ${item.added.length} yetki eklendi, ${item.removed.length} yetki kaldırıldı${item.critical.length ? ` — kritik: ${item.critical.map((perm) => detail(perm).title).slice(0, 3).join(", ")}${item.critical.length > 3 ? "…" : ""}` : ""}`);
@@ -185,10 +209,14 @@ export default function RolePermissionsPage() {
   };
 
   const resetDefaults = async () => {
-    if (!payload) return;
+    if (!payload || defaultDiff.length === 0) return;
     const ok = await confirmDialog({
       title: "Tüm rol yetkileri varsayılana dönsün mü?",
-      message: "Yaptığınız tüm özelleştirmeler silinir ve her rol ilk kurulumdaki yetkilerine döner. Tüm kliniklerde hemen geçerli olur.",
+      message: [
+        "Her rol önerilen varsayılan yetkilerine döner; tüm kliniklerde hemen geçerli olur:",
+        defaultDiff.map((item) => `• ${roleLabel(item.role)}: ${defaultDiffLine(item)}`).join("\n"),
+        isDirty ? "Kaydetmediğiniz değişiklikler de silinir." : "",
+      ].filter(Boolean).join("\n\n"),
       confirmText: "Varsayılana döndür",
       cancelText: "Vazgeç",
       danger: true,
@@ -208,11 +236,21 @@ export default function RolePermissionsPage() {
 
   const header = (
     <PageHeader
-      icon="settings"
+      icon="sa-roles"
       title="Rol Yetkileri"
       description="Klinik rollerinin neleri görüp yapabileceği. Değişiklik tüm kliniklerde hemen geçerli olur."
       stats={payload ? [{ label: "Son değişiklik", value: `${dateTime(payload.updatedAt) ?? "—"}${payload.updatedBy && !payload.updatedBy.startsWith("migration") ? ` · ${payload.updatedBy}` : ""}` }] : undefined}
-      actions={payload ? <Button variant="secondary" icon={RotateCcw} disabled={saving} onClick={() => void resetDefaults()}>Varsayılana döndür</Button> : undefined}
+      actions={payload ? (
+        <Button
+          variant="secondary"
+          icon={RotateCcw}
+          disabled={saving || followsDefaults}
+          title={followsDefaults ? "Önerilen varsayılan zaten kullanılıyor." : undefined}
+          onClick={() => void resetDefaults()}
+        >
+          Varsayılana döndür
+        </Button>
+      ) : undefined}
     />
   );
 
@@ -229,7 +267,7 @@ export default function RolePermissionsPage() {
     return (
       <section className="space-y-4">
         {header}
-        <div className="ui-surface overflow-hidden"><ListRowSkeleton rows={6} /></div>
+        <PageSkeleton header={false} tabs={4} toolbar body="table" rows={8} columns={6} label="Rol yetkileri yükleniyor" />
       </section>
     );
   }
@@ -240,7 +278,8 @@ export default function RolePermissionsPage() {
     <section className="space-y-4">
       {header}
 
-      <div className="flex flex-wrap gap-2" aria-label="Rollerin yetki sayısı">
+      <div className="flex flex-wrap items-center gap-2" aria-label="Rollerin yetki sayısı">
+        {followsDefaults && <Badge tone="success">Önerilen varsayılan kullanılıyor</Badge>}
         {payload.roles.map((role) => (
           <span key={role} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600">
             <span className="font-semibold text-slate-800">{roleLabel(role)}</span>
@@ -248,6 +287,21 @@ export default function RolePermissionsPage() {
           </span>
         ))}
       </div>
+
+      {defaultDiff.length > 0 && (
+        <Disclosure
+          title="Önerilen varsayılandan farklar"
+          summary={`${defaultDiff.length} rolde özelleştirme var`}
+        >
+          <ul className="space-y-1.5 text-sm text-slate-700">
+            {defaultDiff.map((item) => (
+              <li key={item.role}>
+                <span className="font-semibold text-slate-900">{roleLabel(item.role)}:</span> varsayılana dönünce {defaultDiffLine(item)}
+              </li>
+            ))}
+          </ul>
+        </Disclosure>
+      )}
 
       <Tabs ariaLabel="Yetki kategorisi" size="sm" value={category} onChange={setCategory} items={CATEGORY_KEYS.map((key) => ({ key, label: CATEGORY_LABELS[key] }))} />
 
@@ -267,11 +321,7 @@ export default function RolePermissionsPage() {
       ) : (
         <div className="space-y-4">
           {groups.map((group) => (
-            <div key={group.key} className="ui-surface overflow-hidden">
-              <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-4 py-2.5">
-                <h2 className="text-sm font-bold text-slate-900">{group.label}</h2>
-                <span className="text-xs text-slate-500">{group.permissions.length} yetki</span>
-              </div>
+            <Section key={group.key} title={group.label} padding="none" actions={<span className="text-xs text-slate-500">{group.permissions.length} yetki</span>}>
 
               {/* Masaüstü: tüm roller yan yana; başlık satırı kaydırırken görünür kalır. */}
               <div className="hidden overflow-x-auto md:block">
@@ -346,7 +396,7 @@ export default function RolePermissionsPage() {
                   );
                 })}
               </ul>
-            </div>
+            </Section>
           ))}
         </div>
       )}

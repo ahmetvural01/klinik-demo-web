@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, writeAudit } from "@/lib/api";
-import { can } from "@/lib/rbac";
-import type { Role } from "@prisma/client";
+import { hasEffectivePermission, requireAuth, writeAudit } from "@/lib/api";
 import { requireActiveBranch } from "@/lib/branch-context";
 
 function permissionForCategory(category: string, action: "read" | "write" | "delete") {
@@ -36,8 +34,9 @@ export async function DELETE(req: NextRequest, props: { params: Promise<{ id: st
     });
     if (!document) return NextResponse.json({ error: "Belge bulunamadı" }, { status: 404 });
 
+    // Rol yetkisi VE aktif şubenin izin listesi (önceden yalnız rol bakılıyordu).
     const requiredPermission = permissionForCategory(document.category, "delete");
-    if (!(await can(auth.user.role as Role, requiredPermission))) {
+    if (!(await hasEffectivePermission(auth.user, requiredPermission))) {
       return NextResponse.json({ error: "Bu işlem için yetkiniz yok." }, { status: 403 });
     }
 

@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import SignaturePad from "signature_pad";
-import { Eraser, PenLine, Printer, XCircle } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type SignaturePad from "signature_pad";
+import { Eraser, FileSignature, PenLine, Printer, XCircle } from "lucide-react";
 import { showToastSafe } from "@/lib/toast-client";
 import { cachedGet } from "@/lib/client-cache";
-import { Modal } from "@/components/ui/Modal";
+import { FormModal } from "@/components/ui/FormModal";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { FormField } from "@/components/ui/FormField";
@@ -17,6 +17,7 @@ type ConsentTemplate = {
   title: string;
   category: string;
   body: string;
+  isActive?: boolean;
 };
 
 type PatientConsent = {
@@ -42,15 +43,17 @@ type InstitutionInfo = {
   institutionTaxNo?: string;
   institutionRegistryNo?: string;
   institutionWebsite?: string;
-  logoUrl?: string;
 };
 
 type Props = {
   patientId: string;
   patientName: string;
   patientTcNo?: string | null;
-  /** documents:write — yoksa yalnız imzalı onamlar listelenir (imza alanı gösterilmez). */
+  /** documents:write — yoksa yalnız imzalı onamlar listelenir (imza penceresi açılmaz). */
   canWrite?: boolean;
+  /** İmza penceresi dışarıdan da açılabilir ("İşlem ekle > Onam imzalat"). */
+  signOpen: boolean;
+  onSignOpenChange: (open: boolean) => void;
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -62,6 +65,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   ENDODONTI_ONAM: "Kanal Tedavisi",
   PROTEZ_ONAM: "Protez",
   RONTGEN_ONAM: "Görüntüleme",
+  KAPSAMLI_ONAM: "Kapsamlı Onam",
   DIGER: "Diğer",
 };
 
@@ -75,49 +79,74 @@ function escapeHtml(value: string) {
 }
 
 function formatDate(value: string) {
-  return new Date(value).toLocaleString("tr-TR", { dateStyle: "medium", timeStyle: "short" });
+  return new Date(value).toLocaleString("tr-TR", { dateStyle: "medium", timeStyle: "short", timeZone: "Europe/Istanbul" });
 }
 
-export function PatientConsentPanel({ patientId, patientName, patientTcNo, canWrite = true }: Props) {
+function splitConsentSections(body: string) {
+  return body
+    .split(/\n(?=##\s+)/g)
+    .map((section) => section.trim())
+    .filter(Boolean)
+    .map((section) => {
+      const lines = section.split("\n");
+      const hasHeading = /^##\s+/.test(lines[0] || "");
+      const heading = hasHeading ? lines[0].replace(/^##\s*/, "").trim() : "";
+      return { heading, content: (hasHeading ? lines.slice(1) : lines).join("\n").trim() };
+    });
+}
+
+/**
+ * Hastanın onam ve KVKK imzaları. Sekmede yalnız imzalı onamlar listesi
+ * durur; imza alma (metin, imzalayan, imza alanı) ayrı penceredir. Önceden
+ * seyrek kullanılan imza formu tuvaliyle birlikte Belgeler sekmesinin en
+ * üstünde her girişte açık duruyordu ve aynı görünümde iki birincil düğme vardı.
+ * İmza kitaplığı yalnız pencere açılınca yüklenir.
+ */
+export function PatientConsentPanel({ patientId, patientName, patientTcNo, canWrite = true, signOpen, onSignOpenChange }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const padRef = useRef<SignaturePad | null>(null);
   const [templates, setTemplates] = useState<ConsentTemplate[]>([]);
   const [consents, setConsents] = useState<PatientConsent[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
-  const [institution, setInstitution] = useState<InstitutionInfo | null>(null);
   const [signerName, setSignerName] = useState(patientName);
   const [signerIdentityNo, setSignerIdentityNo] = useState(patientTcNo || "");
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  // Onam şablonları yalnız imza penceresi açılınca okunur (Belgeler sekmesinin
+  // her açılışında gereksiz bir istek daha gidiyordu).
+  const [templatesState, setTemplatesState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  /** "Yeniden imzalat": şablonlar gelince seçilecek onamın başlığı. */
+  const pendingTemplateTitleRef = useRef("");
+  const [reloadKey, setReloadKey] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [signatureError, setSignatureError] = useState("");
+  // İmza atıldıysa pencere dışına yanlışlıkla tıklamak pencereyi kapatmasın (imza kaybolmasın).
+  const [drawn, setDrawn] = useState(false);
   const [voidingConsent, setVoidingConsent] = useState<PatientConsent | null>(null);
   const [voidReason, setVoidReason] = useState("");
   const [voiding, setVoiding] = useState(false);
 
+  // Pasifleştirilmiş şablon imzaya sunulmaz (sunucu da reddeder).
+  const activeTemplates = useMemo(() => templates.filter((template) => template.isActive !== false), [templates]);
   const selectedTemplate = useMemo(
-    () => templates.find((template) => template.id === selectedTemplateId) || templates[0],
-    [selectedTemplateId, templates],
+    () => activeTemplates.find((template) => template.id === selectedTemplateId) || activeTemplates[0],
+    [selectedTemplateId, activeTemplates],
   );
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
       setLoading(true);
+      setLoadError("");
       try {
-        const [templateRes, consentRes] = await Promise.all([
-          fetch("/api/consent-templates", { cache: "no-store" }),
-          fetch(`/api/patient-consents?patientId=${encodeURIComponent(patientId)}`, { cache: "no-store" }),
-        ]);
-        const templateBody = await templateRes.json().catch(() => null);
+        const consentRes = await fetch(`/api/patient-consents?patientId=${encodeURIComponent(patientId)}`, { cache: "no-store" });
         const consentBody = await consentRes.json().catch(() => null);
-        if (!templateRes.ok) throw new Error(templateBody?.message || "Onam şablonları yüklenemedi.");
-        if (!consentRes.ok) throw new Error(consentBody?.message || "Hasta onamları yüklenemedi.");
+        if (!consentRes.ok) throw new Error(consentBody?.message || consentBody?.error || "Hasta onamları yüklenemedi.");
         if (cancelled) return;
-        const nextTemplates = Array.isArray(templateBody) ? templateBody : [];
-        setTemplates(nextTemplates);
-        setSelectedTemplateId((current) => current || nextTemplates[0]?.id || "");
         setConsents(Array.isArray(consentBody) ? consentBody : []);
       } catch (error) {
-        showToastSafe({ title: "Onamlar yüklenemedi", message: error instanceof Error ? error.message : "Onam verileri yüklenemedi.", type: "error" });
+        if (!cancelled) setLoadError(error instanceof Error ? error.message : "Onam kayıtları yüklenemedi.");
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -126,75 +155,107 @@ export function PatientConsentPanel({ patientId, patientName, patientTcNo, canWr
     return () => {
       cancelled = true;
     };
-  }, [patientId]);
+  }, [patientId, reloadKey]);
 
+  // Şablonlar pencere ilk açılınca okunur; okunamazsa pencere yeniden açılınca denenir.
+  // İstek bir kez gider (pencere kapanıp açılsa da); yanıt bileşen kapansa da işlenir.
+  const templatesRequestedRef = useRef(false);
   useEffect(() => {
-    let cancelled = false;
-    cachedGet<InstitutionInfo | null>("/api/settings", 60_000)
-      .then((body) => {
-        if (!cancelled && body) setInstitution(body);
+    if (!signOpen || templatesRequestedRef.current) return;
+    templatesRequestedRef.current = true;
+    setTemplatesState("loading");
+    fetch("/api/consent-templates", { cache: "no-store" })
+      .then(async (response) => {
+        const body = await response.json().catch(() => null);
+        if (!response.ok || !Array.isArray(body)) throw new Error("templates");
+        const list = body as ConsentTemplate[];
+        setTemplates(list);
+        const wanted = pendingTemplateTitleRef.current;
+        pendingTemplateTitleRef.current = "";
+        const match = wanted ? list.find((item) => item.isActive !== false && item.title === wanted) : null;
+        if (match) setSelectedTemplateId(match.id);
+        setTemplatesState("ready");
       })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+      .catch(() => {
+        templatesRequestedRef.current = false;
+        setTemplatesState("error");
+      });
+  }, [signOpen]);
 
+  // İmza alanı pencere açılınca kurulur; kitaplık o an indirilir.
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const resize = () => {
-      const ratio = Math.max(window.devicePixelRatio || 1, 1);
-      const rect = canvas.getBoundingClientRect();
-      const data = padRef.current?.isEmpty() ? null : padRef.current?.toDataURL("image/png");
-      canvas.width = Math.max(1, Math.floor(rect.width * ratio));
-      canvas.height = Math.max(1, Math.floor(rect.height * ratio));
-      const context = canvas.getContext("2d");
-      context?.scale(ratio, ratio);
-      padRef.current?.clear();
-      if (data) padRef.current?.fromDataURL(data);
-    };
-
-    padRef.current = new SignaturePad(canvas, {
-      minWidth: 0.7,
-      maxWidth: 2.4,
-      penColor: "#0f172a",
-      backgroundColor: "#ffffff",
-    });
-    resize();
-    window.addEventListener("resize", resize);
+    if (!signOpen) return;
+    setDrawn(false);
+    setSaveError("");
+    setSignatureError("");
+    let disposed = false;
+    let removeResize: (() => void) | null = null;
+    void import("signature_pad").then(({ default: SignaturePadClass }) => {
+      // Pencere gövdesi çizildikten sonra ölç.
+      window.requestAnimationFrame(() => {
+        const canvas = canvasRef.current;
+        if (disposed || !canvas) return;
+        const pad = new SignaturePadClass(canvas, { minWidth: 0.7, maxWidth: 2.4, penColor: "#0f172a", backgroundColor: "#ffffff" });
+        padRef.current = pad;
+        let lastSize = "";
+        const resize = () => {
+          const ratio = Math.max(window.devicePixelRatio || 1, 1);
+          // Yerleşim ölçüsü (offsetWidth/Height) dönüşümden etkilenmez: pencere
+          // açılırken küçükten büyüyerek (scale) geldiği için getBoundingClientRect
+          // tuvali ~%1,5 küçük ölçüyor, imza parmağın biraz sağında/altında çıkıyordu.
+          const width = canvas.offsetWidth;
+          const height = canvas.offsetHeight;
+          const size = `${width}x${height}@${ratio}`;
+          if (size === lastSize) return;
+          lastSize = size;
+          const data = pad.isEmpty() ? null : pad.toDataURL("image/png");
+          canvas.width = Math.max(1, Math.floor(width * ratio));
+          canvas.height = Math.max(1, Math.floor(height * ratio));
+          canvas.getContext("2d")?.scale(ratio, ratio);
+          pad.clear();
+          if (data) void pad.fromDataURL(data);
+        };
+        resize();
+        pad.addEventListener("beginStroke", () => { setSignatureError(""); setDrawn(true); });
+        // Tuvalin genişliği pencere boyutu değişmeden de değişebilir (onam metni
+        // geç yüklenip pencerede kaydırma çubuğu belirince): tuvalin kendisi izlenir.
+        const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => resize()) : null;
+        observer?.observe(canvas);
+        window.addEventListener("resize", resize);
+        removeResize = () => {
+          observer?.disconnect();
+          window.removeEventListener("resize", resize);
+        };
+      });
+    }).catch(() => setSignatureError("İmza alanı yüklenemedi. Sayfayı yenileyip tekrar deneyin."));
     return () => {
-      window.removeEventListener("resize", resize);
+      disposed = true;
+      removeResize?.();
       padRef.current?.off();
       padRef.current = null;
     };
-  }, []);
+  }, [signOpen]);
 
-  function clearSignature() {
+  const clearSignature = () => {
     padRef.current?.clear();
-  }
+    setDrawn(false);
+  };
 
-  function splitConsentSections(body: string) {
-    return body
-      .split(/\n(?=##\s+)/g)
-      .map((section) => section.trim())
-      .filter(Boolean)
-      .map((section) => {
-        const lines = section.split("\n");
-        const heading = lines[0]?.replace(/^##\s*/, "").trim() || "Onam";
-        return { heading, content: lines.slice(1).join("\n").trim() };
-      });
-  }
+  const openSign = useCallback(() => {
+    setSaveError("");
+    setSignatureError("");
+    setDrawn(false);
+    onSignOpenChange(true);
+  }, [onSignOpenChange]);
 
   async function saveConsent() {
-    if (!selectedTemplate || !signerName.trim()) return;
+    if (!selectedTemplate || !signerName.trim() || saving) return;
     if (!padRef.current || padRef.current.isEmpty()) {
-      showToastSafe({ title: "İmza eksik", message: "Kaydetmeden önce imza alanını doldurun.", type: "error" });
+      setSignatureError("Kaydetmeden önce imzayı alın.");
       return;
     }
-
     setSaving(true);
+    setSaveError("");
     try {
       const res = await fetch("/api/patient-consents", {
         method: "POST",
@@ -213,10 +274,10 @@ export function PatientConsentPanel({ patientId, patientName, patientTcNo, canWr
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.error || body?.message || "Onam kaydedilemedi.");
       setConsents((current) => [body as PatientConsent, ...current]);
-      clearSignature();
       showToastSafe({ title: "Onam kaydedildi", message: "İmzalı kayıt hasta dosyasına eklendi.", type: "success" });
+      onSignOpenChange(false);
     } catch (error) {
-      showToastSafe({ title: "Onam kaydedilemedi", message: error instanceof Error ? error.message : "Lütfen tekrar deneyin.", type: "error" });
+      setSaveError(error instanceof Error ? error.message : "Onam kaydedilemedi. Lütfen tekrar deneyin.");
     } finally {
       setSaving(false);
     }
@@ -245,15 +306,16 @@ export function PatientConsentPanel({ patientId, patientName, patientTcNo, canWr
   }
 
   function prepareResign(consent: PatientConsent) {
-    const template = templates.find((item) => item.title === consent.title);
+    const template = activeTemplates.find((item) => item.title === consent.title);
     if (template) setSelectedTemplateId(template.id);
+    // Şablonlar henüz okunmadıysa gelince seçilir.
+    else pendingTemplateTitleRef.current = consent.title;
     setSignerName(consent.signerName);
     setSignerIdentityNo(consent.signerIdentityNo || patientTcNo || "");
-    clearSignature();
-    showToastSafe({ title: "Form hazırlandı", message: "İmzayı yeniden alıp yeni onam kaydı oluşturabilirsiniz.", type: "info" });
+    openSign();
   }
 
-  function buildConsentHtml(consent: PatientConsent) {
+  function buildConsentHtml(consent: PatientConsent, institution: InstitutionInfo | null) {
     const statusText = consent.status === "IPTAL" ? "İPTAL EDİLMİŞ KAYIT" : "AKTİF İMZALI KAYIT";
     const sections = splitConsentSections(consent.body);
     const clinicName = institution?.institutionName || "Klinik";
@@ -280,13 +342,13 @@ export function PatientConsentPanel({ patientId, patientName, patientTcNo, canWr
           İmza tarihi: ${escapeHtml(formatDate(consent.signedAt))}
         </div>
         <div class="sigbox">
-          <img alt="İmza" src="${consent.signatureDataUrl}" />
+          <img alt="İmza" src="${escapeHtml(consent.signatureDataUrl)}" />
           <div>Bu elektronik imza belgenin tüm sayfaları ve ekleri için geçerlidir.</div>
         </div>
       </div>`;
     const sectionHtml = sections.map((section) => `
       <article class="clause">
-        <h2>${escapeHtml(section.heading)}</h2>
+        ${section.heading ? `<h2>${escapeHtml(section.heading)}</h2>` : ""}
         ${renderParagraphs(section.content)}
       </article>
     `).join("");
@@ -380,7 +442,7 @@ export function PatientConsentPanel({ patientId, patientName, patientTcNo, canWr
         Hasta / imzalayan: ${escapeHtml(consent.signerName)}${consent.signerIdentityNo ? ` - ${escapeHtml(consent.signerIdentityNo)}` : ""} · ${escapeHtml(formatDate(consent.signedAt))}
       </div>
       <div class="sigbox">
-        <img alt="İmza" src="${consent.signatureDataUrl}" />
+        <img alt="İmza" src="${escapeHtml(consent.signatureDataUrl)}" />
         <div>İmza tüm sayfalar için geçerlidir.</div>
       </div>
     </footer>
@@ -389,15 +451,18 @@ export function PatientConsentPanel({ patientId, patientName, patientTcNo, canWr
 </html>`;
   }
 
-  function printConsent(consent: PatientConsent) {
-    const blob = new Blob([buildConsentHtml(consent)], { type: "text/html;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const win = window.open(url, "_blank", "width=900,height=1000");
+  async function printConsent(consent: PatientConsent) {
+    // Pencere tıklamayla hemen açılır (açılır pencere engeline takılmasın),
+    // antet okununca belge içine yazılır. Antet ayar yetkisi gerektirmez.
+    const win = window.open("", "_blank", "width=900,height=1000");
     if (!win) {
-      URL.revokeObjectURL(url);
       showToastSafe({ title: "Yazdırma penceresi açılamadı", message: "Tarayıcı açılır pencereyi engellemiş olabilir.", type: "error" });
       return;
     }
+    const institution = await cachedGet<InstitutionInfo | null>("/api/documents/letterhead", 5 * 60_000).catch(() => null);
+    const blob = new Blob([buildConsentHtml(consent, institution)], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    win.location.href = url;
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
   }
 
@@ -423,71 +488,31 @@ export function PatientConsentPanel({ patientId, patientName, patientTcNo, canWr
     const isVoided = consent.status === "IPTAL";
     return (
       <div className="flex justify-end gap-1.5">
-        <IconButton icon={Printer} title="Yazdır" size="sm" onClick={() => printConsent(consent)} />
+        <IconButton icon={Printer} title="Yazdır" size="sm" onClick={() => void printConsent(consent)} />
         {canWrite && <IconButton icon={PenLine} title="Yeniden imzalat" size="sm" onClick={() => prepareResign(consent)} />}
         {canWrite && !isVoided && <IconButton icon={XCircle} title="Onamı iptal et" tone="danger" size="sm" onClick={() => { setVoidingConsent(consent); setVoidReason(""); }} />}
       </div>
     );
   }
 
+  const templateSections = selectedTemplate ? splitConsentSections(selectedTemplate.body) : [];
+
   return (
-    <section className="ui-surface space-y-4 p-4 sm:p-5" aria-label="Onam ve KVKK imzası">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <h2 className="text-base font-bold text-slate-900">Onam ve KVKK imzası</h2>
-          <p className="mt-0.5 text-sm text-slate-500">
-            {canWrite ? "Onam metnini hastaya okutun, aşağıdaki alana imzasını alın. Tek imza belgenin tamamı için geçerlidir." : "Hastanın imzaladığı onamlar."}
-          </p>
-        </div>
-        <Badge tone={activeCount > 0 ? "success" : "warning"}>{activeCount > 0 ? `${activeCount} geçerli onam` : "Geçerli onam yok"}</Badge>
-      </div>
-
-      {canWrite && (
-        <div className="space-y-3">
-          {templates.length > 1 && (
-            <FormField label="Onam metni" htmlFor="consent-template">
-              <Select id="consent-template" value={selectedTemplate?.id || ""} onChange={(event) => setSelectedTemplateId(event.target.value)}>
-                {templates.map((template) => <option key={template.id} value={template.id}>{template.title}</option>)}
-              </Select>
-            </FormField>
-          )}
-          <div className="rounded-lg border border-slate-200 bg-slate-50">
-            <p className="border-b border-slate-200 px-3 py-2 text-sm font-semibold text-slate-800">
-              {selectedTemplate?.title || "Onam metni"}
-              <span className="ml-2 text-xs font-normal text-slate-500">{CATEGORY_LABELS[selectedTemplate?.category || ""] || ""}</span>
-            </p>
-            <p className="max-h-56 overflow-auto whitespace-pre-wrap px-3 py-2 text-sm leading-relaxed text-slate-700">
-              {loading && !selectedTemplate ? "Onam metni yükleniyor…" : selectedTemplate?.body || "Onam şablonu bulunamadı. Ayarlar'dan onam şablonu ekleyin."}
-            </p>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <FormField label="İmzalayan" htmlFor="consent-signer" required hint="Hasta değilse veli / vasinin adı.">
-              <Input id="consent-signer" value={signerName} onChange={(event) => setSignerName(event.target.value)} />
-            </FormField>
-            <FormField label="TC / kimlik no" htmlFor="consent-identity">
-              <Input id="consent-identity" inputMode="numeric" value={signerIdentityNo} onChange={(event) => setSignerIdentityNo(event.target.value.replace(/\D/g, "").slice(0, 11))} className="font-mono" />
-            </FormField>
-          </div>
-          <div>
-            <div className="mb-1.5 flex items-center justify-between gap-2">
-              <span className="text-xs font-bold text-slate-800">İmza alanı</span>
-              <Button variant="ghost" size="sm" icon={Eraser} onClick={clearSignature}>İmzayı temizle</Button>
-            </div>
-            <canvas ref={canvasRef} aria-label="Hastanın imza alanı" className="h-44 w-full touch-none rounded-lg border-2 border-dashed border-slate-300 bg-white" />
-            <p className="mt-1 text-xs text-slate-500">Parmakla veya kalemle imzalatın. Yanlış olursa “İmzayı temizle”.</p>
-          </div>
-          <div className="flex justify-end">
-            <Button onClick={() => void saveConsent()} loading={saving} disabled={!selectedTemplate || !signerName.trim()}>İmzalı onamı kaydet</Button>
-          </div>
-        </div>
-      )}
-
+    <>
       <ListTable
-        header={<h3 className="border-b border-slate-100 px-4 py-2.5 text-sm font-bold text-slate-800">İmzalı onamlar</h3>}
+        title="Onamlar"
+        actions={(
+          <>
+            {!loading && !loadError && <Badge tone={activeCount > 0 ? "success" : "warning"}>{activeCount > 0 ? `${activeCount} geçerli onam` : "Geçerli onam yok"}</Badge>}
+            {canWrite && <Button size="sm" variant="secondary" icon={FileSignature} onClick={openSign}>Onam imzalat</Button>}
+          </>
+        )}
         columns={consentColumns}
         rows={consents}
         rowKey={(consent) => consent.id}
         loading={loading && consents.length === 0}
+        error={loadError || null}
+        onRetry={() => setReloadKey((key) => key + 1)}
         skeletonRows={2}
         rowClassName={(consent) => (consent.status === "IPTAL" ? "opacity-70" : "")}
         emptyText="Henüz imzalı onam yok"
@@ -502,28 +527,89 @@ export function PatientConsentPanel({ patientId, patientName, patientTcNo, canWr
         )}
       />
 
-      <Modal
+      {canWrite && (
+        <FormModal
+          open={signOpen}
+          onClose={() => { if (!saving) onSignOpenChange(false); }}
+          module="clipboard"
+          title="Onam imzalat"
+          description={patientName}
+          size="lg"
+          onSubmit={saveConsent}
+          submitting={saving}
+          submitDisabled={!selectedTemplate || !signerName.trim()}
+          error={saveError}
+          isDirty={drawn}
+        >
+          {activeTemplates.length > 1 && (
+            <FormField label="Onam metni" htmlFor="consent-template">
+              <Select id="consent-template" value={selectedTemplate?.id || ""} onChange={(event) => setSelectedTemplateId(event.target.value)}>
+                {activeTemplates.map((template) => <option key={template.id} value={template.id}>{template.title}</option>)}
+              </Select>
+            </FormField>
+          )}
+          <div className="rounded-lg border border-slate-200 bg-slate-50">
+            <p className="border-b border-slate-200 px-3 py-2 text-sm font-semibold text-slate-800">
+              {selectedTemplate?.title || "Onam metni"}
+              {selectedTemplate && <span className="ml-2 text-xs font-normal text-slate-500">{CATEGORY_LABELS[selectedTemplate.category] || ""}</span>}
+            </p>
+            <div className="max-h-56 space-y-2 overflow-auto px-3 py-2 text-sm leading-relaxed text-slate-700">
+              {(templatesState === "idle" || templatesState === "loading") && !selectedTemplate ? (
+                <p>Onam metni yükleniyor…</p>
+              ) : templatesState === "error" && !selectedTemplate ? (
+                <p>Onam şablonları yüklenemedi. Pencereyi kapatıp yeniden açın.</p>
+              ) : templateSections.length > 0 ? templateSections.map((section, index) => (
+                <section key={`${section.heading}-${index}`}>
+                  {section.heading && <h3 className="font-semibold text-slate-900">{section.heading}</h3>}
+                  <p className="whitespace-pre-wrap">{section.content}</p>
+                </section>
+              )) : (
+                <p>Onam şablonu bulunamadı. Ayarlar’dan onam şablonu ekleyin.</p>
+              )}
+            </div>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <FormField label="İmzalayan" htmlFor="consent-signer" required hint="Hasta değilse veli / vasinin adı.">
+              <Input id="consent-signer" value={signerName} onChange={(event) => setSignerName(event.target.value)} />
+            </FormField>
+            <FormField label="TC / kimlik no" htmlFor="consent-identity">
+              <Input id="consent-identity" inputMode="numeric" value={signerIdentityNo} onChange={(event) => setSignerIdentityNo(event.target.value.replace(/\D/g, "").slice(0, 11))} className="font-mono" />
+            </FormField>
+          </div>
+          <div>
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <span className="text-xs font-bold text-slate-800">İmza</span>
+              <Button variant="ghost" size="sm" icon={Eraser} onClick={clearSignature}>İmzayı temizle</Button>
+            </div>
+            <canvas ref={canvasRef} aria-label="Hastanın imza alanı" className="h-44 w-full touch-none rounded-lg border-2 border-dashed border-slate-300 bg-white" />
+            {signatureError
+              ? <p role="alert" className="mt-1 text-xs font-medium text-red-600">{signatureError}</p>
+              : <p className="mt-1 text-xs text-slate-500">Parmakla ya da kalemle imzalatın.</p>}
+          </div>
+        </FormModal>
+      )}
+
+      <FormModal
         open={Boolean(voidingConsent)}
         onClose={() => { if (!voiding) setVoidingConsent(null); }}
         title="İmzalı onamı iptal et"
         description="İmzalı belge değiştirilmez; iptal sebebiyle arşivde saklanır. Ardından yeni imza alabilirsiniz."
         size="md"
-        footer={(
-          <>
-            <Button variant="secondary" onClick={() => setVoidingConsent(null)} disabled={voiding}>Vazgeç</Button>
-            <Button variant="danger" onClick={() => void voidConsent()} loading={voiding} disabled={voidReason.trim().length < 3}>Onamı iptal et</Button>
-          </>
-        )}
+        onSubmit={voidConsent}
+        submitting={voiding}
+        submitDisabled={voidReason.trim().length < 3}
+        submitLabel="Onamı iptal et"
+        submitVariant="danger"
       >
         {voidingConsent && (
-          <div className="space-y-3">
+          <>
             <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700">{voidingConsent.title}</p>
             <FormField label="İptal sebebi" htmlFor="consent-void-reason" required hint="En az 3 harf.">
               <Textarea id="consent-void-reason" rows={3} value={voidReason} onChange={(event) => setVoidReason(event.target.value)} placeholder="Örn. hasta imzayı yanlış attı, yeniden imza alınacak." />
             </FormField>
-          </div>
+          </>
         )}
-      </Modal>
-    </section>
+      </FormModal>
+    </>
   );
 }

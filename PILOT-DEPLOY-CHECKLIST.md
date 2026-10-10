@@ -28,14 +28,11 @@ npx prisma migrate deploy
 - `prisma migrate reset`, `prisma migrate dev`, `prisma db push --force-reset` YASAK — bunlar veri kaybına yol açabilir.
 - Render/benzeri platformlarda `start:render` (`scripts/start-render.mjs`) bunu her başlangıçta otomatik çalıştırır. Kendi altyapınızda manuel deploy ediyorsanız bu adımı `next start`'tan ÖNCE elle çalıştırın.
 
-## 3. Fine-grained permission backfill (ZORUNLU, otomatik değil)
+## 3. Rol yetkileri: güncel varsayılanı gözden geçirin (elle, deploy sonrası)
 
-```bash
-npm run backfill:fine-grained-permissions
-```
-
-- **`start:render` bu adımı OTOMATİK ÇALIŞTIRMAZ** — deploy'dan sonra elle çalıştırılmalı. Atlanırsa, daha önce en az bir kez kaydedilmiş bir Rol Yetkileri yapılandırması olan kurumlarda DOKTOR/ASISTAN/BANKO/MUHASEBE yeni ince taneli izinleri (appointments:delete, examinations:delete, installments:delete, dashboard:stats) kaybedebilir.
-- Bu turda doğrulandı: script idempotent (aynı DB'de iki kez çalıştırıldı, ikincisinde "Tüm roller zaten güncel" dedi, hiçbir değişiklik yapmadı), tek atomik `upsert`, hata durumunda `exitCode=1` döner, hangi role'e ne eklendiğini loglar.
+- Rol Yetkileri hiç kaydedilmemiş kurulum koddaki güncel varsayılan matrisi otomatik kullanır; bir şey yapmanız gerekmez.
+- Matris daha önce kaydedildiyse (ekrandan ya da eski betikle): **Süperadmin › Rol Yetkileri** ekranında "önerilen varsayılandan farklar"ı inceleyin; bilerek yapılmış bir özelleştirme yoksa **"Varsayılana döndür"** ile güncel varsayılanı uygulayın.
+- `npm run backfill:fine-grained-permissions` artık **çalıştırılmaz** (yalnız uyarı yazar, matrise dokunmaz). Eski betik güncel matriste bilerek ayrılan izinleri geri ekliyordu (doktora randevu iptali, banko/asistana taksit planı iptali, herkese kurum özeti) ve kurulumu varsayılan güncellemelerinden koparıyordu.
 
 ## 4. Production build
 

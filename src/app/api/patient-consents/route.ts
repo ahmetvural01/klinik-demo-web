@@ -12,9 +12,11 @@ function isLikelySignatureDataUrl(value: unknown) {
     && /^data:image\/png;base64,[A-Za-z0-9+/=\r\n]+$/.test(value);
 }
 
+// KAPSAMLI_ONAM: sistemin kurum için oluşturduğu "Kapsamlı Klinik Onam ve KVKK Paketi"
+// şablonunun kategorisi (consent-templates). Listede olmadığında bu şablonla imza hep reddediliyordu.
 const CONSENT_CATEGORIES = new Set([
   "KVKK", "ACIK_RIZA", "TEDAVI_ONAM", "CERRAHI_ONAM", "IMPLANT_ONAM",
-  "ENDODONTI_ONAM", "PROTEZ_ONAM", "RONTGEN_ONAM", "DIGER",
+  "ENDODONTI_ONAM", "PROTEZ_ONAM", "RONTGEN_ONAM", "KAPSAMLI_ONAM", "DIGER",
 ]);
 
 export async function GET(req: NextRequest) {

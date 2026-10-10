@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import type { PaymentMethod } from "@prisma/client";
+import { Prisma, type PaymentMethod } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { deleteIntegratedPayment, toPublicPayment, updateIntegratedPayment } from "@/lib/payment-ledger";
@@ -123,6 +123,22 @@ export async function PATCH(request: NextRequest, props: Params) {
   const editableFields = ["amount", "method", "description", "posId", "createdAt", "doctorId"];
   if (!editableFields.some((field) => body[field] !== undefined)) {
     return NextResponse.json({ message: "Güncellenecek alan bulunamadı" }, { status: 400 });
+  }
+
+  // Tutarı düşürmek kısmi iadedir; tarih ve doktor değişikliği kasayı ve
+  // hakedişi geriye dönük değiştirir. Bunlar tahsilat iptaliyle aynı izni
+  // (payments:refund) ister. Açıklama, yöntem ve POS tahsilat yazma izniyle
+  // düzeltilir. Önceden banko eski bir 5.000 TL nakit tahsilatı 1 TL'ye
+  // çekebiliyordu.
+  const lowersAmount = nextAmount !== undefined && new Prisma.Decimal(nextAmount).lt(existing.amount);
+  const changesDate = body.createdAt !== undefined && body.createdAt !== null
+    && new Date(String(body.createdAt)).getTime() !== new Date(existing.createdAt).getTime();
+  const changesDoctor = body.doctorId !== undefined && (body.doctorId || null) !== existing.doctorId;
+  if (lowersAmount || changesDate || changesDoctor) {
+    const refundAuth = await requireAuth("payments:refund");
+    if (refundAuth.error) {
+      return NextResponse.json({ message: "Tutarı düşürmek, tarihi ya da doktoru değiştirmek iade sayılır; muhasebe ya da yönetici yapar." }, { status: 403 });
+    }
   }
 
   // Bu ödeme bir doktorun cirosuna/ödemesine sayılıyorsa ve o dönem için

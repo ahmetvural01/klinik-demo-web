@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { bumpRealtimeInstitution, requireAuth, writeAudit } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 import {
   applyLabInvoiceFirmaIntegration,
   labSourceToken,
@@ -10,18 +10,9 @@ import { formatZodError, labInvoiceUpdateSchema } from "@/lib/validators";
 import { rebuildFirmaPaymentAllocations } from "@/lib/firma-payment-allocation";
 import { requireActiveBranch } from "@/lib/branch-context";
 import { BusinessRuleError, publicErrorResponse } from "@/lib/public-error";
-import { assertDebtReductionAllowed } from "@/app/api/lab-orders/lab-order-api";
+import { LAB_ORDER_INCLUDE, assertDebtReductionAllowed, toPublicLabOrder } from "@/app/api/lab-orders/lab-order-api";
 
 type RouteParams = { params: Promise<{ id: string; invoiceId: string }> };
-
-function publicOrder(order: any) {
-  if (!order) return order;
-  const { requestKey: _orderRequestKey, ...rest } = order;
-  return {
-    ...rest,
-    invoices: (rest.invoices || []).map(({ requestKey: _requestKey, ...invoice }: any) => invoice),
-  };
-}
 
 async function loadInvoice(id: string, invoiceId: string, institutionId: string, branchId: string) {
   return (prisma as any).labOrderInvoice.findFirst({
@@ -48,17 +39,11 @@ async function loadInvoice(id: string, invoiceId: string, institutionId: string,
   });
 }
 
+// Yanıt diğer lab uçlarıyla aynı biçimde ve aynı maskeleme kuralıyla döner
+// (toPublicLabOrder). Önceden fatura düzeltme/iptal yanıtı telefonu
+// maskelemiyordu; telefonu göremeyen rol hastanın numarasını görüyordu.
 async function loadFreshOrder(tx: any, id: string) {
-  const order = await tx.labOrder.findUnique({
-    where: { id },
-    include: {
-      invoices: { where: { status: "ACTIVE" }, orderBy: { issuedAt: "asc" } },
-      patient: { select: { id: true, fullName: true, phone: true } },
-      doctor: { select: { id: true, fullName: true } },
-      trips: { orderBy: { order: "asc" } },
-    },
-  });
-  return publicOrder(order);
+  return tx.labOrder.findUnique({ where: { id }, include: LAB_ORDER_INCLUDE });
 }
 
 async function updateOrderInvoiceSummary(tx: any, orderId: string) {
@@ -186,8 +171,7 @@ export async function PATCH(req: NextRequest, props: RouteParams) {
     });
 
     await writeAudit(auth.user.id, "LAB_ORDER_INVOICE_UPDATE", `Laboratuvar faturası düzeltildi (${params.invoiceId})`);
-    await bumpRealtimeInstitution(auth.user.institutionId || null);
-    return NextResponse.json(fresh);
+    return NextResponse.json(await toPublicLabOrder(fresh, auth.user));
   } catch (error) {
     if (error instanceof Error && error.message === "LAB_INVOICE_CHANGED") {
       return NextResponse.json({ error: "Fatura başka bir işlemde değiştirildi. Listeyi yenileyip tekrar deneyin." }, { status: 409 });
@@ -257,8 +241,7 @@ export async function DELETE(_req: NextRequest, props: RouteParams) {
     });
 
     await writeAudit(auth.user.id, "LAB_ORDER_INVOICE_CANCEL", `Laboratuvar faturası iptal edildi (${params.invoiceId})`);
-    await bumpRealtimeInstitution(auth.user.institutionId || null);
-    return NextResponse.json(fresh);
+    return NextResponse.json(await toPublicLabOrder(fresh, auth.user));
   } catch (error) {
     if (error instanceof Error && error.message === "LAB_INVOICE_CHANGED") {
       return NextResponse.json({ error: "Fatura başka bir işlemde değiştirildi. Listeyi yenileyip tekrar deneyin." }, { status: 409 });

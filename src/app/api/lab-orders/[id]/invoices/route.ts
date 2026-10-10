@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { bumpRealtimeInstitution, requireAuth, writeAudit } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 import { applyLabInvoiceFirmaIntegration } from "@/lib/lab-firma-integration";
 import { requireActiveBranch } from "@/lib/branch-context";
 import { formatZodError, labInvoiceCreateSchema } from "@/lib/validators";
 import { publicErrorResponse } from "@/lib/public-error";
 import { isReworkOrder } from "@/lib/lab-workflow";
-import { toPublicLabOrder } from "@/app/api/lab-orders/lab-order-api";
+import { LAB_ORDER_INCLUDE, toPublicLabOrder } from "@/app/api/lab-orders/lab-order-api";
 
 /**
  * Yeniden yapım (ücretsiz) işi mi? Yalnız sistemin yazdığı işarete bakılır;
@@ -198,20 +198,14 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     return NextResponse.json({ error: publicError.message }, { status: publicError.status });
   }
 
-  const fresh = await (prisma as any).labOrder.findFirst({
+  const fresh = await prisma.labOrder.findFirst({
     where: { id: params.id, institutionId: auth.user.institutionId, branchId: branch.branchId },
-    include: {
-      invoices: { where: { status: "ACTIVE" }, orderBy: { issuedAt: "asc" } },
-      patient: { select: { id: true, fullName: true, phone: true } },
-      doctor: { select: { id: true, fullName: true } },
-      trips: { orderBy: { order: "asc" } },
-    },
+    include: LAB_ORDER_INCLUDE,
   });
 
   await writeAudit(auth.user.id, "LAB_ORDER_INVOICE_CREATE", `Laboratuvar faturası eklendi (${params.id})`);
-  await bumpRealtimeInstitution(auth.user.institutionId || null);
   if (fresh) {
-    return NextResponse.json(await toPublicLabOrder(fresh, auth.user.role), { status: 201 });
+    return NextResponse.json(await toPublicLabOrder(fresh, auth.user), { status: 201 });
   }
   const { requestKey: _requestKey, ...publicInvoice } = invoice;
   return NextResponse.json(publicInvoice, { status: 201 });

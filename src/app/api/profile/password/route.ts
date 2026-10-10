@@ -29,9 +29,11 @@ export async function PUT(request: NextRequest) {
   const user = await prisma.user.findUnique({ where: { id: auth.user.id } });
   if (!user) return NextResponse.json({ message: "Kullanıcı bulunamadı" }, { status: 404 });
 
+  // 401 "oturum yok" demektir (genel oturum dinleyicisi çıkışa atabilir);
+  // yanlış mevcut şifre bir alan hatasıdır.
   const valid = await bcrypt.compare(oldPassword, user.passwordHash);
   if (!valid) {
-    return NextResponse.json({ message: "Mevcut şifre yanlış" }, { status: 401 });
+    return NextResponse.json({ message: "Mevcut şifre yanlış.", field: "currentPassword" }, { status: 400 });
   }
 
   const passwordHash = await bcrypt.hash(newPassword, 10);

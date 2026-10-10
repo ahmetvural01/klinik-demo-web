@@ -519,7 +519,8 @@ export async function buildDataConsistencyReport(institutionId?: string | null, 
     title: "Olası mükerrer tahsilat",
     detail: "Aynı hasta, doktor, yöntem ve tutarla aynı dakika içinde birden fazla tahsilat bulundu.",
     count: suspectedDuplicatePayments,
-    action: "Muhasebe defterinde kayıtları karşılaştırın; gerçek tekrarları silin.",
+    // Tahsilat silinmez, iptal edilir (defter kuralı).
+    action: "Gelir ve gider listesinde kayıtları karşılaştırın; gerçek tekrarları iptal edin.",
     href: "/muhasebe?tab=defter",
   });
 
@@ -537,7 +538,7 @@ export async function buildDataConsistencyReport(institutionId?: string | null, 
   addIssue(issues, {
     id: "firma-duplicate-name",
     severity: "warning",
-    area: "Satın Alma",
+    area: "Satın alma",
     title: "Aynı isimli firma kartı",
     detail: "Aynı firmanın birden fazla kartı borç, ödeme ve laboratuvar geçmişini bölebilir.",
     count: duplicateFirmaNames,
@@ -560,11 +561,16 @@ export async function buildDataConsistencyReport(institutionId?: string | null, 
     id: "payment-fully-orphaned",
     severity: "critical",
     area: "Muhasebe",
-    title: "Ne hastaya ne doktora bağlı tahsilat (platform geneli)",
-    detail: "Bu kayıtların hangi kuruma ait olduğu tespit edilemiyor; eski/legacy veri olabilir. Yeni kayıt oluşumu /api/kasa üzerinden artık engellendi.",
+    // Tarama kurumla sınırlıdır (bkz. paymentInstitutionScope); metin ve
+    // bağlantı klinik kullanıcısına göre yazılır (önceden "platform geneli" ve
+    // kliniğin açamadığı /superadmin/audit bağlantısı vardı).
+    title: "Ne hastaya ne doktora bağlı tahsilat",
+    detail: "Bu tahsilatlar hiçbir hastanın bakiyesine ve hakedişe yansımıyor.",
     count: paymentFullyOrphaned,
-    action: "Veritabanından ilgili kaydı bulup manuel olarak bir hasta/doktor ile ilişkilendirin veya silin.",
-    href: "/superadmin/audit",
+    // Tahsilatın hastası sonradan değiştirilemez; hastasız tahsilata yalnız
+    // doktor seçmek onu eski usul hakediş ödemesi saydırır (bkz. lib/hakedis).
+    action: "Gelir ve gider listesinde kaydı bulup iptal edin; tahsilat gerçekse doğru hastanın dosyasından yeniden alın.",
+    href: "/muhasebe?tab=defter",
   });
 
   addIssue(issues, {
@@ -637,7 +643,7 @@ export async function buildDataConsistencyReport(institutionId?: string | null, 
   addIssue(issues, {
     id: "purchase-total-mismatch",
     severity: "critical",
-    area: "Satın Alma",
+    area: "Satın alma",
     title: "Satın alma toplamı ile firma borcu uyuşmuyor",
     detail: "Satır toplamı, bağlı firma cari hareketinden farklıysa stok maliyeti ile borç kaydı ayrışır.",
     count: purchaseTotalMismatch,
@@ -720,7 +726,7 @@ export async function buildDataConsistencyReport(institutionId?: string | null, 
     detail: "Taksit durumu ile kalan tutar uyumsuz.",
     count: taksitPaidMismatch,
     action: "Taksit planında ödeme durumunu yeniden hesaplatın veya düzeltin.",
-    href: "/muhasebe?tab=alacak",
+    href: "/muhasebe?tab=alacaklar&gorunum=taksitler",
   });
 
   addIssue(issues, {
@@ -731,7 +737,7 @@ export async function buildDataConsistencyReport(institutionId?: string | null, 
     detail: "Tahsil edilmiş taksit açık kalmış olabilir.",
     count: taksitOpenMismatch,
     action: "Taksit durumunu kapalı olarak güncelleyin.",
-    href: "/muhasebe?tab=alacak",
+    href: "/muhasebe?tab=alacaklar&gorunum=taksitler",
   });
 
   addIssue(issues, {

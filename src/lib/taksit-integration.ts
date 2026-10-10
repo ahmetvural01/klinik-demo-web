@@ -7,7 +7,7 @@
  */
 
 import { Prisma } from "@prisma/client";
-import type { PaymentMethod } from "@prisma/client";
+import type { PaymentMethod, TaksitStatus } from "@prisma/client";
 
 // Taksit kalan/ödenen tutarları DB'den Prisma.Decimal olarak gelir. Bunları
 // JS number'a çevirip float aritmetiğiyle işlemek (önceki hâl: `Number(...)`
@@ -59,9 +59,15 @@ export async function applyTaksitIntegration(
 
   // En eski vadeli, gecikmiş / bekleyen taksitler — yalnızca ödemenin ait
   // olduğu doktorun planları (doctorId verilmemişse eski davranış korunur).
+  // İptal edilmiş ya da tamamlanmış planın taksitine tahsilat işlenmez.
   const pendingTaksitler = await tx.taksit.findMany({
     where: {
-      plan: { patientId, ...(doctorId ? { doctorId } : {}), ...(branchId ? { branchId } : {}) },
+      plan: {
+        patientId,
+        status: { in: ["AKTIF", "DEVAM_EDIYOR"] },
+        ...(doctorId ? { doctorId } : {}),
+        ...(branchId ? { branchId } : {}),
+      },
       status: { in: ["GECIKTI", "BEKLIYOR"] },
     },
     orderBy: [{ vadeDate: "asc" }, { siraNo: "asc" }],
@@ -76,6 +82,7 @@ export async function applyTaksitIntegration(
   let remaining = new Prisma.Decimal(amount);
   let applied = ZERO;
   const odeDate = tarih ?? new Date();
+  const touchedPlanIds = new Set<string>();
 
   for (const taksit of pendingTaksitler) {
     if (remaining.lessThanOrEqualTo(ZERO)) break;
@@ -129,44 +136,86 @@ export async function applyTaksitIntegration(
     remaining = remaining.minus(pay);
     applied = applied.plus(pay);
     result.updatedCount++;
+    touchedPlanIds.add(taksit.planId);
+  }
+
+  // Ödeme alan ama bitmeyen plan "Devam ediyor" olur (taksit tahsilatı ucu ve
+  // refreshTaksitAndPlanStatus ile aynı kural). Tahsilat düzeltmesi önce
+  // bağları geri alıp planı "Aktif"e döndürdüğü için burada da yazılmalı.
+  const ongoing = [...touchedPlanIds].filter((planId) => !result.completedPlanIds.includes(planId));
+  if (ongoing.length > 0) {
+    await tx.taksitPlan.updateMany({
+      where: { id: { in: ongoing }, status: "AKTIF" },
+      data: { status: "DEVAM_EDIYOR" },
+    });
   }
 
   result.applied = applied.toNumber();
   return result;
 }
 
+/**
+ * Tahsilat geri alındıktan (iptal/düzeltme) sonra taksidin ve planın durumu.
+ * İptal edilmiş plan ya da iptal edilmiş taksit geri AÇILMAZ: önceden iptal
+ * edilmiş plana bağlı bir tahsilat iptal edilince plan yeniden "Süren", taksit
+ * "Bekliyor" oluyor; plan "Tahsil et" ile listeye dönüyor ve gecikme /
+ * hatırlatma sırasına girebiliyordu. Bu durumda ödenen ve kalan tutarlar
+ * düzeltilir (çağıran zaten yazdı), plan "İptal" kalır; ödenmemiş hale gelen
+ * taksit "Ödendi" yerine "İptal" olur (plan iptalinin kuralı), asla "Bekliyor" olmaz.
+ */
 async function refreshTaksitAndPlanStatus(tx: Prisma.TransactionClient, taksitId: string) {
   const taksit = await tx.taksit.findUnique({
     where: { id: taksitId },
-    select: { id: true, planId: true, tutar: true, odenen: true, kalan: true, status: true },
+    select: { id: true, planId: true, kalan: true, status: true, plan: { select: { status: true } } },
   });
   if (!taksit) return;
 
-  const kalan = taksit.kalan as unknown as Prisma.Decimal;
-  const nextStatus = kalan.lessThanOrEqualTo(ZERO) ? "ODENDI" : "BEKLIYOR";
-  await tx.taksit.update({
-    where: { id: taksit.id },
-    data: { status: nextStatus },
-  });
+  const planCancelled = taksit.plan.status === "IPTAL";
+  const paidOff = (taksit.kalan as unknown as Prisma.Decimal).lessThanOrEqualTo(ZERO);
+  // İptal edilmiş planda ödenmemiş kalan taksit iptal sayılır (plan iptalinin
+  // kuralıyla aynı: ödenmemiş taksitler iptal edilir, ödenmişler kalır).
+  let nextStatus: TaksitStatus;
+  if (planCancelled) nextStatus = paidOff ? "ODENDI" : "IPTAL";
+  else if (taksit.status === "IPTAL") nextStatus = "IPTAL";
+  else nextStatus = paidOff ? "ODENDI" : "BEKLIYOR";
+  if (nextStatus !== taksit.status) {
+    await tx.taksit.update({
+      where: { id: taksit.id },
+      data: { status: nextStatus },
+    });
+  }
+  if (planCancelled) return;
 
-  const planTaksitler: { status: string }[] = await tx.taksit.findMany({
+  const planTaksitler: { status: string; odenen: Prisma.Decimal }[] = await tx.taksit.findMany({
     where: { planId: taksit.planId },
-    select: { status: true },
+    select: { status: true, odenen: true },
   });
-  const allDone = planTaksitler.every((t) => t.status === "ODENDI" || t.status === "IPTAL");
-  const anyPaidOrWaiting = planTaksitler.some((t) => t.status === "ODENDI" || t.status === "BEKLIYOR" || t.status === "GECIKTI");
+  // İptal edilmiş taksitler planın süren/tamamlanan hesabına girmez.
+  const active = planTaksitler.filter((t) => t.status !== "IPTAL");
+  const allDone = active.every((t) => t.status === "ODENDI");
+  const anyPaid = active.some((t) => t.status === "ODENDI" || new Prisma.Decimal(t.odenen).gt(ZERO));
   await tx.taksitPlan.update({
     where: { id: taksit.planId },
-    data: { status: allDone ? "TAMAMLANDI" : anyPaidOrWaiting ? "DEVAM_EDIYOR" : "AKTIF" },
+    data: { status: allDone ? "TAMAMLANDI" : anyPaid ? "DEVAM_EDIYOR" : "AKTIF" },
   });
 }
 
+/**
+ * `keepCancelledPlans`: iptal edilmiş plana bağlı ödeme kayıtlarına dokunulmaz
+ * (tahsilat düzeltmesi; önce refitCancelledPlanLinks çağrılır). Verilmezse
+ * (tahsilat iptali) bütün bağlar geri alınır.
+ */
 export async function reverseTaksitIntegrationForPayment(
   tx: Prisma.TransactionClient,
   paymentId: string,
+  options: { keepCancelledPlans?: boolean } = {},
 ): Promise<{ reversed: number; updatedCount: number }> {
   const odemeler = await tx.taksitOdeme.findMany({
-    where: { paymentId, status: "ACTIVE" },
+    where: {
+      paymentId,
+      status: "ACTIVE",
+      ...(options.keepCancelledPlans ? { taksit: { plan: { status: { not: "IPTAL" } } } } : {}),
+    },
     orderBy: { createdAt: "desc" },
     select: { id: true, taksitId: true, tutar: true, taksit: { select: { odenen: true, kalan: true } } },
   });
@@ -178,12 +227,13 @@ export async function reverseTaksitIntegrationForPayment(
     const amount = odeme.tutar as unknown as Prisma.Decimal;
     const nextOdenen = Prisma.Decimal.max(ZERO, (odeme.taksit.odenen as unknown as Prisma.Decimal).minus(amount));
     const nextKalan = (odeme.taksit.kalan as unknown as Prisma.Decimal).plus(amount);
+    // Yalnız tutarlar burada; durum aşağıda refreshTaksitAndPlanStatus'ta
+    // hesaplanır (iptal edilmiş plan/taksit geri açılmaz).
     await tx.taksit.update({
       where: { id: odeme.taksitId },
       data: {
         odenen: nextOdenen,
         kalan: nextKalan,
-        status: "BEKLIYOR",
       },
     });
     await tx.taksitOdeme.update({
@@ -199,6 +249,56 @@ export async function reverseTaksitIntegrationForPayment(
   }
 
   return { reversed: reversed.toNumber(), updatedCount: touched.size };
+}
+
+/**
+ * Tahsilat düzeltilirken (tutar, yöntem, POS, tarih; doktor aynı kalırken)
+ * iptal edilmiş plana bağlı ödeme kayıtları yerinde kalır. Önceden düzeltme
+ * bu bağları da geri alıp tutarı açık planlara yeniden dağıtıyordu: plan
+ * iptal edilip borç yeni planla yeniden taksitlendiyse ("önce o planı iptal
+ * edin" akışı) eski tahsilat yeni planın taksidini ödenmiş sayıyor, iptal
+ * edilen planın ödeme geçmişi siliniyordu.
+ * Bağlar en eskiden başlayarak yeni tutara sığdırılır (tutar düştüyse sondaki
+ * bağ küçülür ya da kapanır); yöntem, POS ve tarih tahsilatla aynı olur.
+ * Döner: iptal edilmiş planlarda kalan tutar ve açık planlara yeniden
+ * dağıtılacak kalan (Decimal ile hesaplanır, kuruşa yuvarlıdır).
+ */
+export async function refitCancelledPlanLinks(
+  tx: Prisma.TransactionClient,
+  paymentId: string,
+  next: { amount: number; method: PaymentMethod; posId: string | null; tarih: Date },
+): Promise<{ kept: number; rest: number }> {
+  const links = await tx.taksitOdeme.findMany({
+    where: { paymentId, status: "ACTIVE", taksit: { plan: { status: "IPTAL" } } },
+    orderBy: { createdAt: "asc" },
+    select: { id: true, taksitId: true, tutar: true, taksit: { select: { odenen: true, kalan: true } } },
+  });
+  const total = new Prisma.Decimal(next.amount).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
+  let budget = total;
+  for (const link of links) {
+    const current = link.tutar as unknown as Prisma.Decimal;
+    const keep = Prisma.Decimal.max(ZERO, Prisma.Decimal.min(current, budget));
+    const released = current.minus(keep);
+    if (released.gt(ZERO)) {
+      await tx.taksit.update({
+        where: { id: link.taksitId },
+        data: {
+          odenen: Prisma.Decimal.max(ZERO, (link.taksit.odenen as unknown as Prisma.Decimal).minus(released)),
+          kalan: (link.taksit.kalan as unknown as Prisma.Decimal).plus(released),
+        },
+      });
+    }
+    await tx.taksitOdeme.update({
+      where: { id: link.id },
+      data: keep.isZero()
+        ? { status: "VOID", voidedAt: new Date() }
+        : { tutar: keep, yontem: next.method, posId: next.posId, tarih: next.tarih },
+    });
+    // Plan iptal: ödenmemiş hale gelen taksit "İptal" kalır (refreshTaksitAndPlanStatus).
+    if (released.gt(ZERO)) await refreshTaksitAndPlanStatus(tx, link.taksitId);
+    budget = budget.minus(keep);
+  }
+  return { kept: total.minus(budget).toNumber(), rest: budget.toNumber() };
 }
 
 /**

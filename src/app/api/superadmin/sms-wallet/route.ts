@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
+import { LOW_SMS_THRESHOLD } from "@/components/superadmin/sa-labels";
 
 export async function GET() {
   const auth = await requireAuth("superadmin");
@@ -35,6 +36,9 @@ export async function GET() {
       totalAssignedToClinics: institutions.reduce((sum, i) => sum + i.smsBalance, 0),
       clinicCountWithSms: institutions.filter((i) => i.smsBalance > 0).length,
     },
+    // SMS stoğu ekranı yalnız bu sayıyı gösterir (Klinikler › "SMS azalan" süzgecine gider).
+    lowClinicCount: institutions.filter((i) => i.isActive && i.smsBalance < LOW_SMS_THRESHOLD).length,
+    // Geriye uyum: eski istemciler tam listeyi okuyor.
     institutions,
     purchases: purchases.map((p) => ({
       ...p,

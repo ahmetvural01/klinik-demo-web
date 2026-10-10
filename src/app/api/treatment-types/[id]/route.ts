@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
-import { treatmentNoteMatch } from "@/app/api/treatment-types/treatment-usage";
+import { treatmentLabelKey, treatmentNoteMatch } from "@/app/api/treatment-types/treatment-usage";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -10,17 +10,18 @@ export async function PUT(request: NextRequest, props: Params) {
   const auth = await requireAuth("settings:write");
   if (auth.error) return auth.error;
 
-  const body = await request.json();
+  const body = await request.json().catch(() => null);
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return NextResponse.json({ message: "Geçersiz istek" }, { status: 400 });
   }
   const existing = await prisma.treatmentType.findFirst({
     where: { id: params.id, ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}) },
   });
-  if (!existing) return NextResponse.json({ message: "Tedavi türü bulunamadı" }, { status: 404 });
+  if (!existing) return NextResponse.json({ message: "Randevu türü bulunamadı" }, { status: 404 });
 
-  if (body.label !== undefined && (!String(body.label).trim() || String(body.label).trim().length > 120)) {
-    return NextResponse.json({ message: "Tedavi adı 1-120 karakter olmalı" }, { status: 400 });
+  const label = body.label !== undefined ? String(body.label).trim().replace(/\s+/g, " ") : undefined;
+  if (label !== undefined && (!label || label.length > 120)) {
+    return NextResponse.json({ message: "Randevu türü adı 1-120 karakter olmalı" }, { status: 400 });
   }
   if (body.color !== undefined && !/^#[0-9a-fA-F]{6}$/.test(String(body.color).trim())) {
     return NextResponse.json({ message: "Geçerli bir renk kodu girin (örn: #2563eb)" }, { status: 400 });
@@ -32,17 +33,28 @@ export async function PUT(request: NextRequest, props: Params) {
     return NextResponse.json({ message: "Sıra 0-10000 arasında tam sayı olmalı" }, { status: 400 });
   }
 
+  // Ad değişiyorsa başka bir türle çakışmasın (bkz. POST: ad kurum içinde tekil).
+  if (label !== undefined && treatmentLabelKey(label) !== treatmentLabelKey(existing.label)) {
+    const sameName = await prisma.treatmentType.findMany({
+      where: { institutionId: existing.institutionId, NOT: { id: existing.id } },
+      select: { label: true },
+    });
+    if (sameName.some((item) => treatmentLabelKey(item.label) === treatmentLabelKey(label))) {
+      return NextResponse.json({ message: `"${label}" adında bir randevu türü zaten var. Başka bir ad yazın.` }, { status: 409 });
+    }
+  }
+
   const updated = await prisma.treatmentType.update({
     where: { id: existing.id },
     data: {
-      ...(body.label !== undefined && { label: String(body.label).trim() }),
+      ...(label !== undefined && { label }),
       ...(body.color !== undefined && { color: String(body.color).trim() }),
       ...(body.isActive !== undefined && { isActive: body.isActive }),
       ...(body.order !== undefined && { order: Number(body.order) }),
     },
   });
 
-  await writeAudit(auth.user.id, "TREATMENT_TYPE_UPDATE", `Tedavi türü güncellendi: ${updated.label}`);
+  await writeAudit(auth.user.id, "TREATMENT_TYPE_UPDATE", `Randevu türü güncellendi: ${updated.label}`);
   return NextResponse.json(updated);
 }
 
@@ -54,7 +66,7 @@ export async function DELETE(_: NextRequest, props: Params) {
   const existing = await prisma.treatmentType.findFirst({
     where: { id: params.id, ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}) },
   });
-  if (!existing) return NextResponse.json({ message: "Tedavi türü bulunamadı" }, { status: 404 });
+  if (!existing) return NextResponse.json({ message: "Randevu türü bulunamadı" }, { status: 404 });
 
   // Randevuda kullanılmış tür silinirse o randevular takvimde sessizce
   // "Muayene" görünüyordu (tür listede bulunamayınca varsayılana düşüyor).
@@ -66,7 +78,7 @@ export async function DELETE(_: NextRequest, props: Params) {
   if (usage > 0) {
     if (existing.isActive) {
       await prisma.treatmentType.update({ where: { id: existing.id }, data: { isActive: false } });
-      await writeAudit(auth.user.id, "TREATMENT_TYPE_UPDATE", `Tedavi türü pasife alındı (${usage} randevuda kullanıldığı için silinmedi): ${existing.label}`);
+      await writeAudit(auth.user.id, "TREATMENT_TYPE_UPDATE", `Randevu türü pasife alındı (${usage} randevuda kullanıldığı için silinmedi): ${existing.label}`);
     }
     return NextResponse.json({
       ok: true,
@@ -76,6 +88,6 @@ export async function DELETE(_: NextRequest, props: Params) {
   }
 
   await prisma.treatmentType.delete({ where: { id: existing.id } });
-  await writeAudit(auth.user.id, "TREATMENT_TYPE_DELETE", `Tedavi türü silindi: ${existing.label}`);
+  await writeAudit(auth.user.id, "TREATMENT_TYPE_DELETE", `Randevu türü silindi: ${existing.label}`);
   return NextResponse.json({ ok: true });
 }

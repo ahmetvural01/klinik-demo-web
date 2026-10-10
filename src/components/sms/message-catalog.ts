@@ -25,8 +25,10 @@ export type EventMessage = {
   code: string;
   group: MessageGroup;
   title: string;
-  /** Ne zaman gittiğini (ya da gitmediğini) dürüstçe anlatan tek cümle. */
+  /** Ne zaman gittiğini anlatan kısa ifade (ayar satırının özeti). */
   when: string;
+  /** Metin penceresinin açıklaması: kuralın tamamı, en fazla iki kısa cümle. */
+  detail: string;
   rule: SendRule;
   placeholders: string[];
 };
@@ -34,12 +36,15 @@ export type EventMessage = {
 const APPOINTMENT_TOKENS = ["patientName", "institutionName", "institutionPhone", "doctorName", "dateTime"];
 const BASE_TOKENS = ["patientName", "institutionName", "institutionPhone"];
 
+// Saatler gönderen kodla aynı: hatırlatma ve tarama mesajları yalnız
+// 09:00–20:00 arası gider (src/lib/appointment-reminders.ts PATIENT_MESSAGE_WINDOW).
 export const EVENT_MESSAGES: EventMessage[] = [
   {
     code: "BILGI",
     group: "randevu",
     title: "Randevu bilgilendirme",
-    when: "Randevu kaydedilince gider — randevu formunda “Bilgilendirme” işaretliyse.",
+    when: "Randevu kaydedilince gider",
+    detail: "Randevu kaydedilince gider; randevu formunda “Bilgilendirme” seçili olmalı.",
     rule: "appointment-flag",
     placeholders: APPOINTMENT_TOKENS,
   },
@@ -47,7 +52,8 @@ export const EVENT_MESSAGES: EventMessage[] = [
     code: "HATIRLATMA",
     group: "randevu",
     title: "Randevu hatırlatma",
-    when: "Randevudan önce gider — randevu formunda “Hatırlatma” işaretliyse. Yeni randevularda bu kutu işaretsiz gelir.",
+    when: "Randevudan önceki gün 09:00'da gider",
+    detail: "Randevudan önceki gün 09:00'da gider; randevu formunda “Hatırlatma” seçili olmalı. Randevu son gün açıldıysa ve bilgilendirme gittiyse ayrıca gönderilmez.",
     rule: "appointment-flag",
     placeholders: APPOINTMENT_TOKENS,
   },
@@ -55,7 +61,8 @@ export const EVENT_MESSAGES: EventMessage[] = [
     code: "RANDEVU_DEGISIKLIK",
     group: "randevu",
     title: "Randevu değişikliği",
-    when: "Gelecekteki bir randevunun tarihi, saati veya doktoru değişince gider (randevuda “Bilgilendirme” işaretliyse).",
+    when: "Günü, saati ya da doktoru değişince gider",
+    detail: "Gelecekteki bir randevunun günü, saati ya da doktoru değişince gider (randevuda “Bilgilendirme” seçiliyse).",
     rule: "appointment-change",
     placeholders: APPOINTMENT_TOKENS,
   },
@@ -63,7 +70,8 @@ export const EVENT_MESSAGES: EventMessage[] = [
     code: "RANDEVU_IPTAL",
     group: "randevu",
     title: "Randevu iptali",
-    when: "Gelecekteki bir randevu iptal edilince gider (randevuda “Bilgilendirme” işaretliyse).",
+    when: "Randevu iptal edilince gider",
+    detail: "Gelecekteki bir randevu iptal edilince gider (randevuda “Bilgilendirme” seçiliyse).",
     rule: "appointment-cancel",
     placeholders: APPOINTMENT_TOKENS,
   },
@@ -71,7 +79,8 @@ export const EVENT_MESSAGES: EventMessage[] = [
     code: "ODEME_YAKLASIYOR",
     group: "odeme",
     title: "Vadesi yaklaşan ödeme",
-    when: "Seçtiğiniz günlerde, vadeden önce gider.",
+    when: "Vadeden önce, seçtiğiniz günlerde gider",
+    detail: "Ödenmemiş taksit için, seçtiğiniz günlerde 09:00'dan sonra gider.",
     rule: "payment",
     placeholders: [...BASE_TOKENS, "amount", "dueDate", "daysLeft"],
   },
@@ -79,7 +88,8 @@ export const EVENT_MESSAGES: EventMessage[] = [
     code: "ODEME_VADE_GUNU",
     group: "odeme",
     title: "Vade günü",
-    when: "Ödemenin vade gününde gider.",
+    when: "Vade gününde gider",
+    detail: "Ödenmemiş taksitin vade gününde, 09:00'dan sonra gider.",
     rule: "payment",
     placeholders: [...BASE_TOKENS, "amount", "dueDate"],
   },
@@ -87,7 +97,8 @@ export const EVENT_MESSAGES: EventMessage[] = [
     code: "ODEME_GECIKTI",
     group: "odeme",
     title: "Geciken ödeme",
-    when: "Vade geçince, seçtiğiniz aralıkla tekrar gider.",
+    when: "Vade geçince, ödenene kadar tekrar gider",
+    detail: "Vadesi geçen taksit ödenene kadar, seçtiğiniz aralıkla 09:00'dan sonra gider.",
     rule: "payment",
     placeholders: [...BASE_TOKENS, "amount", "dueDate", "daysLate"],
   },
@@ -95,13 +106,22 @@ export const EVENT_MESSAGES: EventMessage[] = [
     code: "DOGUM_GUNU",
     group: "dogum-gunu",
     title: "Doğum günü",
-    when: "Hastanın doğum gününde, yılda bir kez gider.",
+    when: "Doğum gününde, yılda bir kez gider",
+    detail: "Doğum tarihi kayıtlı hastalara doğum gününde, 09:00'dan sonra yılda bir kez gider.",
     rule: "birthday",
     placeholders: BASE_TOKENS,
   },
 ];
 
 export const EVENT_CODES = new Set(EVENT_MESSAGES.map((item) => item.code));
+
+/**
+ * Elle gönderimde seçilemeyen sistem metinleri: otomatik olay metinleri ve
+ * "Değerlendirme isteği" (ANKET). ANKET [Değerlendirme Bağlantısı] içerir;
+ * elle gönderimde bu bilgi doldurulamadığı için seçilince gönderim
+ * engelleniyordu (bkz. unsupportedPlaceholderError).
+ */
+export const NON_MANUAL_TEMPLATE_CODES = new Set([...EVENT_CODES, "ANKET"]);
 
 /** Elle gönderilen ve kayıtlı metinlerde doldurulabilen bilgiler (api/sms/send, api/sms/bulk). */
 export const MANUAL_PLACEHOLDER_TOKENS = BASE_TOKENS;

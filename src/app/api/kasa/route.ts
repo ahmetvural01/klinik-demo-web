@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/api";
+import { hasEffectivePermission, requireAuth } from "@/lib/api";
 import { isValidDateKey, turkeyDateKey, turkeyDayRangeUtc } from "@/lib/tz";
 import { requireActiveBranch } from "@/lib/branch-context";
 
@@ -8,6 +8,10 @@ export async function GET(req: NextRequest) {
   try {
     const auth = await requireAuth("payments:read");
     if (auth.error) return auth.error;
+    // Günün kasası kurum geneli finans listesidir: Muhasebe ekranı (finance:center) ister.
+    if (!(await hasEffectivePermission(auth.user, "finance:center"))) {
+      return NextResponse.json({ message: "Kasa bilgisini görme yetkiniz yok." }, { status: 403 });
+    }
     const branch = requireActiveBranch(auth.user.branchContext);
     if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
 

@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
 import { dispatchPatientMessage } from "@/lib/notification-dispatch";
 import { SMS_CONSENT_MESSAGE_TEMPLATE } from "@/lib/sms-consent-copy";
+import { getClinicDisplayInfo, getClinicDisplayName } from "@/lib/clinic-display-name";
 import type { SmsConsentTokenPurpose } from "@prisma/client";
 
 /**
@@ -43,11 +44,12 @@ export async function sendSmsConsentRequest(params: {
   const { institutionId, patientId, actorId } = params;
   const purpose: SmsConsentTokenPurpose = params.purpose ?? "INITIAL";
 
-  const [patient, institution] = await Promise.all([
+  // Klinik adı hastanın diğer mesajlarındaki adla aynı (Ayarlar › Klinik adı; H-6).
+  const [patient, institutionName] = await Promise.all([
     prisma.patient.findFirst({ where: { id: patientId, institutionId }, select: { id: true, phone: true } }),
-    prisma.institution.findUnique({ where: { id: institutionId }, select: { name: true } }),
+    getClinicDisplayName(institutionId),
   ]);
-  if (!patient || !institution) {
+  if (!patient || !institutionName) {
     return { success: false, error: "Hasta veya kurum bulunamadı." };
   }
 
@@ -69,7 +71,7 @@ export async function sendSmsConsentRequest(params: {
     },
   });
 
-  const message = buildConsentMessage(institution.name, token);
+  const message = buildConsentMessage(institutionName, token);
 
   const result = await dispatchPatientMessage({
     institutionId,
@@ -113,9 +115,28 @@ export async function sendSmsConsentRequest(params: {
   return { success: result.success, error: result.error || result.reason };
 }
 
+/** İzin sayfasında görünen klinik bilgisi (hastanın kliniği arayabilmesi için). */
+export type ConsentClinicInfo = {
+  institutionName: string;
+  institutionPhone: string | null;
+  logoUrl: string | null;
+};
+
 export type ConsentTokenValidation =
-  | { ok: true; institutionName: string; patientInitial: string }
-  | { ok: false; status: "NOT_FOUND" | "USED" | "EXPIRED" | "SUPERSEDED" };
+  | ({ ok: true; patientInitial: string } & ConsentClinicInfo)
+  // Kullanılmış / süresi dolmuş / yenisi gönderilmiş bağlantıda da hasta
+  // kliniğini arayıp yeni bağlantı isteyebilsin diye klinik bilgisi döner.
+  // Geçersiz (bulunamayan) bağlantıda hiçbir klinik bilgisi verilmez.
+  | ({ ok: false; status: "NOT_FOUND" | "USED" | "EXPIRED" | "SUPERSEDED" } & Partial<ConsentClinicInfo>);
+
+async function consentClinicInfo(institutionId: string): Promise<ConsentClinicInfo> {
+  const clinic = await getClinicDisplayInfo(institutionId);
+  return {
+    institutionName: clinic?.name || "",
+    institutionPhone: clinic?.phone || null,
+    logoUrl: clinic?.logoUrl || null,
+  };
+}
 
 export async function validateConsentToken(rawToken: string): Promise<ConsentTokenValidation> {
   const tokenRow = await prisma.patientSmsConsentToken.findUnique({
@@ -123,18 +144,14 @@ export async function validateConsentToken(rawToken: string): Promise<ConsentTok
     include: { patient: { select: { fullName: true } } },
   });
   if (!tokenRow) return { ok: false, status: "NOT_FOUND" };
-  if (tokenRow.usedAt) return { ok: false, status: "USED" };
-  if (tokenRow.invalidatedAt) return { ok: false, status: "SUPERSEDED" };
-  if (tokenRow.expiresAt < new Date()) return { ok: false, status: "EXPIRED" };
-
-  const institution = await prisma.institution.findUnique({
-    where: { id: tokenRow.institutionId },
-    select: { name: true },
-  });
+  const clinic = await consentClinicInfo(tokenRow.institutionId);
+  if (tokenRow.usedAt) return { ok: false, status: "USED", ...clinic };
+  if (tokenRow.invalidatedAt) return { ok: false, status: "SUPERSEDED", ...clinic };
+  if (tokenRow.expiresAt < new Date()) return { ok: false, status: "EXPIRED", ...clinic };
 
   return {
     ok: true,
-    institutionName: institution?.name || "",
+    ...clinic,
     patientInitial: tokenRow.patient.fullName.trim().charAt(0).toUpperCase() || "H",
   };
 }

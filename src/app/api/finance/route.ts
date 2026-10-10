@@ -1,7 +1,9 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, withApiTiming } from "@/lib/api";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
+import { isChargeableExamStatus } from "@/lib/examination-status";
 import { stripSystemTags } from "@/lib/format-text";
 import { isValidDateKey, turkeyDateKey, turkeyDayRangeUtc } from "@/lib/tz";
 import { requireActiveBranch } from "@/lib/branch-context";
@@ -80,7 +82,7 @@ export const GET = withApiTiming("finance", async function GET(request: NextRequ
     // Bu doktorun yaptığı ücretlendirilebilir tedaviler
     prisma.examination.findMany({
       where: { ...(institutionId ? { institutionId } : {}), branchId: branch.branchId, ...(hasScopedDoctors ? { doctorId: doctorIdFilter } : {}), ...dateFilter, ...treatmentOnlyWhere },
-      select: { patientId: true, doctorId: true, treatmentName: true, toothNo: true, amount: true },
+      select: { patientId: true, doctorId: true, treatmentName: true, toothNo: true, amount: true, status: true },
       orderBy: { diagnosedAt: "desc" }
     }),
     // Kurumun bu doktora yaptığı ödemeler — eski (Payment.doctorId, patientId
@@ -175,8 +177,14 @@ export const GET = withApiTiming("finance", async function GET(request: NextRequ
   const earned =
     doctorPayments.reduce((sum, p) => sum + Number(p.amount), 0) +
     doctorPayoutExpenses.reduce((sum, e) => sum + Number(e.tutar), 0);
-  const toReceive = Math.max(0, totalTreatments - received);
-  const receivable = Math.max(0, totalTreatments - labCost - earned);
+  // Alacak hesabı hasta bakiyesiyle aynı kuralla (src/lib/patient-balance.ts):
+  // iptal edilen ve planlanan tedaviler borç değildir. Hakediş (earned) ve
+  // tedavi istatistikleri değişmez.
+  const chargeableTotal = examinations
+    .filter((e) => isChargeableExamStatus(e.status))
+    .reduce((sum, e) => sum.plus(e.amount), new Prisma.Decimal(0));
+  const toReceive = Prisma.Decimal.max(0, chargeableTotal.minus(received)).toDecimalPlaces(2).toNumber();
+  const receivable = Prisma.Decimal.max(0, chargeableTotal.minus(labCost).minus(earned)).toDecimalPlaces(2).toNumber();
 
   // En çok yapılan muayene türleri
   const treatmentCounts: Record<string, number> = {};

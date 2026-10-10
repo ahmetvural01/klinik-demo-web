@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { bumpRealtimeInstitution, requireAuth, writeAudit } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 import { requireActiveBranch } from "@/lib/branch-context";
 import { LAB_ORDER_INCLUDE, closeOpenLabFollowUps, toPublicLabOrder } from "@/app/api/lab-orders/lab-order-api";
 
@@ -92,8 +92,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       });
 
       await writeAudit(auth.user.id, "LAB_TRIP_CREATE", `Laboratuvar gidiş adımı eklendi (${params.id})`);
-      await bumpRealtimeInstitution(auth.user.institutionId || null);
-      return NextResponse.json(await toPublicLabOrder(updatedOrder, auth.user.role), { status: 201 });
+      return NextResponse.json(await toPublicLabOrder(updatedOrder, auth.user), { status: 201 });
     } catch (error: any) {
       // Unique(labOrderId, order) çakışırsa yeniden sıra hesaplayıp tekrar dene.
       if (error?.code === "P2002" && attempt < 4) continue;

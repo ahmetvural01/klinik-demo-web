@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/Button";
+import { BulkActionBar } from "@/components/ui/BulkActionBar";
 import { Select } from "@/components/ui/Input";
 import { SearchInput } from "@/components/ui/SearchInput";
 import { Toolbar } from "@/components/ui/Toolbar";
@@ -79,6 +80,16 @@ export function SendRecipientList({ selected, onChange, showWhatsapp }: Recipien
   useEffect(() => { void load(); }, [load]);
 
   const visibleRows = onlySelected ? [...selected.values()] : rows;
+  // Boş liste nedenini süzgeç söylesin ("SMS izni olanlar" boşken "Bu şubede hasta yok" yanlıştı).
+  const emptyText = onlySelected
+    ? "Seçili hasta yok"
+    : debouncedQuery
+      ? "Bu aramaya uyan hasta yok"
+      : consent === "sms"
+        ? "SMS izni olan hasta yok"
+        : consent === "none"
+          ? "SMS izni olmayan hasta yok"
+          : "Bu şubede hasta yok";
 
   const columns = useMemo<ListTableColumn<Recipient>[]>(() => [
     {
@@ -120,7 +131,7 @@ export function SendRecipientList({ selected, onChange, showWhatsapp }: Recipien
         loading={!onlySelected && loading}
         error={onlySelected ? null : error || null}
         onRetry={() => void load()}
-        emptyText={onlySelected ? "Seçili hasta yok" : debouncedQuery ? "Bu aramaya uyan hasta yok" : "Bu şubede hasta yok"}
+        emptyText={emptyText}
         getRowAriaLabel={(row) => row.fullName}
         selection={{
           selectedIds: [...selected.keys()],
@@ -135,17 +146,16 @@ export function SendRecipientList({ selected, onChange, showWhatsapp }: Recipien
           },
         }}
         header={(
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-3 py-2 text-sm">
-            <span className="font-semibold text-slate-800">{selected.size > 0 ? `${selected.size} hasta seçildi` : "Listeden hasta seçin"}</span>
-            {selected.size > 0 && (
-              <span className="flex items-center gap-1">
-                <Button variant="ghost" size="sm" onClick={() => setOnlySelected((value) => !value)}>
-                  {onlySelected ? "Tüm listeyi göster" : "Yalnız seçilenleri göster"}
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => onChange(new Map())}>Temizle</Button>
-              </span>
+          <BulkActionBar
+            count={selected.size}
+            itemLabel="hasta"
+            onClear={() => onChange(new Map())}
+            actions={(
+              <Button variant="secondary" size="sm" onClick={() => setOnlySelected((value) => !value)}>
+                {onlySelected ? "Tüm listeyi göster" : "Yalnız seçilenleri göster"}
+              </Button>
             )}
-          </div>
+          />
         )}
         mobileCard={(row) => (
           <div className="space-y-1">

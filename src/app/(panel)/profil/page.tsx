@@ -1,27 +1,34 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
+import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Clock, KeyRound, LogOut, ShieldCheck, Trash2, Upload } from "lucide-react";
+import { Clock, KeyRound, LogOut, ShieldCheck } from "lucide-react";
 import { confirmDialog } from "@/lib/confirm-client";
-import { downscaleImageToDataUrl } from "@/lib/image-upload";
 import { invalidateCachedGet } from "@/lib/client-cache";
 import { showToastSafe } from "@/lib/toast-client";
 import { roleLabel } from "@/lib/staff-roles";
+import { Avatar } from "@/components/ui/Avatar";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
-import { FormErrorBanner, FormField, FormSection } from "@/components/ui/FormField";
+import { Callout } from "@/components/ui/Callout";
+import { FormErrorBanner, FormField } from "@/components/ui/FormField";
+import { FormModal } from "@/components/ui/FormModal";
+import { ImageUploadField } from "@/components/ui/ImageUploadField";
 import { Input } from "@/components/ui/Input";
 import { LoadErrorState } from "@/components/ui/LoadErrorState";
+import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { DetailSkeleton } from "@/components/ui/PageSkeleton";
+import { Section } from "@/components/ui/Section";
+import { SettingsList, SettingsRow } from "@/components/ui/SettingsList";
 import { Switch } from "@/components/ui/Switch";
-import PanelLoading from "@/components/ui/PanelLoading";
+import { TimeRangeInput, timeRangeError } from "@/components/ui/TimeRangeInput";
 
-// Sunucu (api/profile/password) en az 8 karakter ister; ekran da aynı kuralı
-// söyler. Önceden ekran "en az 6" diyordu, 6-7 karakter önce kabul edilip
-// sonra reddediliyordu.
+// Sunucu (api/profile/password) en az 8 karakter ister; ekran da aynı kuralı söyler.
 const PASSWORD_MIN = 8;
 const PASSWORD_MAX = 72;
+const GHOST_REASON = "Platform yöneticisinin klinik oturumunda hesap ayarları değiştirilemez.";
 
 type ProfileState = {
   fullName: string;
@@ -34,48 +41,117 @@ type ProfileState = {
 
 type WorkState = Pick<ProfileState, "workStart" | "workEnd" | "showAsDoctor">;
 
+// Mesai girilmemişse sunucu (api/profile) da bu saatleri kullanır.
 const EMPTY_PROFILE: ProfileState = { fullName: "", role: "", workStart: "08:30", workEnd: "18:00", showAsDoctor: false, photoUrl: "" };
+const EMPTY_PASSWORD = { old: "", next: "", confirm: "" };
+
+/**
+ * Sunucu hatası: metin ve (varsa) hatanın ait olduğu alan. Şifre ve iki
+ * aşamalı doğrulama uçları yanlış şifre/kodda `field` döndürür
+ * ("currentPassword", "code", "password"); hata o alanın altında gösterilir.
+ */
+async function readErrorDetail(response: Response, fallback: string): Promise<{ message: string; field: string | null }> {
+  const data = await response.json().catch(() => null);
+  const field = data && typeof data.field === "string" && data.field ? (data.field as string) : null;
+  if (data && typeof data.message === "string" && data.message) return { message: data.message as string, field };
+  if (data && typeof data.error === "string" && data.error) return { message: data.error as string, field };
+  return { message: fallback, field };
+}
 
 async function readError(response: Response, fallback: string) {
-  const data = await response.json().catch(() => null);
-  if (data && typeof data.message === "string" && data.message) return data.message as string;
-  if (data && typeof data.error === "string" && data.error) return data.error as string;
-  return fallback;
+  return (await readErrorDetail(response, fallback)).message;
 }
 
-function initialsOf(name: string) {
-  return name.split(" ").filter(Boolean).slice(0, 2).map((part) => part[0]?.toLocaleUpperCase("tr-TR") ?? "").join("") || "?";
+function focusField(id: string) {
+  window.requestAnimationFrame(() => document.getElementById(id)?.focus());
 }
 
+type PasswordValue = typeof EMPTY_PASSWORD;
+
+function passwordErrorsOf(password: PasswordValue) {
+  return {
+    old: !password.old ? "Mevcut şifrenizi yazın." : undefined,
+    next: password.next.length < PASSWORD_MIN || password.next.length > PASSWORD_MAX ? `Yeni şifre ${PASSWORD_MIN}-${PASSWORD_MAX} karakter olmalı.` : undefined,
+    confirm: password.confirm !== password.next ? "İki şifre aynı değil." : undefined,
+  };
+}
+
+/** Şifre alanları — ilk giriş ekranında sayfada, sonra "Şifreyi değiştir" penceresinde. */
+function PasswordFields({ value, onChange, submitted, firstLogin, currentPasswordError }: {
+  value: PasswordValue;
+  onChange: (next: PasswordValue) => void;
+  submitted: boolean;
+  firstLogin: boolean;
+  /** Sunucunun "mevcut şifre yanlış" yanıtı (field: "currentPassword"). */
+  currentPasswordError?: string | null;
+}) {
+  const errors = passwordErrorsOf(value);
+  return (
+    <div className="grid gap-4 md:grid-cols-3">
+      <FormField label={firstLogin ? "Şu anki şifre (TC kimlik no)" : "Mevcut şifre"} htmlFor="profil-sifre-mevcut" required error={(submitted ? errors.old : undefined) || currentPasswordError || undefined}>
+        <Input id="profil-sifre-mevcut" autoFocus type="password" autoComplete="current-password" value={value.old} onChange={(event) => onChange({ ...value, old: event.target.value })} />
+      </FormField>
+      <FormField
+        label="Yeni şifre"
+        htmlFor="profil-sifre-yeni"
+        required
+        hint={`En az ${PASSWORD_MIN} karakter`}
+        error={submitted || value.next.length > PASSWORD_MAX ? errors.next : undefined}
+      >
+        <Input id="profil-sifre-yeni" type="password" autoComplete="new-password" maxLength={PASSWORD_MAX} value={value.next} onChange={(event) => onChange({ ...value, next: event.target.value })} />
+      </FormField>
+      <FormField
+        label="Yeni şifre (tekrar)"
+        htmlFor="profil-sifre-tekrar"
+        required
+        error={submitted || (value.confirm.length >= value.next.length && value.confirm.length > 0) ? errors.confirm : undefined}
+      >
+        <Input id="profil-sifre-tekrar" type="password" autoComplete="new-password" maxLength={PASSWORD_MAX} value={value.confirm} onChange={(event) => onChange({ ...value, confirm: event.target.value })} />
+      </FormField>
+    </div>
+  );
+}
+
+/**
+ * Profilim: kimlik (ad, rol, fotoğraf), mesai ve giriş güvenliği. Şifre, iki
+ * aşamalı doğrulama ve diğer oturumlar tek "Giriş güvenliği" bölümünde
+ * satırdır; formlar pencerede açılır (önceden üç form sayfada sürekli açıktı,
+ * aynı anda birden çok birincil düğme görünüyordu). Doktor kendi mesaisini
+ * burada da değiştirebilir (api/profile PUT; yönetici Personel'den de
+ * değiştirir) — Kaydet yalnız değişiklik varken görünür.
+ */
 export default function ProfilPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [profile, setProfile] = useState<ProfileState>(EMPTY_PROFILE);
-  const [savedWork, setSavedWork] = useState<WorkState>({ workStart: "08:30", workEnd: "18:00", showAsDoctor: false });
+  const [savedWork, setSavedWork] = useState<WorkState>({ workStart: EMPTY_PROFILE.workStart, workEnd: EMPTY_PROFILE.workEnd, showAsDoctor: false });
+  const [workSubmitted, setWorkSubmitted] = useState(false);
+  const [workSaving, setWorkSaving] = useState(false);
+  const [workError, setWorkError] = useState<string | null>(null);
   const [mustChangePassword, setMustChangePassword] = useState(searchParams.get("forcePasswordChange") === "1");
+  const [ghost, setGhost] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
-  const [workSaving, setWorkSaving] = useState(false);
-  const [workError, setWorkError] = useState<string | null>(null);
-
-  const [photoSaving, setPhotoSaving] = useState(false);
-  const [photoError, setPhotoError] = useState<string | null>(null);
-  const photoInputRef = useRef<HTMLInputElement>(null);
-
-  const [password, setPassword] = useState({ old: "", next: "", confirm: "" });
+  const [passwordOpen, setPasswordOpen] = useState(false);
+  const [password, setPassword] = useState(EMPTY_PASSWORD);
   const [passwordSubmitted, setPasswordSubmitted] = useState(false);
   const [passwordSaving, setPasswordSaving] = useState(false);
   const [passwordError, setPasswordError] = useState<string | null>(null);
+  // Alan hataları (sunucu `field` döndürdüğünde ya da alan boşken): genel şerit yerine alanın altında.
+  const [currentPasswordError, setCurrentPasswordError] = useState<string | null>(null);
 
   const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
   const [twoFactorSetup, setTwoFactorSetup] = useState<{ secret: string; qrCodeDataUrl: string } | null>(null);
   const [twoFactorCode, setTwoFactorCode] = useState("");
   const [twoFactorSaving, setTwoFactorSaving] = useState(false);
+  const [twoFactorError, setTwoFactorError] = useState<string | null>(null);
+  const [twoFactorCodeError, setTwoFactorCodeError] = useState<string | null>(null);
   const [backupCodes, setBackupCodes] = useState<string[] | null>(null);
+  const [disableOpen, setDisableOpen] = useState(false);
   const [disablePassword, setDisablePassword] = useState("");
-  const [showDisableForm, setShowDisableForm] = useState(false);
+  const [disablePasswordError, setDisablePasswordError] = useState<string | null>(null);
   const [loggingOutOthers, setLoggingOutOthers] = useState(false);
 
   useEffect(() => {
@@ -92,14 +168,15 @@ export default function ProfilPage() {
         const next: ProfileState = {
           fullName: data.fullName || "",
           role: data.role || "",
-          workStart: data.profile?.workStart || "08:30",
-          workEnd: data.profile?.workEnd || "18:00",
+          workStart: data.profile?.workStart || EMPTY_PROFILE.workStart,
+          workEnd: data.profile?.workEnd || EMPTY_PROFILE.workEnd,
           showAsDoctor: data.role === "YONETICI" ? !data.profile?.hideAsDoctor : false,
           photoUrl: data.profile?.photoUrl || "",
         };
         setProfile(next);
         setSavedWork({ workStart: next.workStart, workEnd: next.workEnd, showAsDoctor: next.showAsDoctor });
         setTwoFactorEnabled(Boolean(data.twoFactorEnabled));
+        setGhost(Boolean(data.ghostSession));
         if (data.mustChangePassword) setMustChangePassword(true);
       })
       .catch((error) => {
@@ -113,67 +190,16 @@ export default function ProfilPage() {
   }, [reloadKey]);
 
   const isDoctorRole = profile.role === "DOKTOR";
-  const showsWorkHours = isDoctorRole || profile.role === "YONETICI";
   const treatsPatients = isDoctorRole || profile.showAsDoctor;
+  const showsWork = isDoctorRole || profile.role === "YONETICI";
   const workDirty = profile.workStart !== savedWork.workStart || profile.workEnd !== savedWork.workEnd || profile.showAsDoctor !== savedWork.showAsDoctor;
-  const workHoursInvalid = treatsPatients && profile.workStart && profile.workEnd && profile.workStart >= profile.workEnd;
-
-  const passwordErrors = {
-    old: !password.old ? "Mevcut şifrenizi yazın." : undefined,
-    next: password.next.length < PASSWORD_MIN || password.next.length > PASSWORD_MAX ? `Yeni şifre ${PASSWORD_MIN}-${PASSWORD_MAX} karakter olmalı.` : undefined,
-    confirm: password.confirm !== password.next ? "İki şifre aynı değil." : undefined,
-  };
-  const passwordFilled = Boolean(password.old || password.next || password.confirm);
-
-  const savePhoto = async (dataUrl: string) => {
-    setPhotoSaving(true);
-    setPhotoError(null);
-    try {
-      const response = await fetch("/api/profile", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ photoUrl: dataUrl || null }),
-      });
-      if (!response.ok) {
-        setPhotoError(await readError(response, "Fotoğraf kaydedilemedi."));
-        return;
-      }
-      setProfile((current) => ({ ...current, photoUrl: dataUrl }));
-      invalidateCachedGet("/api/auth/me");
-      invalidateCachedGet("/api/staff");
-      showToastSafe({ message: dataUrl ? "Fotoğrafınız güncellendi." : "Fotoğrafınız kaldırıldı.", type: "success" });
-    } catch {
-      setPhotoError("Fotoğraf kaydedilemedi. Bağlantınızı kontrol edip tekrar deneyin.");
-    } finally {
-      setPhotoSaving(false);
-    }
-  };
-
-  const onPhotoSelected = async (file: File) => {
-    setPhotoError(null);
-    if (file.size > 8 * 1024 * 1024) {
-      setPhotoError("Dosya en fazla 8 MB olabilir.");
-      return;
-    }
-    try {
-      await savePhoto(await downscaleImageToDataUrl(file));
-    } catch {
-      setPhotoError("Fotoğraf işlenemedi. JPG, PNG veya WEBP deneyin.");
-    }
-  };
-
-  const removePhoto = async () => {
-    if (!(await confirmDialog({ title: "Fotoğraf kaldırılsın mı?", message: "Fotoğrafınızın yerine adınızın baş harfleri görünür.", confirmText: "Kaldır" }))) return;
-    void savePhoto("");
-  };
+  const workRangeError = treatsPatients ? timeRangeError({ start: profile.workStart, end: profile.workEnd }, { required: true }) : null;
 
   const saveWork = async () => {
-    if (workHoursInvalid) {
-      setWorkError("Mesai bitişi başlangıçtan sonra olmalı.");
-      return;
-    }
-    setWorkSaving(true);
+    setWorkSubmitted(true);
     setWorkError(null);
+    if (workRangeError) return;
+    setWorkSaving(true);
     try {
       const response = await fetch("/api/profile", {
         method: "PUT",
@@ -185,13 +211,15 @@ export default function ProfilPage() {
         }),
       });
       if (!response.ok) {
-        setWorkError(await readError(response, "Çalışma saatleri kaydedilemedi."));
+        // 409: mesai dışında kalan ya da devredilmesi gereken gelecek randevular.
+        setWorkError(await readError(response, "Mesai kaydedilemedi."));
         return;
       }
       setSavedWork({ workStart: profile.workStart, workEnd: profile.workEnd, showAsDoctor: profile.showAsDoctor });
+      setWorkSubmitted(false);
       invalidateCachedGet("/api/auth/me");
       invalidateCachedGet("/api/staff");
-      showToastSafe({ message: "Çalışma saatleriniz kaydedildi. Randevu ekranı bu saatlere göre çalışır.", type: "success" });
+      showToastSafe({ message: "Mesainiz kaydedildi. Randevu ekranı bu saatlere göre çalışır.", type: "success" });
     } catch {
       setWorkError("Kaydedilemedi. Bağlantınızı kontrol edip tekrar deneyin.");
     } finally {
@@ -199,10 +227,40 @@ export default function ProfilPage() {
     }
   };
 
-  const changePassword = async () => {
+  const discardWork = () => {
+    setProfile((current) => ({ ...current, ...savedWork }));
+    setWorkSubmitted(false);
+    setWorkError(null);
+  };
+
+  // Fotoğraf seçilince hemen kaydedilir; hata alanın altında görünür.
+  const savePhoto = async (dataUrl: string) => {
+    // Kaldırma geri alınamaz bir anlık kayıt: önceki ekrandaki gibi önce sorulur.
+    if (!dataUrl && !(await confirmDialog({
+      title: "Fotoğraf kaldırılsın mı?",
+      message: "Fotoğrafınızın yerine adınızın baş harfleri görünür.",
+      confirmText: "Kaldır",
+    }))) return;
+    const response = await fetch("/api/profile", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ photoUrl: dataUrl || null }),
+    }).catch(() => null);
+    if (!response) throw new Error("Fotoğraf kaydedilemedi. Bağlantınızı kontrol edip tekrar deneyin.");
+    if (!response.ok) throw new Error(await readError(response, "Fotoğraf kaydedilemedi."));
+    setProfile((current) => ({ ...current, photoUrl: dataUrl }));
+    invalidateCachedGet("/api/auth/me");
+    invalidateCachedGet("/api/staff");
+    showToastSafe({ message: dataUrl ? "Fotoğrafınız güncellendi." : "Fotoğrafınız kaldırıldı.", type: "success" });
+  };
+
+  const changePassword = async (event?: FormEvent) => {
+    event?.preventDefault();
     setPasswordSubmitted(true);
     setPasswordError(null);
-    if (passwordErrors.old || passwordErrors.next || passwordErrors.confirm) return;
+    setCurrentPasswordError(null);
+    const errors = passwordErrorsOf(password);
+    if (errors.old || errors.next || errors.confirm) return;
     setPasswordSaving(true);
     try {
       const response = await fetch("/api/profile/password", {
@@ -211,11 +269,18 @@ export default function ProfilPage() {
         body: JSON.stringify({ oldPassword: password.old, newPassword: password.next }),
       });
       if (!response.ok) {
-        setPasswordError(await readError(response, "Şifre değiştirilemedi."));
+        const detail = await readErrorDetail(response, "Şifre değiştirilemedi.");
+        if (detail.field === "currentPassword") {
+          setCurrentPasswordError(detail.message);
+          focusField("profil-sifre-mevcut");
+        } else {
+          setPasswordError(detail.message);
+        }
         return;
       }
-      setPassword({ old: "", next: "", confirm: "" });
+      setPassword(EMPTY_PASSWORD);
       setPasswordSubmitted(false);
+      setPasswordOpen(false);
       if (mustChangePassword) {
         // İlk şifre belirlendi: kullanıcıyı bekletmeden işine götür.
         showToastSafe({ message: "Şifreniz kaydedildi. Bundan sonra bu şifreyle giriş yapacaksınız.", type: "success", duration: 5000 });
@@ -231,14 +296,31 @@ export default function ProfilPage() {
     }
   };
 
+  const openPassword = () => {
+    setPassword(EMPTY_PASSWORD);
+    setPasswordSubmitted(false);
+    setPasswordError(null);
+    setCurrentPasswordError(null);
+    setPasswordOpen(true);
+  };
+
+  // Mevcut şifre yeniden yazılınca sunucunun "yanlış" uyarısı kalkar.
+  const updatePassword = (next: PasswordValue) => {
+    if (next.old !== password.old) setCurrentPasswordError(null);
+    setPassword(next);
+  };
+
   const startTwoFactorSetup = async () => {
     setTwoFactorSaving(true);
+    setTwoFactorError(null);
     try {
       const response = await fetch("/api/profile/2fa/setup", { method: "POST" });
       if (!response.ok) {
         showToastSafe({ message: await readError(response, "Kurulum başlatılamadı."), type: "error" });
         return;
       }
+      setTwoFactorCode("");
+      setTwoFactorCodeError(null);
       setTwoFactorSetup(await response.json());
     } catch {
       showToastSafe({ message: "Kurulum başlatılamadı. Bağlantınızı kontrol edin.", type: "error" });
@@ -248,7 +330,13 @@ export default function ProfilPage() {
   };
 
   const confirmTwoFactor = async () => {
-    if (twoFactorCode.length < 6) return;
+    setTwoFactorError(null);
+    if (twoFactorCode.length < 6) {
+      setTwoFactorCodeError("Uygulamadaki 6 haneli kodu yazın.");
+      focusField("profil-2fa-kod");
+      return;
+    }
+    setTwoFactorCodeError(null);
     setTwoFactorSaving(true);
     try {
       const response = await fetch("/api/profile/2fa/confirm", {
@@ -257,7 +345,13 @@ export default function ProfilPage() {
         body: JSON.stringify({ code: twoFactorCode }),
       });
       if (!response.ok) {
-        showToastSafe({ message: await readError(response, "Kod hatalı."), type: "error" });
+        const detail = await readErrorDetail(response, "Kod hatalı.");
+        if (detail.field === "code") {
+          setTwoFactorCodeError(detail.message);
+          focusField("profil-2fa-kod");
+        } else {
+          setTwoFactorError(detail.message);
+        }
         return;
       }
       const data = await response.json().catch(() => ({}));
@@ -267,23 +361,20 @@ export default function ProfilPage() {
       setBackupCodes(Array.isArray(data.backupCodes) ? data.backupCodes : []);
       showToastSafe({ message: "İki aşamalı doğrulama açıldı.", type: "success" });
     } catch {
-      showToastSafe({ message: "Doğrulama tamamlanamadı. Bağlantınızı kontrol edip tekrar deneyin.", type: "error" });
+      setTwoFactorError("Doğrulama tamamlanamadı. Bağlantınızı kontrol edip tekrar deneyin.");
     } finally {
       setTwoFactorSaving(false);
     }
   };
 
   const disableTwoFactor = async () => {
+    setTwoFactorError(null);
     if (!disablePassword) {
-      showToastSafe({ message: "Devam etmek için şifrenizi yazın.", type: "error" });
+      setDisablePasswordError("Devam etmek için şifrenizi yazın.");
+      focusField("profil-2fa-sifre");
       return;
     }
-    if (!(await confirmDialog({
-      title: "İki aşamalı doğrulama kapatılsın mı?",
-      message: "Girişte yalnız şifreniz sorulur; hesabınız daha az korunur.",
-      danger: true,
-      confirmText: "Kapat",
-    }))) return;
+    setDisablePasswordError(null);
     setTwoFactorSaving(true);
     try {
       const response = await fetch("/api/profile/2fa/disable", {
@@ -292,15 +383,21 @@ export default function ProfilPage() {
         body: JSON.stringify({ password: disablePassword }),
       });
       if (!response.ok) {
-        showToastSafe({ message: await readError(response, "Kapatılamadı."), type: "error" });
+        const detail = await readErrorDetail(response, "Kapatılamadı.");
+        if (detail.field === "password") {
+          setDisablePasswordError(detail.message);
+          focusField("profil-2fa-sifre");
+        } else {
+          setTwoFactorError(detail.message);
+        }
         return;
       }
       setTwoFactorEnabled(false);
-      setShowDisableForm(false);
+      setDisableOpen(false);
       setDisablePassword("");
       showToastSafe({ message: "İki aşamalı doğrulama kapatıldı.", type: "success" });
     } catch {
-      showToastSafe({ message: "Kapatılamadı. Bağlantınızı kontrol edin.", type: "error" });
+      setTwoFactorError("Kapatılamadı. Bağlantınızı kontrol edin.");
     } finally {
       setTwoFactorSaving(false);
     }
@@ -325,19 +422,13 @@ export default function ProfilPage() {
     }
   };
 
-  const header = (
-    <PageHeader
-      icon="profile"
-      title="Profil"
-      description={mustChangePassword ? "Devam etmeden önce kendi şifrenizi belirleyin." : "Fotoğrafınız, şifreniz ve hesap güvenliğiniz."}
-    />
-  );
+  const header = <PageHeader icon="profile" title="Profilim" description={mustChangePassword ? "Devam etmeden önce kendi şifrenizi belirleyin." : undefined} />;
 
   if (loading) {
     return (
       <section className="space-y-4">
         {header}
-        <PanelLoading />
+        <DetailSkeleton pairs={4} columns={1} />
       </section>
     );
   }
@@ -351,64 +442,22 @@ export default function ProfilPage() {
     );
   }
 
-  const passwordForm = (
-    <form
-      className="space-y-4"
-      noValidate
-      onSubmit={(event) => {
-        event.preventDefault();
-        void changePassword();
-      }}
-    >
-      <div className="grid gap-4 md:grid-cols-3">
-        <FormField
-          label={mustChangePassword ? "Şu anki şifre (TC kimlik no)" : "Mevcut şifre"}
-          htmlFor="profil-sifre-mevcut"
-          required
-          error={passwordSubmitted ? passwordErrors.old : undefined}
-        >
-          <Input id="profil-sifre-mevcut" type="password" autoComplete="current-password" value={password.old} onChange={(event) => setPassword((current) => ({ ...current, old: event.target.value }))} />
-        </FormField>
-        <FormField
-          label="Yeni şifre"
-          htmlFor="profil-sifre-yeni"
-          required
-          hint={`En az ${PASSWORD_MIN} karakter`}
-          error={passwordSubmitted || password.next.length > PASSWORD_MAX ? passwordErrors.next : undefined}
-        >
-          <Input id="profil-sifre-yeni" type="password" autoComplete="new-password" maxLength={PASSWORD_MAX} value={password.next} onChange={(event) => setPassword((current) => ({ ...current, next: event.target.value }))} />
-        </FormField>
-        <FormField
-          label="Yeni şifre (tekrar)"
-          htmlFor="profil-sifre-tekrar"
-          required
-          error={passwordSubmitted || (password.confirm.length >= password.next.length && password.confirm.length > 0) ? passwordErrors.confirm : undefined}
-        >
-          <Input id="profil-sifre-tekrar" type="password" autoComplete="new-password" maxLength={PASSWORD_MAX} value={password.confirm} onChange={(event) => setPassword((current) => ({ ...current, confirm: event.target.value }))} />
-        </FormField>
-      </div>
-      <FormErrorBanner message={passwordError} />
-      <div className="flex flex-wrap items-center gap-3">
-        <Button type="submit" variant={mustChangePassword || passwordFilled ? "primary" : "secondary"} icon={KeyRound} loading={passwordSaving}>
-          {mustChangePassword ? "Şifremi kaydet ve devam et" : "Şifreyi değiştir"}
-        </Button>
-        {!mustChangePassword && <p className="text-xs text-slate-500">Şifre değişince diğer cihazlardaki oturumlarınız kapanır.</p>}
-      </div>
-    </form>
-  );
-
   // İlk girişte (şifre TC kimlik no iken) yalnız şifre formu gösterilir:
   // kullanıcı başka hiçbir şeyle uğraşmadan tek işi tamamlar.
   if (mustChangePassword) {
     return (
       <section className="space-y-4">
         {header}
-        <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          <b>Hoş geldiniz, {profile.fullName || "yeni kullanıcı"}.</b> Hesabınız TC kimlik numaranızla açıldı. Güvenliğiniz için şimdi yalnız sizin bildiğiniz bir şifre belirleyin.
-        </div>
-        <FormSection icon={KeyRound} title="Şifrenizi belirleyin" description="Bundan sonra sisteme bu şifreyle gireceksiniz.">
-          {passwordForm}
-        </FormSection>
+        <Callout tone="warning" title={`Hoş geldiniz, ${profile.fullName || "yeni kullanıcı"}.`}>
+          Hesabınız TC kimlik numaranızla açıldı. Güvenliğiniz için şimdi yalnız sizin bildiğiniz bir şifre belirleyin.
+        </Callout>
+        <Section icon={KeyRound} title="Şifrenizi belirleyin" description="Bundan sonra sisteme bu şifreyle gireceksiniz.">
+          <form className="space-y-4" noValidate onSubmit={(event) => void changePassword(event)}>
+            <PasswordFields value={password} onChange={updatePassword} submitted={passwordSubmitted} firstLogin currentPasswordError={currentPasswordError} />
+            <FormErrorBanner message={passwordError} />
+            <Button type="submit" icon={KeyRound} loading={passwordSaving} disabled={ghost} title={ghost ? GHOST_REASON : undefined}>Şifremi kaydet ve devam et</Button>
+          </form>
+        </Section>
       </section>
     );
   }
@@ -417,161 +466,166 @@ export default function ProfilPage() {
     <section className="space-y-4">
       {header}
 
-      <div className="ui-surface flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:p-5">
-        <input
-          ref={photoInputRef}
-          type="file"
-          accept="image/jpeg,image/png,image/webp"
-          className="sr-only"
-          tabIndex={-1}
-          aria-hidden="true"
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            event.target.value = "";
-            if (file) void onPhotoSelected(file);
-          }}
+      {ghost && <Callout tone="neutral">{GHOST_REASON}</Callout>}
+
+      <Section title={profile.fullName || "—"} description={`${roleLabel(profile.role)}${profile.role === "YONETICI" && profile.showAsDoctor ? " · hasta da tedavi ediyor" : ""}`}>
+        <ImageUploadField
+          label="Fotoğraf"
+          shape="round"
+          value={profile.photoUrl}
+          onChange={savePhoto}
+          maxDimension={320}
+          placeholder={<Avatar name={profile.fullName} size="lg" />}
+          disabled={ghost}
         />
-        {profile.photoUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={profile.photoUrl} alt={profile.fullName} className="h-16 w-16 shrink-0 rounded-full border border-slate-200 object-cover" />
-        ) : (
-          <span aria-hidden="true" className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full border border-primary/15 bg-primary/10 text-xl font-bold text-primary">
-            {initialsOf(profile.fullName)}
-          </span>
-        )}
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-lg font-bold text-slate-900">{profile.fullName || "—"}</p>
-          <p className="mt-0.5 text-sm text-slate-500">{roleLabel(profile.role)}{profile.role === "YONETICI" && profile.showAsDoctor ? " · hasta da tedavi ediyor" : ""}</p>
-          {photoError && <p role="alert" className="mt-1 text-xs font-medium text-red-600">{photoError}</p>}
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="secondary" size="sm" icon={Upload} loading={photoSaving} onClick={() => photoInputRef.current?.click()}>
-            {profile.photoUrl ? "Fotoğrafı değiştir" : "Fotoğraf ekle"}
-          </Button>
-          {profile.photoUrl && (
-            <Button variant="ghost" size="sm" icon={Trash2} disabled={photoSaving} onClick={() => void removePhoto()}>
-              Kaldır
-            </Button>
-          )}
-        </div>
-      </div>
+      </Section>
 
-      <FormSection icon={KeyRound} title="Şifre" description="Şifrenizi kimseyle paylaşmayın; unutursanız klinik yöneticiniz yenisini verebilir.">
-        {passwordForm}
-      </FormSection>
-
-      <FormSection
-        icon={ShieldCheck}
-        title="İki aşamalı doğrulama"
-        description="Girişte şifreye ek olarak telefonunuzdaki doğrulama uygulamasından (Google Authenticator, Authy vb.) 6 haneli kod sorulur."
-      >
-        <div className="space-y-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <Badge tone={twoFactorEnabled ? "success" : "neutral"} size="md">{twoFactorEnabled ? "Açık" : "Kapalı"}</Badge>
-            {!twoFactorEnabled && !twoFactorSetup && (
-              <Button variant="secondary" size="sm" loading={twoFactorSaving} onClick={() => void startTwoFactorSetup()}>Aç</Button>
-            )}
-            {twoFactorEnabled && !showDisableForm && (
-              <Button variant="ghost" size="sm" onClick={() => setShowDisableForm(true)}>Kapat</Button>
-            )}
-          </div>
-
-          {twoFactorSetup && (
-            <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <p className="text-sm text-slate-700"><b>1.</b> Telefonunuzdaki doğrulama uygulamasıyla bu kodu okutun.</p>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={twoFactorSetup.qrCodeDataUrl} alt="İki aşamalı doğrulama QR kodu" className="h-40 w-40 rounded-lg border border-slate-200 bg-white p-2" />
-              <p className="text-xs text-slate-500">Okutamıyorsanız uygulamaya bu anahtarı yazın: <span className="font-mono font-semibold text-slate-700">{twoFactorSetup.secret}</span></p>
-              <p className="text-sm text-slate-700"><b>2.</b> Uygulamada görünen 6 haneli kodu yazın.</p>
-              <div className="flex flex-wrap items-end gap-2">
-                <FormField label="Doğrulama kodu" htmlFor="profil-2fa-kod">
-                  <Input
-                    id="profil-2fa-kod"
-                    value={twoFactorCode}
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    placeholder="000000"
-                    className="w-40 text-center font-mono tracking-[0.3em]"
-                    onChange={(event) => setTwoFactorCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
-                  />
-                </FormField>
-                <Button disabled={twoFactorCode.length < 6} loading={twoFactorSaving} onClick={() => void confirmTwoFactor()}>Onayla</Button>
-                <Button variant="secondary" onClick={() => { setTwoFactorSetup(null); setTwoFactorCode(""); }}>Vazgeç</Button>
-              </div>
-            </div>
-          )}
-
-          {backupCodes && (
-            <div className="space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
-              <p className="text-sm font-bold text-amber-800">Yedek kodlar — bir daha gösterilmeyecek, bir yere yazın</p>
-              <p className="text-xs text-amber-700">Telefonunuza ulaşamazsanız bu kodlardan biriyle giriş yapabilirsiniz. Her kod bir kez kullanılır.</p>
-              <div className="grid grid-cols-2 gap-2 font-mono text-sm text-amber-900 sm:grid-cols-4">
-                {backupCodes.map((code) => <div key={code} className="rounded-md bg-white px-2 py-1.5 text-center">{code}</div>)}
-              </div>
-              <Button variant="secondary" size="sm" onClick={() => setBackupCodes(null)}>Kodları kaydettim</Button>
-            </div>
-          )}
-
-          {twoFactorEnabled && showDisableForm && (
-            <form
-              className="flex flex-wrap items-end gap-2 rounded-lg border border-red-200 bg-red-50 p-4"
-              onSubmit={(event) => { event.preventDefault(); void disableTwoFactor(); }}
-            >
-              <FormField label="Kapatmak için şifrenizi yazın" htmlFor="profil-2fa-sifre">
-                <Input id="profil-2fa-sifre" type="password" autoComplete="current-password" value={disablePassword} onChange={(event) => setDisablePassword(event.target.value)} className="sm:w-64" />
-              </FormField>
-              <Button type="submit" variant="danger" loading={twoFactorSaving}>Kapat</Button>
-              <Button variant="secondary" onClick={() => { setShowDisableForm(false); setDisablePassword(""); }}>Vazgeç</Button>
-            </form>
-          )}
-        </div>
-      </FormSection>
-
-      <FormSection icon={LogOut} title="Diğer oturumlar" description="Başka bir bilgisayarda veya telefonda oturumunuzu açık unuttuysanız buradan kapatın. Bu cihaz açık kalır.">
-        <Button variant="secondary" icon={LogOut} loading={loggingOutOthers} onClick={() => void logoutOtherDevices()}>
-          Diğer cihazlardaki oturumları kapat
-        </Button>
-      </FormSection>
-
-      {showsWorkHours && (
-        <FormSection
+      {showsWork && (
+        <Section
           icon={Clock}
-          title="Çalışma saatleri"
-          description="Randevu ekranı size bu saatlerin dışında randevu verdirmez. Klinik yöneticisi Personel ekranından da değiştirebilir."
+          title="Mesai"
+          description={treatsPatients ? "Randevu ekranı bu saatlerin dışında randevu verdirmez." : undefined}
         >
-          <form
-            className="space-y-4"
-            noValidate
-            onSubmit={(event) => { event.preventDefault(); void saveWork(); }}
-          >
+          <form className="space-y-4" noValidate onSubmit={(event) => { event.preventDefault(); void saveWork(); }}>
             {profile.role === "YONETICI" && (
               <Switch
                 checked={profile.showAsDoctor}
                 onChange={(checked) => setProfile((current) => ({ ...current, showAsDoctor: checked }))}
                 label="Hasta da tedavi ediyorum"
-                description="Açıkken randevu, hakediş ve hasta ekranlarındaki hekim listesinde görünürsünüz."
+                description="Açıkken randevu, hakediş ve hasta ekranlarındaki doktor listesinde görünürsünüz."
+                disabled={ghost}
               />
             )}
             {treatsPatients && (
-              <div className="grid max-w-md grid-cols-2 gap-3">
-                <FormField label="Başlangıç" htmlFor="profil-mesai-baslangic" error={workHoursInvalid ? "Bitiş başlangıçtan sonra olmalı." : undefined}>
-                  <Input id="profil-mesai-baslangic" type="time" value={profile.workStart} onChange={(event) => setProfile((current) => ({ ...current, workStart: event.target.value }))} />
-                </FormField>
-                <FormField label="Bitiş" htmlFor="profil-mesai-bitis">
-                  <Input id="profil-mesai-bitis" type="time" value={profile.workEnd} onChange={(event) => setProfile((current) => ({ ...current, workEnd: event.target.value }))} />
-                </FormField>
-              </div>
+              <TimeRangeInput
+                id="profil-mesai"
+                label="Mesai saatleri"
+                labelHidden
+                required
+                startLabel="Mesai başlangıcı"
+                endLabel="Mesai bitişi"
+                disabled={ghost}
+                value={{ start: profile.workStart, end: profile.workEnd }}
+                onChange={(range) => setProfile((current) => ({ ...current, workStart: range.start, workEnd: range.end }))}
+                error={workSubmitted ? workRangeError || undefined : undefined}
+              />
             )}
             <FormErrorBanner message={workError} />
             {workDirty && (
               <div className="flex flex-wrap gap-2">
-                <Button type="submit" loading={workSaving}>Kaydet</Button>
-                <Button variant="secondary" disabled={workSaving} onClick={() => { setProfile((current) => ({ ...current, ...savedWork })); setWorkError(null); }}>Vazgeç</Button>
+                <Button type="submit" size="sm" loading={workSaving} disabled={ghost}>Kaydet</Button>
+                <Button size="sm" variant="secondary" disabled={workSaving} onClick={discardWork}>Vazgeç</Button>
               </div>
             )}
           </form>
-        </FormSection>
+        </Section>
       )}
+
+      <Section icon={ShieldCheck} title="Giriş güvenliği" padding="none">
+        <SettingsList aria-label="Giriş güvenliği">
+          <SettingsRow
+            icon={KeyRound}
+            title="Şifre"
+            description="Değişince diğer cihazlardaki oturumlarınız kapanır."
+            actions={<Button size="sm" variant="secondary" disabled={ghost} title={ghost ? GHOST_REASON : undefined} onClick={openPassword}>Şifreyi değiştir</Button>}
+          />
+          <SettingsRow
+            icon={ShieldCheck}
+            title="İki aşamalı doğrulama"
+            description="Girişte telefonunuzdaki doğrulama uygulamasından 6 haneli kod sorulur."
+            status={<Badge tone={twoFactorEnabled ? "success" : "neutral"}>{twoFactorEnabled ? "Açık" : "Kapalı"}</Badge>}
+            actions={twoFactorEnabled ? (
+              <Button size="sm" variant="ghost" disabled={ghost} title={ghost ? GHOST_REASON : undefined} onClick={() => { setDisablePassword(""); setDisablePasswordError(null); setTwoFactorError(null); setDisableOpen(true); }}>Kapat</Button>
+            ) : (
+              <Button size="sm" variant="secondary" loading={twoFactorSaving && !twoFactorSetup} disabled={ghost} title={ghost ? GHOST_REASON : undefined} onClick={() => void startTwoFactorSetup()}>Aç</Button>
+            )}
+          />
+          <SettingsRow
+            icon={LogOut}
+            title="Diğer cihazlardaki oturumlar"
+            description="Açık unuttuğunuz oturumları kapatır; bu cihaz açık kalır."
+            actions={<Button size="sm" variant="secondary" loading={loggingOutOthers} disabled={ghost} title={ghost ? GHOST_REASON : undefined} onClick={() => void logoutOtherDevices()}>Oturumları kapat</Button>}
+          />
+        </SettingsList>
+      </Section>
+
+      <FormModal
+        open={passwordOpen}
+        onClose={() => setPasswordOpen(false)}
+        title="Şifreyi değiştir"
+        size="lg"
+        onSubmit={() => changePassword()}
+        submitting={passwordSaving}
+        error={passwordError}
+        submitLabel="Şifreyi değiştir"
+      >
+        <PasswordFields value={password} onChange={updatePassword} submitted={passwordSubmitted} firstLogin={false} currentPasswordError={currentPasswordError} />
+      </FormModal>
+
+      <FormModal
+        open={Boolean(twoFactorSetup)}
+        onClose={() => { setTwoFactorSetup(null); setTwoFactorCode(""); setTwoFactorError(null); setTwoFactorCodeError(null); }}
+        title="İki aşamalı doğrulamayı aç"
+        size="md"
+        onSubmit={() => confirmTwoFactor()}
+        submitting={twoFactorSaving}
+        error={twoFactorError}
+        submitLabel="Onayla"
+      >
+        {twoFactorSetup && (
+          <>
+            <p className="text-sm text-slate-700"><b>1.</b> Telefonunuzdaki doğrulama uygulamasıyla (Google Authenticator, Authy…) bu kodu okutun.</p>
+            <Image src={twoFactorSetup.qrCodeDataUrl} alt="İki aşamalı doğrulama QR kodu" width={160} height={160} unoptimized className="h-40 w-40 rounded-lg border border-slate-200 bg-white p-2" />
+            <p className="text-xs text-slate-500">Okutamıyorsanız uygulamaya bu anahtarı yazın: <span className="break-all font-mono font-semibold text-slate-700">{twoFactorSetup.secret}</span></p>
+            <FormField label="2. Uygulamada görünen 6 haneli kod" htmlFor="profil-2fa-kod" required error={twoFactorCodeError || undefined}>
+              <Input
+                id="profil-2fa-kod"
+                autoFocus
+                value={twoFactorCode}
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                placeholder="000000"
+                className="w-40 text-center font-mono tracking-[0.3em]"
+                onChange={(event) => {
+                  setTwoFactorCode(event.target.value.replace(/\D/g, "").slice(0, 6));
+                  setTwoFactorCodeError(null);
+                }}
+              />
+            </FormField>
+          </>
+        )}
+      </FormModal>
+
+      <FormModal
+        open={disableOpen}
+        onClose={() => { setDisableOpen(false); setDisablePassword(""); setDisablePasswordError(null); setTwoFactorError(null); }}
+        title="İki aşamalı doğrulama kapatılsın mı?"
+        description="Girişte yalnız şifreniz sorulur; hesabınız daha az korunur."
+        size="sm"
+        onSubmit={() => disableTwoFactor()}
+        submitting={twoFactorSaving}
+        error={twoFactorError}
+        submitLabel="Kapat"
+        submitVariant="danger"
+      >
+        <FormField label="Şifreniz" htmlFor="profil-2fa-sifre" required error={disablePasswordError || undefined}>
+          <Input id="profil-2fa-sifre" autoFocus type="password" autoComplete="current-password" value={disablePassword} onChange={(event) => { setDisablePassword(event.target.value); setDisablePasswordError(null); }} />
+        </FormField>
+      </FormModal>
+
+      <Modal
+        open={Boolean(backupCodes)}
+        onClose={() => setBackupCodes(null)}
+        title="Yedek kodlar"
+        description="Bir daha gösterilmeyecek; bir yere yazın. Telefonunuza ulaşamazsanız bu kodlardan biriyle giriş yapabilirsiniz. Her kod bir kez kullanılır."
+        size="md"
+        closeOnBackdrop={false}
+        footer={<Button onClick={() => setBackupCodes(null)}>Kodları kaydettim</Button>}
+      >
+        <div className="grid grid-cols-2 gap-2 font-mono text-sm text-slate-900 sm:grid-cols-4">
+          {(backupCodes || []).map((code) => <div key={code} className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-center">{code}</div>)}
+        </div>
+      </Modal>
     </section>
   );
 }

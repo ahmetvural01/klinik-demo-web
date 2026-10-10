@@ -1,13 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, FileText, Wallet } from "lucide-react";
-import { ListTable, EmptyValue, type ListTableColumn } from "@/components/ui/ListTable";
-import { Button, IconButton } from "@/components/ui/Button";
+import { useCallback, useRef, useState } from "react";
+import { ArrowLeft, Wallet } from "lucide-react";
+import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import { Toolbar } from "@/components/ui/Toolbar";
+import { StatStrip, type StatItem } from "@/components/ui/StatStrip";
+import { Callout } from "@/components/ui/Callout";
+import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { HakedisMonthlyPanel } from "@/components/hakedis/HakedisMonthlyPanel";
 import { FinanceDoctorSelect } from "@/components/muhasebe/FinanceDoctorSelect";
 import { money, monthName } from "@/components/muhasebe/muhasebe-utils";
+import { useLoadWhenActive } from "@/components/muhasebe/finance-hooks";
 
 type OverviewRow = {
   doctor: { id: string; fullName: string; isActive?: boolean };
@@ -19,73 +23,97 @@ type OverviewRow = {
 };
 
 type Props = {
+  /** Sekme ekranda mı (gizliyken istek atılmaz). */
+  active: boolean;
+  refreshKey: number;
   selectedDoctorId: string;
   onSelectDoctor: (doctorId: string) => void;
   canPay: boolean;
+  /**
+   * Doktorun aylık dökümü `earnings:read` ister. Bu izin yoksa (varsayılan
+   * muhasebe rolü) satır döküm açmaz; ödeme genel listeden yapılır.
+   */
+  canOpenStatement: boolean;
+  /** Döküm dışa aktarma (finance:export). */
+  canExport: boolean;
   onPay: (doctorId: string, year: number, month: number, kalan: number) => void;
-  refreshKey: number;
 };
 
 /**
- * Muhasebe > Hakediş. Genel bakış "kime ne ödenecek" sorusunu cevaplar:
- * kapanmış ayların ödenmemiş kalanı ve en eski ödenmemiş ay. İçinde
- * bulunulan ay yalnız bilgi olarak (soluk) gösterilir; ay kapanınca ödenir.
+ * Muhasebe › Hakediş. Genel bakış "kime ne ödenecek" sorusunu cevaplar:
+ * kapanmış ayların ödenmemiş kalanı (en eski ay ödenir). İçinde bulunulan ay
+ * yalnız bilgi olarak gösterilir; ay kapanınca ödenir.
  */
-export function HakedisTab({ selectedDoctorId, onSelectDoctor, canPay, onPay, refreshKey }: Props) {
-  const [rows, setRows] = useState<OverviewRow[]>([]);
+export function HakedisTab({ active, refreshKey, selectedDoctorId, onSelectDoctor, canPay, canOpenStatement, canExport, onPay }: Props) {
+  const [rows, setRows] = useState<OverviewRow[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const sequenceRef = useRef(0);
 
   const load = useCallback(async () => {
+    const sequence = ++sequenceRef.current;
     setLoading(true);
-    setError("");
     try {
       const response = await fetch("/api/hakedis/ozet", { cache: "no-store" });
       const body = await response.json().catch(() => null);
+      if (sequence !== sequenceRef.current) return;
       if (!response.ok || !Array.isArray(body?.doctors)) throw new Error(body?.message || "Hakediş özeti yüklenemedi.");
       setRows(body.doctors as OverviewRow[]);
+      setError("");
     } catch (loadError) {
-      setRows([]);
+      if (sequence !== sequenceRef.current) return;
       setError(loadError instanceof Error ? loadError.message : "Hakediş özeti yüklenemedi.");
     } finally {
-      setLoading(false);
+      if (sequence === sequenceRef.current) setLoading(false);
     }
   }, []);
 
-  useEffect(() => { if (!selectedDoctorId) void load(); }, [load, selectedDoctorId, refreshKey]);
+  // Genel bakış yalnız ekrandayken (doktor dökümü açık değilken) yüklenir.
+  useLoadWhenActive(active && !selectedDoctorId, String(refreshKey), () => void load());
 
   if (selectedDoctorId) {
     return (
       <div className="space-y-3">
-        <div className="ui-toolbar flex flex-col gap-2 p-2.5 sm:flex-row sm:items-center">
+        <Toolbar>
           <Button variant="ghost" size="sm" icon={ArrowLeft} onClick={() => onSelectDoctor("")}>Tüm doktorlar</Button>
-          <div className="sm:w-72">
-            <FinanceDoctorSelect value={selectedDoctorId} onChange={(id) => onSelectDoctor(id)} size="sm" aria-label="Doktor" />
-          </div>
-        </div>
-        <HakedisMonthlyPanel doctorId={selectedDoctorId} canPay={canPay} onPay={onPay} refreshToken={refreshKey} />
+          {canOpenStatement && (
+            <div className="sm:w-72">
+              <FinanceDoctorSelect value={selectedDoctorId} onChange={(id) => onSelectDoctor(id)} size="sm" aria-label="Doktor" />
+            </div>
+          )}
+        </Toolbar>
+        {canOpenStatement ? (
+          <HakedisMonthlyPanel doctorId={selectedDoctorId} canPay={canPay} onPay={onPay} refreshToken={refreshKey} canExport={canExport} active={active} />
+        ) : (
+          <Callout tone="info" title="Aylık döküm için hakediş görüntüleme yetkisi gerekiyor">
+            Ödenecek tutarlar ve ödeme, Tüm doktorlar listesinde.
+          </Callout>
+        )}
       </div>
     );
   }
 
-  const totalPayable = rows.reduce((sum, row) => sum + (row.odenecek || 0), 0);
-  const payableDoctors = rows.filter((row) => row.odenecek > 0.5).length;
+  const list = rows || [];
+  const totalPayable = list.reduce((sum, row) => sum + (row.odenecek || 0), 0);
+  const payableDoctors = list.filter((row) => row.odenecek > 0.5).length;
+  const currentTotal = list.reduce((sum, row) => sum + (row.buAy?.hakedilen || 0), 0);
 
   const payOldest = (row: OverviewRow) => {
     if (!row.enEskiOdenmemis) return;
     onPay(row.doctor.id, row.enEskiOdenmemis.year, row.enEskiOdenmemis.month, row.enEskiOdenmemis.kalan);
   };
 
-  const actions = (row: OverviewRow) => (
-    <div className="flex items-center justify-end gap-1.5">
-      <IconButton icon={FileText} size="sm" title={`${row.doctor.fullName} — aylık dökümü aç`} onClick={() => onSelectDoctor(row.doctor.id)} />
-      {canPay && row.enEskiOdenmemis && (
-        <Button size="sm" variant="secondary" icon={Wallet} onClick={() => payOldest(row)}>
-          {monthName(row.enEskiOdenmemis.year, row.enEskiOdenmemis.month).split(" ")[0]} öde
-        </Button>
-      )}
-    </div>
-  );
+  const payButton = (row: OverviewRow) => (canPay && row.enEskiOdenmemis ? (
+    <Button
+      size="sm"
+      variant="secondary"
+      icon={Wallet}
+      onClick={() => payOldest(row)}
+      aria-label={`${row.doctor.fullName} — ${monthName(row.enEskiOdenmemis.year, row.enEskiOdenmemis.month)} hakedişini öde`}
+    >
+      Öde
+    </Button>
+  ) : null);
 
   const doctorCell = (row: OverviewRow) => (
     <div className="min-w-0">
@@ -97,75 +125,70 @@ export function HakedisTab({ selectedDoctorId, onSelectDoctor, canPay, onPay, re
     </div>
   );
 
+  const payableCell = (row: OverviewRow) => (row.odenecek > 0.5 ? (
+    <div className="text-right">
+      <p className="font-bold tabular-nums text-slate-900">{money(row.odenecek)}</p>
+      <p className="text-xs text-slate-500">
+        {row.odenecekAy} ay{row.enEskiOdenmemis ? ` · en eskisi ${monthName(row.enEskiOdenmemis.year, row.enEskiOdenmemis.month)}` : ""}
+      </p>
+    </div>
+  ) : <span className="text-sm text-slate-500">Ödenecek yok</span>);
+
   const columns: ListTableColumn<OverviewRow>[] = [
     { key: "doktor", header: "Doktor", render: doctorCell },
     {
       key: "odenecek",
       header: "Ödenecek",
+      headerHint: "Kapanmış ayların ödenmemiş kalanı. İçinde bulunulan ay, ay kapanınca ödenir.",
       align: "right",
-      render: (row) => (row.odenecek > 0.5 ? (
-        <div className="text-right">
-          <p className="font-bold tabular-nums text-slate-900">{money(row.odenecek)}</p>
-          <p className="text-xs text-slate-400">{row.odenecekAy} kapanmış ay</p>
-        </div>
-      ) : <span className="text-sm text-slate-500">Borç yok</span>),
-    },
-    {
-      key: "enEski",
-      header: "En eski ödenmemiş ay",
-      render: (row) => (row.enEskiOdenmemis
-        ? <span className="text-sm text-slate-700">{monthName(row.enEskiOdenmemis.year, row.enEskiOdenmemis.month)} · {money(row.enEskiOdenmemis.kalan)}</span>
-        : <EmptyValue />),
+      render: payableCell,
     },
     {
       key: "buAy",
       header: "Bu ay biriken",
+      headerHint: "İçinde bulunulan ayın hakedişi; yalnız bilgi.",
       align: "right",
-      render: (row) => <span className="text-sm tabular-nums text-slate-500" title="İçinde bulunulan ay; ay kapanınca ödenir.">{money(row.buAy?.hakedilen ?? 0)}</span>,
+      render: (row) => <span className="text-sm tabular-nums text-slate-500">{money(row.buAy?.hakedilen ?? 0)}</span>,
     },
-    { key: "islem", header: "", align: "right", render: actions },
+    ...(canPay ? [{ key: "islem", header: "", align: "right" as const, render: payButton }] : []),
+  ];
+
+  const stats: StatItem[] = [
+    { key: "odenecek", label: "Ödenecek toplam", value: money(totalPayable), hint: !rows ? undefined : payableDoctors > 0 ? `${payableDoctors} doktor` : "Ödenecek hakediş yok" },
+    { key: "buay", label: "Bu ay biriken", value: money(currentTotal), hint: "Ay kapanınca ödenir" },
   ];
 
   return (
-    <ListTable
-      columns={columns}
-      rows={rows}
-      rowKey={(row) => row.doctor.id}
-      loading={loading}
-      error={error || null}
-      onRetry={() => void load()}
-      onRowClick={(row) => onSelectDoctor(row.doctor.id)}
-      getRowAriaLabel={(row) => `${row.doctor.fullName} hakediş dökümünü aç`}
-      header={(
-        <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 border-b border-slate-100 px-4 py-3 text-sm">
-          {loading && rows.length === 0 ? (
-            <span className="text-slate-400">Hakedişler hesaplanıyor…</span>
-          ) : (
-            <span className="text-slate-500">
-              Toplam ödenecek <b className="tabular-nums text-slate-900">{money(totalPayable)}</b>
-              {payableDoctors > 0 && <span className="ml-1 text-xs text-slate-400">({payableDoctors} doktor)</span>}
-            </span>
-          )}
-          <span className="text-xs text-slate-400">Yalnız kapanmış aylar ödenir; içinde bulunulan ay bilgi amaçlıdır.</span>
-        </div>
-      )}
-      emptyText="Hakediş hesaplanacak doktor yok"
-      emptyDescription="Personel ekranında doktor tanımlandığında burada görünür."
-      mobileCard={(row) => (
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            {doctorCell(row)}
-            <p className="mt-0.5 text-xs text-slate-500">
-              {row.enEskiOdenmemis ? `En eski: ${monthName(row.enEskiOdenmemis.year, row.enEskiOdenmemis.month)}` : "Ödenmemiş ay yok"}
-              {" · "}Bu ay {money(row.buAy?.hakedilen ?? 0)}
-            </p>
+    <div className="space-y-3">
+      {(rows || !error || loading) && <StatStrip items={stats} loading={!rows} aria-label="Hakediş özeti" />}
+      <ListTable
+        columns={columns}
+        rows={list}
+        rowKey={(row) => row.doctor.id}
+        loading={loading || (!rows && !error)}
+        error={rows ? null : error || null}
+        staleError={rows ? error || null : null}
+        onRetry={() => void load()}
+        onRowClick={canOpenStatement ? (row) => onSelectDoctor(row.doctor.id) : undefined}
+        getRowAriaLabel={(row) => `${row.doctor.fullName} hakediş dökümünü aç`}
+        emptyText="Hakediş hesaplanacak doktor yok"
+        emptyDescription="Personel ekranında doktor tanımlandığında burada görünür."
+        mobileCard={(row) => (
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              {doctorCell(row)}
+              <p className="mt-0.5 text-xs text-slate-500">
+                {row.enEskiOdenmemis ? `En eski: ${monthName(row.enEskiOdenmemis.year, row.enEskiOdenmemis.month)}` : "Ödenecek ay yok"}
+                {" · "}Bu ay {money(row.buAy?.hakedilen ?? 0)}
+              </p>
+            </div>
+            <div className="flex shrink-0 flex-col items-end gap-1.5">
+              <span className={`font-bold tabular-nums ${row.odenecek > 0.5 ? "text-slate-900" : "text-slate-400"}`}>{money(row.odenecek)}</span>
+              {payButton(row)}
+            </div>
           </div>
-          <div className="flex shrink-0 flex-col items-end gap-1.5">
-            <span className={`font-bold tabular-nums ${row.odenecek > 0.5 ? "text-slate-900" : "text-slate-400"}`}>{money(row.odenecek)}</span>
-            {actions(row)}
-          </div>
-        </div>
-      )}
-    />
+        )}
+      />
+    </div>
   );
 }

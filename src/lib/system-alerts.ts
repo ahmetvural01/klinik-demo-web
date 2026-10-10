@@ -34,8 +34,8 @@ export function evaluateSystemAlerts() {
     alerts.push({
       id: "api-errors-high",
       level: "critical",
-      title: "API hata sayisi yuksek",
-      detail: `Toplam API hatasi: ${apiErrors}`,
+      title: "API hata sayısı yüksek",
+      detail: `Toplam API hatası: ${apiErrors}`,
       at: now,
     });
   }
@@ -44,7 +44,7 @@ export function evaluateSystemAlerts() {
     alerts.push({
       id: "rate-limit-high",
       level: "warning",
-      title: "Rate-limit tetikleri yuksek",
+      title: "Hız sınırı tetikleri yüksek",
       detail: `Toplam tetik: ${rateHits}`,
       at: now,
     });
@@ -54,8 +54,8 @@ export function evaluateSystemAlerts() {
     alerts.push({
       id: `api-latency-high:${r.route}`,
       level: r.maxMs > SLOW_ROUTE_CRITICAL_MS ? "critical" : "warning",
-      title: `API gecikmesi yuksek: ${r.route}`,
-      detail: `Maks sure: ${r.maxMs} ms (ort: ${r.avgMs} ms, ${r.count} istek)`,
+      title: `API gecikmesi yüksek: ${r.route}`,
+      detail: `En uzun süre: ${r.maxMs} ms (ortalama: ${r.avgMs} ms, ${r.count} istek)`,
       at: now,
     });
   }
@@ -64,8 +64,8 @@ export function evaluateSystemAlerts() {
     alerts.push({
       id: "sms-latency-high",
       level: "warning",
-      title: "SMS dispatch suresi yuksek",
-      detail: `Maks SMS sure: ${smsP95} ms`,
+      title: "SMS gönderim süresi yüksek",
+      detail: `En uzun SMS gönderim süresi: ${smsP95} ms`,
       at: now,
     });
   }
@@ -74,8 +74,8 @@ export function evaluateSystemAlerts() {
     alerts.push({
       id: "realtime-possible-stall",
       level: "critical",
-      title: "Realtime akista olasi duraklama",
-      detail: `Acik baglanti: ${realtimeConnections}, event: ${realtimeEvents}`,
+      title: "Anlık güncelleme akışında olası duraklama",
+      detail: `Açık bağlantı: ${realtimeConnections}, olay: ${realtimeEvents}`,
       at: now,
     });
   }
@@ -85,7 +85,7 @@ export function evaluateSystemAlerts() {
       id: "system-ok",
       level: "info",
       title: "Sistem stabil",
-      detail: "Belirgin risk esigi asilmadi.",
+      detail: "Belirgin bir risk eşiği aşılmadı.",
       at: now,
     });
   }

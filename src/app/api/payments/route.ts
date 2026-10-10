@@ -1,6 +1,6 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, withApiTiming, writeAudit } from "@/lib/api";
+import { hasEffectivePermission, requireAuth, withApiTiming, writeAudit } from "@/lib/api";
 import { createIntegratedPayment, toPublicPayment } from "@/lib/payment-ledger";
 import { formatZodError, paymentSchema } from "@/lib/validators";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
@@ -50,6 +50,12 @@ export async function POST(request: NextRequest) {
 
     if (!doctorId) {
       return NextResponse.json({ message: "Hasta tahsilatı için doktor seçimi zorunlu" }, { status: 400 });
+    }
+
+    // İleri tarihli tahsilat olmaz (formdaki kural; düzeltme ucu ve taksit
+    // tahsilatıyla aynı). Saat farkı için 5 dakika pay.
+    if (createdAt && new Date(createdAt).getTime() > Date.now() + 5 * 60_000) {
+      return NextResponse.json({ message: "Tahsilat tarihi ileri bir gün olamaz" }, { status: 400 });
     }
 
     if (requestKey && (requestKey.length < 8 || requestKey.length > 100)) {
@@ -144,7 +150,10 @@ export async function POST(request: NextRequest) {
     // Aynı hastanın aynı doktorda aynı gün birden fazla randevusu olabilir.
     // Tahsilat alınca günün bütün randevularını tamamlamak gelecekteki seansı
     // da kapatıyordu. Yalnızca tek ve açıkça eşleşen kayıt tamamlanır: önce tek
-    // GELDI kaydı, yoksa ödeme anı geçmiş tek BEKLIYOR kaydı.
+    // GELDI kaydı, yoksa ödeme anı geçmiş tek BEKLIYOR kaydı. GELDI kaydı da
+    // saati gelmişse tamamlanır: 09:05'te "Geldi" denen 11:00 randevusu 09:06'daki
+    // peşinatla "Tamamlandı" oluyor, hasta bekleyenlerden ve doktorun
+    // "Sıradaki" vurgusundan düşüyordu.
     let autoCompletedAppointments = 0;
     if (patientId && doctorId) {
       try {
@@ -167,7 +176,7 @@ export async function POST(request: NextRequest) {
           (item) => item.status === "BEKLIYOR" && item.startAt <= payment.createdAt,
         );
         const target = arrived.length === 1
-          ? arrived[0]
+          ? (arrived[0].startAt <= payment.createdAt ? arrived[0] : null)
           : arrived.length === 0 && alreadyStarted.length === 1
             ? alreadyStarted[0]
             : null;
@@ -244,6 +253,12 @@ export const GET = withApiTiming("payments", async function GET(request: NextReq
     const patientId = searchParams.get("patientId");
     if (!auth.user.institutionId && auth.user.role !== "SUPERADMIN") {
       return NextResponse.json({ message: "Kurum bağlamı bulunamadı." }, { status: 403 });
+    }
+    // Kurum geneli tahsilat listesi Muhasebe ekranının işidir (finance:center).
+    // Tek hastanın tahsilatları (hasta dosyası, tahsilat formu) tahsilat okuma
+    // izniyle açılmaya devam eder.
+    if (!patientId && !(await hasEffectivePermission(auth.user, "finance:center"))) {
+      return NextResponse.json({ message: "Tüm tahsilat listesini görme yetkiniz yok; hastanın tahsilatlarına hasta dosyasından bakabilirsiniz." }, { status: 403 });
     }
 
     const payments = await prisma.payment.findMany({

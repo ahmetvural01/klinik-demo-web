@@ -1,9 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit, withApiTiming } from "@/lib/api";
 import { computeDoctorMonthlyHakedis, computeDoctorMonthlyOdenen, findEligibleDoctor, monthRangeUtc } from "@/lib/hakedis";
 import { isValidDateKey, turkeyDayRangeUtc, turkeyYearMonth } from "@/lib/tz";
 import { requireActiveBranch } from "@/lib/branch-context";
+
+// Route dosyası yalnız HTTP yöntemlerini dışa açabilir; aynı kural gider/[id] PATCH'te de var.
+const OPEN_PERIOD_MESSAGE = "İçinde bulunulan ayın hakedişi ay kapanınca ödenir.";
+
+/** Hakediş ayı henüz kapanmadı mı (içinde bulunulan ya da ileri ay; Türkiye takvimi)? */
+function isOpenPayoutPeriod(year: number, month: number, now = new Date()) {
+  const current = turkeyYearMonth(now);
+  return year * 12 + month >= current.year * 12 + current.month;
+}
 
 export const GET = withApiTiming("gider", async function GET(req: NextRequest) {
   try {
@@ -165,7 +175,18 @@ export async function POST(req: NextRequest) {
       // vardı; PATCH ucundaki aynı kontrol burada da uygulanır.
       const payoutYear = resolvedPeriodYear as number;
       const payoutMonth = resolvedPeriodMonth as number;
+      // İçinde bulunulan (ve ileri) ayın hakedişi ay kapanınca ödenir: ekran
+      // bunu söylüyordu ama sunucu kabul ediyordu (ay sürerken biriken tutar
+      // henüz kesin değil).
+      if (isOpenPayoutPeriod(payoutYear, payoutMonth)) {
+        return NextResponse.json({ error: OPEN_PERIOD_MESSAGE }, { status: 400 });
+      }
       const { start: periodStart, end: periodEnd } = monthRangeUtc(payoutYear, payoutMonth);
+      // Hakediş ay kapandıktan sonra ödenir: o aya etiketli önceki ödemeler
+      // sonraki aylarda kaydedilir. Ödenen yalnız dönem ayının tarihleriyle
+      // okununca bu ödemeler görülmüyor, aynı aya ikinci tam ödeme kabul
+      // ediliyordu. Ödenen bugüne kadar okunur (hakedis/detay ile aynı).
+      const paidUntil = new Date(Math.max(periodEnd.getTime(), Date.now()));
       const [hakedisRows, odenenMap] = await Promise.all([
         computeDoctorMonthlyHakedis({
           doctorId,
@@ -175,13 +196,13 @@ export async function POST(req: NextRequest) {
           rangeStart: periodStart,
           rangeEnd: periodEnd,
         }),
-        computeDoctorMonthlyOdenen({ doctorId, institutionId: auth.user.institutionId, branchId: branch.branchId, rangeStart: periodStart, rangeEnd: periodEnd }),
+        computeDoctorMonthlyOdenen({ doctorId, institutionId: auth.user.institutionId, branchId: branch.branchId, rangeStart: periodStart, rangeEnd: paidUntil }),
       ]);
-      const hakedilen = hakedisRows.find((row) => row.year === payoutYear && row.month === payoutMonth)?.hakedilen ?? 0;
-      const odenen = odenenMap.get(`${payoutYear}-${String(payoutMonth).padStart(2, "0")}`) || 0;
-      if (odenen + tutarNum > hakedilen + 0.01) {
+      const hakedilen = new Prisma.Decimal(hakedisRows.find((row) => row.year === payoutYear && row.month === payoutMonth)?.hakedilen ?? 0);
+      const odenen = new Prisma.Decimal(odenenMap.get(`${payoutYear}-${String(payoutMonth).padStart(2, "0")}`) || 0);
+      if (odenen.plus(tutarNum).gt(hakedilen.plus("0.01"))) {
         return NextResponse.json({
-          error: `Bu tutar doktorun ${payoutMonth}/${payoutYear} hakedişini aşıyor. Ödenebilecek en fazla: ${Math.max(0, hakedilen - odenen).toFixed(2)} TL`,
+          error: `Bu tutar doktorun ${payoutMonth}/${payoutYear} hakedişini aşıyor. Ödenebilecek en fazla: ${Prisma.Decimal.max(0, hakedilen.minus(odenen)).toFixed(2)} TL`,
         }, { status: 400 });
       }
 

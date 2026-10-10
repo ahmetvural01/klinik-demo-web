@@ -1,43 +1,59 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Button } from "@/components/ui/Button";
+import { ChevronLeft, Eye } from "lucide-react";
+import { Button, IconButton } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { ListTable, EmptyValue, type ListTableColumn } from "@/components/ui/ListTable";
+import { DescriptionList } from "@/components/ui/DescriptionList";
 import { Switch } from "@/components/ui/Switch";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
 import { renderSmsPreview } from "@/lib/sms-template-placeholders";
 import { formatCount, longDateWithWeekday } from "@/components/sms/communication-labels";
+import type { CelebrationDay } from "@/components/sms/communication-status";
 
-type CelebrationRow = {
-  code: string;
-  title: string;
-  targetProfessions: string[];
-  messageTemplate: string;
-  whatsappMessageTemplate: string | null;
-  enabled: boolean;
-  nextDate: string | null;
-  audience?: { total: number; consented: number };
-  sentThisYear?: number;
-};
-
-function audienceLabel(row: CelebrationRow) {
+function audienceLabel(row: CelebrationDay) {
   return row.targetProfessions.length ? `${row.targetProfessions.join(", ")} mesleğindeki hastalar` : "Tüm hastalar";
 }
 
+function reachLabel(row: CelebrationDay) {
+  if (!row.audience) return "";
+  return `${formatCount(row.audience.total)} hasta · ${formatCount(row.audience.consented)} kişiye gider`;
+}
+
+type CelebrationManageModalProps = {
+  open: boolean;
+  onClose: () => void;
+  /** Açıp kapatmak toplu gönderim yetkisi ister (api/celebration-days/[code] → sms:bulk). */
+  canToggle: boolean;
+  clinicName: string;
+  multipleBranches: boolean;
+  /**
+   * WhatsApp bağlı ve kullanıcı WhatsApp'ı görebiliyor: özel günün WhatsApp
+   * metni SMS metninden farklıysa ayrıca gösterilir (kutlama taraması WhatsApp'ta
+   * bu metni gönderir — src/lib/celebration-sms.ts).
+   */
+  showWhatsappText?: boolean;
+  /** Açma/kapama kaydedildi — Otomatik mesajlar özet satırı güncellensin. */
+  onToggled: (code: string, enabled: boolean) => void;
+};
+
 /**
- * Bayram ve özel günler: sıradaki gerçek tarih, kime gideceği, bu şubedeki
- * alıcı sayısı ve otomatik gönderim anahtarı. Açarken ne olacağı (her yıl,
- * tüm şubeler, kaç kişi, kredi) onay penceresinde söylenir. Açma/kapama
- * toplu gönderim yetkisi ister (api/celebration-days/[code] → sms:bulk).
+ * Bayram ve özel günler penceresi: sıradaki gerçek tarih, kime gideceği, bu
+ * şubede kaç kişiye gideceği (bugünkü kanal ayarıyla) ve otomatik gönderim
+ * anahtarı. Otomatik mesajlar listesinde tek satır özet olarak durur;
+ * 16 satırlık tablo artık sayfayı uzatmaz. Açmadan önce ne olacağı (her yıl,
+ * tüm şubeler, kaç kişi, kredi) onay penceresinde söylenir. Metin satırdaki
+ * "Metni gör" ile aynı pencerede açılır (satıra tıklama + içindeki anahtar iç
+ * içe etkileşimli öğe oluşturuyordu).
  */
-export function CelebrationList({ canToggle, clinicName, showWhatsapp }: { canToggle: boolean; clinicName: string; showWhatsapp: boolean }) {
-  const [rows, setRows] = useState<CelebrationRow[]>([]);
+export function CelebrationManageModal({ open, onClose, canToggle, clinicName, multipleBranches, showWhatsappText = false, onToggled }: CelebrationManageModalProps) {
+  const [rows, setRows] = useState<CelebrationDay[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [savingCode, setSavingCode] = useState<string | null>(null);
-  const [detail, setDetail] = useState<CelebrationRow | null>(null);
+  const [detailCode, setDetailCode] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -48,29 +64,34 @@ export function CelebrationList({ canToggle, clinicName, showWhatsapp }: { canTo
       if (!response.ok) throw new Error(data?.message || "Özel günler yüklenemedi.");
       setRows(Array.isArray(data?.days) ? data.days : []);
     } catch (loadError) {
-      setRows([]);
       setError(loadError instanceof Error ? loadError.message : "Özel günler yüklenemedi.");
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  // Pencere her açılışta güncel sayılarla yüklenir (sayılar hastalar ve kanal ayarıyla değişir).
+  useEffect(() => {
+    if (!open) return;
+    setDetailCode(null);
+    void load();
+  }, [load, open]);
 
   const sorted = useMemo(() => [...rows].sort((a, b) => (a.nextDate || "9999").localeCompare(b.nextDate || "9999")), [rows]);
+  const detail = detailCode ? rows.find((row) => row.code === detailCode) || null : null;
+  const detailWhatsappText = showWhatsappText && detail?.whatsappMessageTemplate && detail.whatsappMessageTemplate !== detail.messageTemplate
+    ? detail.whatsappMessageTemplate
+    : null;
 
-  const toggle = async (row: CelebrationRow, next: boolean) => {
+  const toggle = async (row: CelebrationDay, next: boolean) => {
     if (next) {
-      const consented = row.audience?.consented ?? 0;
-      const total = row.audience?.total ?? 0;
       const ok = await confirmDialog({
-        title: `“${row.title}” otomatik gönderilsin mi?`,
+        title: `“${row.title}” her yıl otomatik gönderilsin mi?`,
         message: [
-          row.nextDate ? `Her yıl bu gün (sıradaki: ${longDateWithWeekday(row.nextDate)})` : "Her yıl bu gün",
-          `kurumun tüm şubelerindeki ${row.targetProfessions.length ? `${row.targetProfessions.join(", ")} mesleğindeki ` : ""}hastalara kutlama mesajı gider.`,
-          `Bu şubede ${formatCount(total)} hasta var; izni olan ${formatCount(consented)} hastaya gider, izni olmayana gitmez.`,
-          "Her SMS 1 kredi harcar.",
-        ].join(" "),
+          row.nextDate ? `Sıradaki: ${longDateWithWeekday(row.nextDate)}.` : "",
+          `${audienceLabel(row)}; bu şubede ${formatCount(row.audience?.consented ?? 0)} kişiye gider${multipleBranches ? ", diğer şubelerde de gider" : ""}.`,
+          "SMS ile gidenler kredi harcar.",
+        ].filter(Boolean).join(" "),
         confirmText: "Otomatik gönder",
         cancelText: "Vazgeç",
       });
@@ -86,6 +107,7 @@ export function CelebrationList({ canToggle, clinicName, showWhatsapp }: { canTo
       const data = await response.json().catch(() => null);
       if (!response.ok) throw new Error(data?.message || "Güncellenemedi.");
       setRows((current) => current.map((item) => (item.code === row.code ? { ...item, enabled: next } : item)));
+      onToggled(row.code, next);
       showToastSafe({ message: next ? `“${row.title}” her yıl otomatik gönderilecek.` : `“${row.title}” artık otomatik gönderilmeyecek.`, type: "success" });
     } catch (toggleError) {
       showToastSafe({ message: toggleError instanceof Error ? toggleError.message : "Güncellenemedi.", type: "error" });
@@ -94,17 +116,21 @@ export function CelebrationList({ canToggle, clinicName, showWhatsapp }: { canTo
     }
   };
 
-  const toggleCell = (row: CelebrationRow) => (
+  const toggleCell = (row: CelebrationDay) => (
     <Switch
       checked={row.enabled}
       disabled={!canToggle || savingCode === row.code}
       onChange={(checked) => void toggle(row, checked)}
-      label={<span className="sr-only">{row.title} otomatik gönderilsin</span>}
-      aria-label={`${row.title} otomatik gönderilsin`}
+      label={`${row.title} otomatik gönderilsin`}
+      labelHidden
     />
   );
 
-  const columns: ListTableColumn<CelebrationRow>[] = [
+  const textButton = (row: CelebrationDay) => (
+    <IconButton icon={Eye} size="sm" title={`${row.title} metnini gör`} onClick={() => setDetailCode(row.code)} />
+  );
+
+  const columns: ListTableColumn<CelebrationDay>[] = [
     { key: "date", header: "Sıradaki tarih", cellClassName: "whitespace-nowrap text-slate-700", render: (row) => (row.nextDate ? longDateWithWeekday(row.nextDate) : <EmptyValue />) },
     {
       key: "title",
@@ -119,67 +145,83 @@ export function CelebrationList({ canToggle, clinicName, showWhatsapp }: { canTo
     {
       key: "audience",
       header: "Bu şubede",
+      headerHint: "Bugünkü kanal ayarıyla (SMS izni, WhatsApp) mesajın gidebileceği hasta sayısı.",
       cellClassName: "whitespace-nowrap text-slate-600",
-      render: (row) => (row.audience ? `${formatCount(row.audience.total)} hasta · ${formatCount(row.audience.consented)} izinli` : <EmptyValue />),
+      render: (row) => reachLabel(row) || <EmptyValue />,
     },
-    { key: "auto", header: "Otomatik gönder", align: "right", render: toggleCell },
+    { key: "text", header: "Metin", align: "center", render: textButton },
+    { key: "auto", header: "Otomatik", align: "right", render: toggleCell },
   ];
 
   const preview = (template: string) => renderSmsPreview(template, { institutionName: clinicName || undefined });
 
   return (
-    <div className="space-y-2">
-      {!canToggle && <p className="text-xs text-slate-500">Açıp kapatmak toplu mesaj yetkisi ister; yetkiniz yoksa yalnız görüntüleyebilirsiniz.</p>}
-      <ListTable<CelebrationRow>
-        columns={columns}
-        rows={sorted}
-        rowKey={(row) => row.code}
-        loading={loading}
-        error={error || null}
-        onRetry={() => void load()}
-        emptyText="Tanımlı özel gün yok"
-        onRowClick={setDetail}
-        getRowAriaLabel={(row) => `${row.title} mesaj metni`}
-        mobileCard={(row) => (
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="font-semibold text-slate-900">{row.title}</p>
-              <p className="text-xs text-slate-500">{row.nextDate ? longDateWithWeekday(row.nextDate) : "—"}</p>
-              <p className="text-xs text-slate-500">{audienceLabel(row)}{row.audience ? ` · bu şubede ${formatCount(row.audience.consented)} izinli` : ""}</p>
-            </div>
-            {toggleCell(row)}
+    <Modal
+      module="sms"
+      open={open}
+      onClose={onClose}
+      size="xl"
+      title={detail ? detail.title : "Bayram ve özel günler"}
+      description={detail
+        ? [detail.nextDate ? longDateWithWeekday(detail.nextDate) : "", audienceLabel(detail)].filter(Boolean).join(" · ")
+        : canToggle
+          ? "Açtığınız gün her yıl, kurumun tüm şubelerindeki uygun hastalara gider."
+          : "Açıp kapatmak toplu mesaj yetkisi ister."}
+      trackFormChanges={false}
+      footer={detail ? (
+        <>
+          <Button variant="ghost" icon={ChevronLeft} className="mr-auto" onClick={() => setDetailCode(null)}>Listeye dön</Button>
+          <Button variant="secondary" onClick={onClose}>Kapat</Button>
+        </>
+      ) : (
+        <Button variant="secondary" onClick={onClose}>Kapat</Button>
+      )}
+    >
+      {detail ? (
+        <div className="space-y-4">
+          <div>
+            <p className="mb-1 text-xs font-semibold text-slate-500">{detailWhatsappText ? "SMS ile giden metin" : "Hastaya giden metin"}</p>
+            <p className="whitespace-pre-wrap break-words rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm leading-5 text-slate-800">{preview(detail.messageTemplate)}</p>
           </div>
-        )}
-      />
-      <Modal
-        module="sms"
-        open={Boolean(detail)}
-        onClose={() => setDetail(null)}
-        title={detail?.title || "Özel gün"}
-        description={detail ? `${detail.nextDate ? longDateWithWeekday(detail.nextDate) : ""} · ${audienceLabel(detail)}` : undefined}
-        trackFormChanges={false}
-        footer={<Button variant="secondary" onClick={() => setDetail(null)}>Kapat</Button>}
-      >
-        {detail && (
-          <div className="space-y-3 text-sm">
+          {detailWhatsappText && (
             <div>
-              <p className="mb-1 text-xs font-semibold text-slate-500">Hastaya giden metin (SMS)</p>
-              <p className="rounded-lg bg-slate-50 px-3 py-2 leading-5 text-slate-800">{preview(detail.messageTemplate)}</p>
+              <p className="mb-1 text-xs font-semibold text-slate-500">WhatsApp ile giden metin</p>
+              <p className="whitespace-pre-wrap break-words rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm leading-5 text-slate-800">{preview(detailWhatsappText)}</p>
             </div>
-            {showWhatsapp && detail.whatsappMessageTemplate && detail.whatsappMessageTemplate !== detail.messageTemplate && (
-              <div>
-                <p className="mb-1 text-xs font-semibold text-slate-500">WhatsApp metni</p>
-                <p className="rounded-lg bg-emerald-50/60 px-3 py-2 leading-5 text-slate-800">{preview(detail.whatsappMessageTemplate)}</p>
+          )}
+          <DescriptionList
+            layout="rows"
+            items={[
+              { key: "durum", label: "Otomatik gönderim", value: detail.enabled ? "Açık" : "Kapalı" },
+              { key: "bu-sube", label: "Bu şubede", value: reachLabel(detail) },
+              { key: "bu-yil", label: "Bu yıl gönderilen", value: typeof detail.sentThisYear === "number" ? `${formatCount(detail.sentThisYear)} hasta` : null },
+            ]}
+          />
+          <p className="text-xs text-slate-500">Metni sistem yöneticisi hazırlar; hata görürseniz Destek&apos;ten bildirin.</p>
+        </div>
+      ) : (
+        <ListTable<CelebrationDay>
+          columns={columns}
+          rows={sorted}
+          rowKey={(row) => row.code}
+          loading={loading && rows.length === 0}
+          error={rows.length === 0 ? error || null : null}
+          staleError={rows.length > 0 ? error || null : null}
+          onRetry={() => void load()}
+          emptyText="Tanımlı özel gün yok"
+          mobileCard={(row) => (
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="font-semibold text-slate-900">{row.title}</p>
+                <p className="text-xs text-slate-500">{row.nextDate ? longDateWithWeekday(row.nextDate) : "—"} · {audienceLabel(row)}</p>
+                {row.audience && <p className="text-xs text-slate-500">Bu şubede {reachLabel(row)}</p>}
+                <Button variant="ghost" size="sm" icon={Eye} className="-ml-3 mt-1" onClick={() => setDetailCode(row.code)}>Metni gör</Button>
               </div>
-            )}
-            <p className="text-slate-600">
-              {detail.enabled ? "Otomatik gönderim açık." : "Otomatik gönderim kapalı; Mesaj Gönder'de hazır metin olarak elle kullanılabilir."}
-              {typeof detail.sentThisYear === "number" ? ` Bu yıl bu şubede ${formatCount(detail.sentThisYear)} hastaya gönderildi.` : ""}
-            </p>
-            <p className="text-xs text-slate-500">Bu metinler sistem yöneticisi tarafından hazırlanır; metinde hata görürseniz Destek&apos;ten bildirin.</p>
-          </div>
-        )}
-      </Modal>
-    </div>
+              {toggleCell(row)}
+            </div>
+          )}
+        />
+      )}
+    </Modal>
   );
 }

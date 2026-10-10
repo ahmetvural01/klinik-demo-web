@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { hasEffectivePermission, requireAuth } from "@/lib/api";
 import { requireActiveBranch } from "@/lib/branch-context";
 import { canMessageOnWhatsapp } from "@/lib/whatsapp-consent";
+import { CONSENT_PREFERENCE_SELECT, deriveSmsConsent, latestConsentTokens } from "../_lib/consent-status";
 
 function parsePositiveInt(value: string | null, fallback: number, max: number) {
   const parsed = Number.parseInt(value || "", 10);
@@ -65,7 +66,7 @@ export async function GET(request: NextRequest) {
         whatsappOptInAt: true,
         whatsappOptOutAt: true,
         birthDate: true,
-        smsPreference: { select: { status: true } },
+        smsPreference: CONSENT_PREFERENCE_SELECT,
       },
       orderBy: [{ fullName: "asc" }, { createdAt: "desc" }],
       skip: (page - 1) * take,
@@ -73,6 +74,11 @@ export async function GET(request: NextRequest) {
     }),
     prisma.patient.count({ where: finalWhere }),
   ]);
+  // Yalnız onay bekleyen satırların son bağlantısına bakılır (sayfa başına en çok 100 hasta).
+  const tokens = await latestConsentTokens(
+    auth.user.institutionId,
+    rows.filter((row) => row.smsPreference?.status === "PENDING").map((row) => row.id),
+  );
 
   return NextResponse.json({
     patients: rows.map((row) => ({
@@ -81,7 +87,7 @@ export async function GET(request: NextRequest) {
       // Aynı adlı hastaları ayırmak için yalnız doğum yılı (telefon gösterilmez).
       birthYear: row.birthDate ? row.birthDate.getFullYear() : null,
       hasPhone: Boolean(row.phone),
-      smsConsent: row.smsPreference?.status || "NONE",
+      smsConsent: deriveSmsConsent(row.smsPreference, tokens.get(row.id)),
       whatsappConsent: canMessageOnWhatsapp(row),
     })),
     total,

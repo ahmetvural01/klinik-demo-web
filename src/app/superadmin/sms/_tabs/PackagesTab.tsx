@@ -4,13 +4,14 @@ import { useCallback, useEffect, useState } from "react";
 import { Pencil, Plus, Power } from "lucide-react";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
-import { Modal } from "@/components/ui/Modal";
+import { FormModal } from "@/components/ui/FormModal";
 import { Input } from "@/components/ui/Input";
-import { FormErrorBanner, FormField } from "@/components/ui/FormField";
+import { MoneyInput } from "@/components/ui/MoneyInput";
+import { FormField } from "@/components/ui/FormField";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
-import { TabIntro } from "@/components/superadmin/TabIntro";
+import { moneyInputError, toMoneyValue } from "@/lib/money-input";
 import { count, money, unitPrice } from "@/components/superadmin/sa-format";
 import { errorMessage, isAbort, saGet, saSend } from "@/components/superadmin/sa-fetch";
 
@@ -68,17 +69,19 @@ export default function PackagesTab() {
 
   const openEdit = (item: Package) => {
     setEditing(item);
-    setForm({ name: item.name, smsCount: String(item.smsCount), price: String(item.price) });
+    setForm({ name: item.name, smsCount: String(item.smsCount), price: toMoneyValue(item.price) ?? "" });
     setFormError(null);
     setOpen(true);
   };
 
   const save = async () => {
     const smsCount = Number(form.smsCount);
-    const price = Number(form.price.replace(",", "."));
     if (!form.name.trim()) return setFormError("Paket adını yazın.");
     if (!Number.isInteger(smsCount) || smsCount < 1) return setFormError("SMS adedi 1 veya daha büyük bir tam sayı olmalı.");
-    if (!Number.isFinite(price) || price <= 0) return setFormError("Fiyat sıfırdan büyük olmalı.");
+    const priceError = moneyInputError(form.price, { required: true });
+    if (priceError) return setFormError(priceError);
+    // MoneyInput değeri "1250.50" metnidir; sunucu sayıya çevirir.
+    const price = form.price;
     setSaving(true);
     setFormError(null);
     try {
@@ -119,6 +122,7 @@ export default function PackagesTab() {
   };
 
   const statusBadge = (item: Package) => <Badge tone={item.isActive ? "success" : "neutral"}>{item.isActive ? "Satışta" : "Pasif"}</Badge>;
+  const parsedPrice = moneyInputError(form.price, { required: true }) ? null : toMoneyValue(form.price);
 
   const actions = (item: Package) => (
     <div className="flex items-center justify-end gap-1.5">
@@ -143,20 +147,21 @@ export default function PackagesTab() {
     { key: "actions", header: "", align: "right", render: actions },
   ];
 
-  const previewUnit = Number(form.smsCount) > 0 && Number(form.price.replace(",", ".")) > 0 ? unitPrice(Number(form.price.replace(",", ".")), Number(form.smsCount)) : null;
+  const previewUnit = Number(form.smsCount) > 0 && parsedPrice && Number(parsedPrice) > 0 ? unitPrice(parsedPrice, Number(form.smsCount)) : null;
 
   return (
-    <section className="space-y-3">
-      <TabIntro
-        text="Kliniklere satılan SMS paketleri. Satış, klinik dosyasındaki SMS sekmesinden “Paket sat” ile yapılır."
-        actions={<Button icon={Plus} onClick={openCreate}>Yeni paket</Button>}
-      />
+    <>
       <ListTable<Package>
+        title="Paketler"
+        subtitle="Satış klinik dosyasının SMS sekmesinden “Paket sat” ile yapılır."
+        actions={<Button size="sm" variant="secondary" icon={Plus} onClick={openCreate}>Yeni paket</Button>}
         columns={columns}
         rows={packages}
         rowKey={(item) => item.id}
         loading={loading}
-        error={loadError}
+        // Veri varken yenileme hatası listeyi silmez; üstte şerit olarak görünür.
+        error={packages.length > 0 ? null : loadError}
+        staleError={packages.length > 0 ? loadError : null}
         onRetry={reload}
         emptyText="Henüz paket yok"
         emptyDescription="Kliniklere SMS satabilmek için önce bir paket tanımlayın."
@@ -173,34 +178,29 @@ export default function PackagesTab() {
         )}
       />
 
-      <Modal
+      <FormModal
         open={open}
         onClose={() => setOpen(false)}
         title={editing ? "Paketi düzenle" : "Yeni SMS paketi"}
         description={editing ? "Değişiklik yalnız bundan sonraki satışları etkiler." : undefined}
         size="md"
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => setOpen(false)}>Vazgeç</Button>
-            <Button loading={saving} onClick={() => void save()}>Kaydet</Button>
-          </>
-        }
+        onSubmit={() => save()}
+        submitting={saving}
+        error={formError}
+        formClassName="space-y-3"
       >
-        <div className="space-y-3">
-          <FormErrorBanner message={formError} />
           <FormField label="Paket adı" htmlFor="package-name" required>
-            <Input id="package-name" value={form.name} maxLength={80} placeholder="Ör. Başlangıç paketi" onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} />
+            <Input id="package-name" autoFocus value={form.name} maxLength={80} placeholder="Ör. Başlangıç paketi" onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} />
           </FormField>
           <div className="grid gap-3 sm:grid-cols-2">
             <FormField label="SMS adedi" htmlFor="package-count" required hint="Aynı adette iki paket olamaz">
               <Input id="package-count" type="number" inputMode="numeric" min="1" step="1" value={form.smsCount} onChange={(event) => setForm((current) => ({ ...current, smsCount: event.target.value }))} />
             </FormField>
-            <FormField label="Fiyat (₺)" htmlFor="package-price" required hint={previewUnit ? `SMS başına ${previewUnit}` : undefined}>
-              <Input id="package-price" type="number" inputMode="decimal" min="0" step="0.01" value={form.price} onChange={(event) => setForm((current) => ({ ...current, price: event.target.value }))} />
+            <FormField label="Fiyat" htmlFor="package-price" required hint={previewUnit ? `SMS başına ${previewUnit}` : undefined}>
+              <MoneyInput id="package-price" value={form.price} onChange={(value) => setForm((current) => ({ ...current, price: value }))} />
             </FormField>
           </div>
-        </div>
-      </Modal>
-    </section>
+      </FormModal>
+    </>
   );
 }

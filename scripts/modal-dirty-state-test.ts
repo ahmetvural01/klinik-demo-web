@@ -5,8 +5,13 @@
  * uca doğrular:
  *  - Temiz formda backdrop tıklaması kapatır.
  *  - Dirty formda backdrop tıklaması KAPATMAZ, veriyi korur, kalıcı uyarı gösterir.
- *  - ESC dirty formu onay istemeden kapatır.
- *  - Yeni açılışta önceki dirty state sızmaz (regresyon yok).
+ *  - ESC dirty formda "Değişiklikler kaybolsun mu?" onayı açar: "Forma dön"
+ *    veriyi korur, onaydaki Esc yalnız onayı kapatır, "Kapat" pencereyi kapatır.
+ *    (Önceden Esc dirty formu onaysız kapatıyordu; canlı H8/H10/H17/H18/O3'te
+ *    uzun formlar bu yüzden siliniyordu.)
+ *  - Yeni açılışta pencerenin dirty durumu (uyarı şeridi) sızmaz; yarım
+ *    kalan yeni hasta taslağı bilerek geri gelir ve "Temizle" ile boşalır.
+ *  - Temiz formda ESC onay sormadan kapatır.
  *
  * Gerçek tarayıcı (playwright-core + yerel Chrome) ve çalışan bir dev sunucu
  * gerektirir. Kullanım:
@@ -72,7 +77,8 @@ async function main() {
 
     // 2) Dirty form + backdrop -> KAPANMAZ, veri korunur
     await openModal();
-    const nameInput = page.locator('input[placeholder="Ad Soyad"]');
+    // Ad soyad alanı pencerenin ilk odak alanıdır (data-autofocus).
+    const nameInput = page.locator('[role="dialog"] input[data-autofocus]');
     const testValue = `Modal Dirty Test ${Date.now()}`;
     await nameInput.fill(testValue);
     await page.mouse.click(20, 20);
@@ -87,20 +93,62 @@ async function main() {
     assert((await page.locator("text=Kaydedilmemiş değişiklik var. Form açık tutuldu.").count()) > 0, "Dirty uyarısı kalıcı görünmedi");
     console.log("✓ Dirty formda backdrop tıklaması modalı kapatmıyor, veri korunuyor, kalıcı uyarı görünüyor.");
 
-    // 3) ESC -> onay istemeden kapanır
+    // 3) ESC -> onay açar; "Forma dön" veriyi korur
+    const confirm = page.locator('[role="alertdialog"]');
     await page.keyboard.press("Escape");
-    await page.waitForTimeout(400);
-    assert((await page.locator('[role="alertdialog"]').count()) === 0, "ESC dirty formda onay diyaloğu açtı");
-    assert((await dialogCount()) === 0, "ESC dirty formu kapatmadı");
-    console.log("✓ ESC dirty formu onay istemeden kapatıyor.");
+    await page.waitForTimeout(300);
+    assert((await confirm.count()) === 1, "ESC dirty formda onay sormadı (veri kaybı riski)");
+    assert((await confirm.innerText()).includes("Değişiklikler kaybolsun mu?"), "Onay metni beklenen gibi değil");
+    assert((await dialogCount()) === 1, "Onay açıkken pencere kapandı");
+    await confirm.getByRole("button", { name: "Forma dön" }).click();
+    await page.waitForTimeout(300);
+    assert((await confirm.count()) === 0, "Forma dön onayı kapatmadı");
+    assert((await dialogCount()) === 1, "Forma dön pencereyi kapattı");
+    assert((await nameInput.inputValue()) === testValue, "Forma dön sonrası form verisi korunmadı");
+    console.log("✓ ESC dirty formda onay soruyor; Forma dön veriyi koruyor.");
 
-    // 4) Yeni açılış: önceki dirty veri sızmamalı, backdrop yine kapatabilmeli
+    // 3b) Onaydaki ESC yalnız onayı kapatır, alttaki pencere açık kalır
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(300);
+    assert((await confirm.count()) === 1, "İkinci ESC onay açmadı");
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(300);
+    assert((await confirm.count()) === 0, "Onaydaki ESC onayı kapatmadı");
+    assert((await dialogCount()) === 1, "Onaydaki ESC alttaki pencereyi de kapattı");
+    assert((await nameInput.inputValue()) === testValue, "Onaydaki ESC sonrası form verisi korunmadı");
+    console.log("✓ Onaydaki ESC yalnız onayı kapatıyor.");
+
+    // 3c) ESC -> onayda "Kapat" pencereyi kapatır
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(300);
+    await confirm.getByRole("button", { name: "Kapat" }).click();
+    await page.waitForTimeout(400);
+    assert((await confirm.count()) === 0, "Kapat sonrası onay açık kaldı");
+    assert((await dialogCount()) === 0, "Onayda Kapat pencereyi kapatmadı");
+    console.log("✓ Onayda Kapat dirty pencereyi kapatıyor.");
+
+    // 4) Yeni açılış: pencerenin dirty uyarısı sızmaz; yarım kalan yeni hasta
+    // taslağı bilerek geri gelir (PatientFormModal createDraft) ve Temizle ile boşalır.
     await openModal();
-    assert((await nameInput.inputValue()) === "", "Yeni modal açılışında önceki dirty veri sızdı");
+    assert((await page.locator("text=Kaydedilmemiş değişiklik var. Form açık tutuldu.").count()) === 0, "Yeni açılışta önceki dirty uyarısı sızdı");
+    if ((await page.locator("text=Kaydedilmemiş bilgiler geri getirildi.").count()) > 0) {
+      assert((await nameInput.inputValue()) === testValue, "Geri getirilen taslak yazılanı içermiyor");
+      await page.getByRole("dialog").getByRole("button", { name: "Temizle" }).click();
+      await page.waitForTimeout(200);
+    }
+    assert((await nameInput.inputValue()) === "", "Yeni modal açılışında form boşaltılamadı");
     await page.mouse.click(20, 20);
     await page.waitForTimeout(400);
     assert((await dialogCount()) === 0, "Temiz yeni açılışta backdrop kapatamadı (regresyon)");
     console.log("✓ Yeni modal açılışında önceki dirty state sızmıyor, regresyon yok.");
+
+    // 5) Temiz formda ESC onay sormadan kapatır
+    await openModal();
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(400);
+    assert((await confirm.count()) === 0, "Temiz formda ESC gereksiz onay açtı");
+    assert((await dialogCount()) === 0, "Temiz formda ESC pencereyi kapatmadı");
+    console.log("✓ Temiz formda ESC onaysız kapatıyor.");
 
     await context.close();
   } finally {

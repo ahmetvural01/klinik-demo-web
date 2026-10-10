@@ -29,6 +29,8 @@ export type LabOrderView = {
   notes?: string | null;
   status: string;
   firmaId?: string | null;
+  /** Laboratuvarın (firma kartı) telefonu — gecikmede aramak için. */
+  labPhone?: string | null;
   createdAt?: string | null;
   patient: { id: string; fullName: string; phone?: string | null };
   doctor: { id?: string | null; fullName: string };
@@ -53,6 +55,7 @@ export function normalizeLabOrder(raw: unknown): LabOrderView | null {
   if (!id) return null;
   const patient = (source.patient && typeof source.patient === "object" ? source.patient : {}) as Raw;
   const doctor = (source.doctor && typeof source.doctor === "object" ? source.doctor : {}) as Raw;
+  const firma = (source.firma && typeof source.firma === "object" ? source.firma : {}) as Raw;
   const trips = Array.isArray(source.trips) ? source.trips : [];
   const invoices = Array.isArray(source.invoices) ? source.invoices : [];
   return {
@@ -63,6 +66,7 @@ export function normalizeLabOrder(raw: unknown): LabOrderView | null {
     notes: optionalText(source.notes),
     status: text(source.status) || "DEVAM_EDIYOR",
     firmaId: optionalText(source.firmaId),
+    labPhone: optionalText(firma.phone) || optionalText(source.labPhone),
     createdAt: optionalText(source.createdAt),
     patient: {
       id: text(patient.id) || text(source.patientId),
@@ -118,6 +122,16 @@ export async function fetchJson(url: string, init: RequestInit | undefined, fall
   const payload = await response.json().catch(() => null);
   if (!response.ok) throw new Error(apiErrorMessage(payload, fallback));
   return payload;
+}
+
+/**
+ * Telefon aramasında yazım biçimi önemsiz olsun: "(0555) 100-0105",
+ * "0555 100 01 05" ve "5551000105" aynı numaradır. Rakamlara indirip baştaki
+ * 90/0 atılır (en az 3 rakam yazılmadıysa telefon araması yapılmaz).
+ */
+export function phoneSearchKey(value: string | null | undefined) {
+  const digits = (value || "").replace(/\D/g, "");
+  return digits.replace(/^90(?=\d{10}$)/, "").replace(/^0+/, "");
 }
 
 export function newRequestKey() {

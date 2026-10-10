@@ -13,7 +13,7 @@ function assert(condition: unknown, message: string): asserts condition {
 }
 
 async function openTaskModal(page: Page) {
-  const createButton = page.getByRole("button", { name: "Yeni Görev", exact: true });
+  const createButton = page.getByRole("button", { name: "Yeni görev", exact: true });
   await createButton.waitFor({ state: "visible", timeout: 60_000 });
   await createButton.click();
   const dialog = page.getByRole("dialog");
@@ -23,10 +23,12 @@ async function openTaskModal(page: Page) {
 
 async function verifyListboxes(page: Page, mobile = false) {
   const dialog = await openTaskModal(page);
-  // Görev türü beş seçenekli düz açılır liste; sorumlu seçimi aramalı çoklu listbox.
-  const typeSelect = dialog.locator("select#task-type");
-  await typeSelect.selectOption("LAB");
-  assert(await typeSelect.inputValue() === "LAB", "Görev türü seçimi uygulanmadı");
+  // Görev türü beş seçenekli tek seçim (radiogroup) ve "Diğer bilgiler" altında
+  // (katlı açılır); sorumlu seçimi aramalı çoklu listbox.
+  await dialog.getByRole("button", { name: /Diğer bilgiler/ }).click();
+  const labType = dialog.getByRole("radiogroup", { name: "Tür" }).getByRole("radio", { name: "Laboratuvar" });
+  await labType.click();
+  assert(await labType.getAttribute("aria-checked") === "true", "Görev türü seçimi uygulanmadı");
 
   const listboxes = dialog.locator('button[role="combobox"]');
   assert(await listboxes.count() === 1, "Görev formunda sorumlu listbox'ı bulunamadı");
@@ -56,12 +58,19 @@ async function verifyListboxes(page: Page, mobile = false) {
 
   await dialog.getByRole("button", { name: "Temizle" }).click();
   assert((await staffListbox.innerText()).includes("Personel seçin"), "Personel seçimini temizleme özete yansımadı");
-  await dialog.getByRole("heading", { name: "Yeni Görev" }).click();
+  await dialog.getByRole("heading", { name: "Yeni görev" }).click();
   assert(await dialog.getByRole("listbox").count() === 0, "Liste dış alana tıklanınca kapanmadı");
 
+  // Tür ve sorumlu değişti (form kirli): Vazgeç önce ortak "Değişiklikler kaybolsun mu?"
+  // onayını açar (FormModal isDirty); "Kapat" ile pencere kapanır. Önceki beklenti
+  // (onaysız kapanma) kirli formda girilenlerin sessizce silinmesiydi.
   await dialog.getByRole("button", { name: "Vazgeç" }).click();
+  const discardConfirm = page.getByRole("alertdialog");
+  await discardConfirm.waitFor({ state: "visible" });
+  assert((await discardConfirm.innerText()).includes("Değişiklikler kaybolsun mu?"), "Kirli formda Vazgeç ortak çıkış onayını açmadı");
+  await discardConfirm.getByRole("button", { name: "Kapat", exact: true }).click();
   await dialog.waitFor({ state: "hidden" });
-  assert(await page.getByRole("alertdialog").count() === 0, "Vazgeç düğmesi gereksiz çıkış onayı açtı");
+  assert(await page.getByRole("alertdialog").count() === 0, "Çıkış onayı kapandıktan sonra açık kaldı");
 }
 
 async function main() {
@@ -156,14 +165,14 @@ async function main() {
     console.log("Toplu atama, idempotent kayıt, kapsam ve iptal API senaryoları doğrulandı.");
 
     const page = await context.newPage();
-    await page.goto(`${BASE}/gorevler`, { waitUntil: "load", timeout: 60_000 });
-    await page.getByRole("heading", { name: "Görevler", level: 1 }).waitFor({ state: "visible" });
+    await page.goto(`${BASE}/yapilacaklar?tab=gorev`, { waitUntil: "load", timeout: 60_000 });
+    await page.getByRole("heading", { name: "Yapılacaklar", level: 1 }).waitFor({ state: "visible" });
     await verifyListboxes(page);
     console.log("Masaüstü görev listbox senaryoları doğrulandı.");
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload({ waitUntil: "load" });
-    await page.getByRole("heading", { name: "Görevler", level: 1 }).waitFor({ state: "visible" });
+    await page.getByRole("heading", { name: "Yapılacaklar", level: 1 }).waitFor({ state: "visible" });
     await verifyListboxes(page, true);
     console.log("Mobil görev listbox ve taşma senaryoları doğrulandı.");
 

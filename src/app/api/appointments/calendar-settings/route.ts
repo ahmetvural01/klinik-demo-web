@@ -58,6 +58,8 @@ export async function GET() {
           smsDefaultInfo: true,
           smsDefaultReminder: true,
           smsDefaultSurvey: true,
+          appointmentChangeNotifyEnabled: true,
+          appointmentCancelNotifyEnabled: true,
         },
       }),
       prisma.institution.findUnique({ where: { id: institutionId }, select: { name: true } }),
@@ -105,6 +107,13 @@ export async function GET() {
         info: setting?.smsDefaultInfo ?? true,
         reminder: setting?.smsDefaultReminder ?? false,
         survey: setting?.smsDefaultSurvey ?? false,
+      },
+      // İptal/taşıma onayında "hastaya mesaj gider mi" sorusunun doğru
+      // yanıtlanması için (İletişim › Otomatik mesajlar anahtarları). Önceden
+      // onay pencereleri, mesaj gittiği halde "otomatik mesaj gitmez" diyordu.
+      notify: {
+        change: setting?.appointmentChangeNotifyEnabled ?? true,
+        cancel: setting?.appointmentCancelNotifyEnabled ?? true,
       },
       treatments,
       doctors,

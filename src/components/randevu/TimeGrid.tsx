@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
 import { AlertTriangle, Ban, Plus } from "lucide-react";
+import { avatarInitials } from "@/components/ui/Avatar";
 import type { TreatmentOption } from "@/lib/appointment-follow-up";
 import {
   STATUS_CARD_CLASS,
@@ -11,7 +12,6 @@ import {
   durationMinutes,
   formatClock,
   getDayHours,
-  initialsOf,
   isUnresolvedPast,
   minutesOfDay,
   parseClock,
@@ -35,6 +35,8 @@ export type GridColumn = {
   doctorId: string | null;
   header: ReactNode;
   headerTitle: string;
+  /** Hücre düğmelerinin ekran okuyucu adı (doktor adı ya da gün); verilmezse headerTitle. */
+  cellLabel?: string;
   isToday: boolean;
   onHeaderClick?: () => void;
 };
@@ -52,7 +54,8 @@ type TimeGridProps = {
   canCreate: boolean;
   onOpen: (appointment: Appointment) => void;
   onCreate: (column: GridColumn, minutes: number) => void;
-  onBlockClick: (block: DoctorBlock, column: GridColumn, minutes: number) => void;
+  /** Yalnız zaman kapatma yetkisi olana verilir; yoksa kapalı zaman tıklanamaz (yalnız bilgi). */
+  onBlockClick?: (block: DoctorBlock, column: GridColumn, minutes: number) => void;
   onMove?: (appointment: Appointment, column: GridColumn, minutes: number) => void;
 };
 
@@ -91,10 +94,11 @@ function placeInLanes(items: Array<{ appointment: Appointment; start: number; en
 
 /**
  * Gün ve Hafta görünümünün ortak ızgarası. Randevu, başlangıç dakikasının
- * düştüğü satırda (eşitlik değil aralık) ve gerçek süresi kadar uzun çizilir —
- * önceden 15 dakikalık ızgaraya denk gelmeyen (ör. 15:37) randevular hiç
- * görünmüyordu. Geçmiş saatlerde, öğle arasında, kapalı zamanlarda ve mesai
- * dışında "yeni randevu" sunulmaz.
+ * düştüğü satırda ve gerçek süresi kadar uzun çizilir. Boş hücrenin tamamı
+ * "yeni randevu"dur (önceden yalnız fareyle görünen 24 px'lik "+"); dolu
+ * hücrede küçük "+" doktor çakışmalı randevu için kalır (kayıtta onaylanır).
+ * Bugün açılınca ızgara şimdiki saate kayar. Başlık ve saat sütunu opaktır
+ * (kaydırınca yazılar üst üste binmez).
  */
 export function TimeGrid({
   columns,
@@ -113,6 +117,8 @@ export function TimeGrid({
 }: TimeGridProps) {
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropKey, setDropKey] = useState<string | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const scrolledForRef = useRef("");
   const now = new Date();
   const todayKey = toDateKey(now);
   const nowMinutes = minutesOfDay(now);
@@ -147,6 +153,18 @@ export function TimeGrid({
     const safeClose = Number.isFinite(close) && close > safeOpen ? close : Math.max(safeOpen + 60, 18 * 60);
     return buildRowsCovering(safeOpen, safeClose, step, items);
   }, [columnData, step]);
+
+  // Bugün görüntülenince şimdiki saatin bir saat öncesine kaydır (gün başına bir kez).
+  const hasToday = columns.some((column) => column.isToday);
+  const scrollKey = `${columns.map((column) => column.dateKey).join(",")}|${rows[0] ?? ""}`;
+  useEffect(() => {
+    if (!hasToday || scrolledForRef.current === scrollKey) return;
+    scrolledForRef.current = scrollKey;
+    const container = scrollRef.current;
+    if (!container) return;
+    const index = rows.findIndex((row) => row + step > nowMinutes - 60);
+    if (index > 0) container.scrollTop = index * ROW_HEIGHT;
+  }, [hasToday, scrollKey, rows, step, nowMinutes]);
 
   const cellKind = (data: (typeof columnData)[number], rowStart: number): { kind: CellKind; block?: DoctorBlock } => {
     const rowEnd = rowStart + step;
@@ -208,7 +226,7 @@ export function TimeGrid({
           {appointment.patient?.hasContagiousDisease && <AlertTriangle className="h-3 w-3 shrink-0 text-red-600" aria-hidden="true" />}
           {stale && <span className="shrink-0 rounded bg-amber-500 px-1 text-[10px] font-bold text-white" aria-hidden="true">!</span>}
           {showDoctorOnCard && appointment.doctor?.fullName && (
-            <span className="shrink-0 rounded bg-white/80 px-1 text-[10px] font-bold text-slate-600" aria-hidden="true">{initialsOf(appointment.doctor.fullName)}</span>
+            <span className="shrink-0 rounded bg-white/80 px-1 text-[10px] font-bold text-slate-600" aria-hidden="true">{avatarInitials(appointment.doctor.fullName)}</span>
           )}
         </div>
         <div className="flex min-w-0 items-center gap-1 text-[10px] leading-4 text-slate-600">
@@ -230,17 +248,17 @@ export function TimeGrid({
   };
 
   return (
-    <div className="max-h-[calc(100dvh-14rem)] min-h-[320px] overflow-auto rounded-lg border border-slate-200 bg-white shadow-[var(--shadow-surface)]">
+    <div ref={scrollRef} className="max-h-[calc(100dvh-14rem)] min-h-[320px] overflow-auto rounded-lg border border-slate-200 bg-white shadow-[var(--shadow-surface)]">
       <table className="randevu-grid w-full border-collapse text-xs" style={{ minWidth: 72 + columns.length * 150 }}>
-        <thead className="sticky top-0 z-20 bg-slate-50">
+        <thead className="sticky top-0 z-20">
           <tr>
-            <th scope="col" className="calendar-time-heading sticky left-0 z-30 w-[72px] border border-slate-200 bg-slate-50 px-2 py-2 text-left">Saat</th>
+            <th scope="col" className="calendar-time-heading sticky left-0 z-30 w-[72px] border border-slate-200 !bg-[rgb(var(--app-surface))] px-2 py-2 text-left">Saat</th>
             {columns.map((column) => (
               <th
                 key={column.key}
                 scope="col"
                 title={column.headerTitle}
-                className={`calendar-doctor-heading border border-slate-200 px-2 py-2 text-center ${column.isToday ? "bg-primary/5 text-primary" : "bg-slate-50"}`}
+                className={`calendar-doctor-heading border border-slate-200 !bg-[rgb(var(--app-surface))] px-2 py-2 text-center after:!hidden ${column.isToday ? "!text-primary" : ""}`}
               >
                 {column.onHeaderClick ? (
                   <button type="button" onClick={column.onHeaderClick} className="w-full rounded px-1 py-0.5 hover:bg-primary/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40">
@@ -256,7 +274,7 @@ export function TimeGrid({
             const isHour = rowStart % 60 === 0;
             return (
               <tr key={rowStart}>
-                <td className={`calendar-time-cell sticky left-0 z-10 whitespace-nowrap border border-slate-200 bg-white px-2 align-top font-mono tabular-nums ${isHour ? "font-bold text-slate-800" : "text-slate-400"}`} style={{ height: ROW_HEIGHT }}>
+                <td className={`sticky left-0 z-10 whitespace-nowrap border border-slate-200 bg-slate-50 px-2 align-top font-mono text-[13px] tabular-nums ${isHour ? "font-bold !text-slate-800" : "font-semibold !text-slate-400"}`} style={{ height: ROW_HEIGHT }}>
                   {timeLabel(rowStart)}
                 </td>
                 {columnData.map((data) => {
@@ -267,9 +285,10 @@ export function TimeGrid({
                   const cellKey = `${column.key}-${rowStart}`;
                   const firstOfBlock = block && (rowIndex === 0 || cellKind(data, rows[rowIndex - 1]).block?.id !== block.id);
                   const firstOfLunch = kind === "lunch" && (rowIndex === 0 || cellKind(data, rows[rowIndex - 1]).kind !== "lunch");
-                  const droppable = Boolean(onMove) && dragId !== null && (kind === "free");
+                  const droppable = Boolean(onMove) && dragId !== null && kind === "free";
                   const showNow = column.isToday && nowMinutes >= rowStart && nowMinutes < rowStart + step;
                   const shade = kind === "closed" ? "bg-slate-100/80" : kind === "lunch" ? "bg-slate-50" : kind === "block" ? "bg-orange-50" : kind === "doctorOff" ? "bg-slate-50" : kind === "past" ? "bg-slate-50/40" : "";
+                  const blockText = block ? `Kapalı ${block.startTime}–${block.endTime}${block.reason ? ` · ${block.reason}` : ""}` : "";
                   return (
                     <td
                       key={cellKey}
@@ -287,17 +306,24 @@ export function TimeGrid({
                         />
                       )}
                       {kind === "block" && block && firstOfBlock && (
-                        <button
-                          type="button"
-                          onClick={() => onBlockClick(block, column, rowStart)}
-                          className="relative z-[4] flex w-full items-center gap-1 truncate px-1.5 py-1 text-left text-[10px] font-semibold text-orange-800 hover:underline"
-                          title={`Kapalı ${block.startTime}–${block.endTime}${block.reason ? `: ${block.reason}` : ""}`}
-                        >
-                          <Ban className="h-3 w-3 shrink-0" aria-hidden="true" />
-                          <span className="truncate">Kapalı {block.startTime}–{block.endTime}{block.reason ? ` · ${block.reason}` : ""}</span>
-                        </button>
+                        onBlockClick ? (
+                          <button
+                            type="button"
+                            onClick={() => onBlockClick(block, column, rowStart)}
+                            className="relative z-[4] flex w-full items-center gap-1 truncate px-1.5 py-1 text-left text-[10px] font-semibold text-orange-800 hover:underline"
+                            title={blockText}
+                          >
+                            <Ban className="h-3 w-3 shrink-0" aria-hidden="true" />
+                            <span className="truncate">{blockText}</span>
+                          </button>
+                        ) : (
+                          <span className="flex items-center gap-1 truncate px-1.5 py-1 text-[10px] font-semibold text-orange-800" title={blockText}>
+                            <Ban className="h-3 w-3 shrink-0" aria-hidden="true" />
+                            <span className="truncate">{blockText}</span>
+                          </span>
+                        )
                       )}
-                      {kind === "block" && block && !firstOfBlock && (
+                      {kind === "block" && block && !firstOfBlock && onBlockClick && (
                         <button type="button" aria-label={`Kapalı zaman ${block.startTime}–${block.endTime}`} onClick={() => onBlockClick(block, column, rowStart)} className="absolute inset-0 z-[3]" />
                       )}
                       {firstOfLunch && <span className="block px-1.5 py-1 text-[10px] font-semibold text-slate-400">Öğle arası</span>}
@@ -305,13 +331,24 @@ export function TimeGrid({
                         <span className="block px-1.5 py-1 text-[10px] font-semibold text-slate-400">Mesai dışı</span>
                       )}
                       {starting.map((item) => renderCard(item, rows[rowIndex]))}
-                      {canCreate && kind === "free" && (
+                      {canCreate && kind === "free" && !covered && (
                         <button
                           type="button"
                           onClick={() => onCreate(column, rowStart)}
-                          aria-label={`${column.headerTitle} · ${timeLabel(rowStart)} için yeni randevu`}
-                          title={`${timeLabel(rowStart)} — yeni randevu`}
-                          className={`absolute right-1 top-1 z-[12] flex h-6 w-6 items-center justify-center rounded-full border border-primary/30 bg-white text-primary opacity-0 shadow-sm transition-opacity hover:bg-primary/10 focus:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 group-hover:opacity-100 ${covered ? "" : "[@media(hover:none)]:opacity-40"}`}
+                          aria-label={`${column.cellLabel || column.headerTitle} · ${timeLabel(rowStart)} için yeni randevu`}
+                          className="absolute inset-0 z-[2] flex items-center justify-end gap-1 px-2 text-[11px] font-semibold text-primary opacity-0 transition-opacity !min-h-0 hover:bg-primary/[0.06] hover:opacity-100 focus:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40"
+                        >
+                          <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                          {timeLabel(rowStart)}
+                        </button>
+                      )}
+                      {canCreate && kind === "free" && covered && (
+                        <button
+                          type="button"
+                          onClick={() => onCreate(column, rowStart)}
+                          aria-label={`${column.cellLabel || column.headerTitle} · ${timeLabel(rowStart)} için yeni randevu (dolu saat)`}
+                          title={`${timeLabel(rowStart)} — bu saate de randevu ver (onay istenir)`}
+                          className="absolute right-1 top-1 z-[12] flex h-6 w-6 items-center justify-center rounded-full border border-primary/30 bg-white text-primary opacity-0 shadow-sm transition-opacity !min-h-0 hover:bg-primary/10 focus:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 group-hover:opacity-100"
                         >
                           <Plus className="h-3.5 w-3.5" aria-hidden="true" />
                         </button>

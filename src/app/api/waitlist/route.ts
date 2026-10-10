@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { maskPatientName } from "@/lib/audit-mask";
 import { requireActiveBranch } from "@/lib/branch-context";
 import type { WaitlistStatus } from "@prisma/client";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
-import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
+import { shouldHidePatientPhoneForUser } from "@/lib/patient-visibility-server";
 
 const VALID_WAITLIST_STATUSES = new Set(["BEKLIYOR", "ARANDI", "YERLESTIRILDI", "IPTAL"]);
 
@@ -35,7 +36,7 @@ export async function GET(req: NextRequest) {
     });
     // Randevu listesiyle aynı kural: telefon görme yetkisi olmayan role hasta
     // telefonu gönderilmez (önceden bekleme listesi telefonu herkese veriyordu).
-    if (await shouldHidePatientPhoneForRole(auth.user.role)) {
+    if (await shouldHidePatientPhoneForUser(auth.user)) {
       return NextResponse.json(entries.map((entry) => ({ ...entry, patient: { ...entry.patient, phone: null } })));
     }
     return NextResponse.json(entries);
@@ -124,7 +125,11 @@ export async function POST(req: NextRequest) {
       });
     });
 
-    await writeAudit(auth.user.id, "WAITLIST_CREATE", `Bekleme listesine eklendi: ${entry.patient.fullName}`);
+    await writeAudit(auth.user.id, "WAITLIST_CREATE", `Bekleme listesine eklendi: ${maskPatientName(entry.patient.fullName)}`);
+    // Liste ucuyla aynı kural: telefon görme yetkisi olmayan kişiye kayıt yanıtında da telefon gönderilmez.
+    if (await shouldHidePatientPhoneForUser(auth.user)) {
+      return NextResponse.json({ ...entry, patient: { ...entry.patient, phone: null } }, { status: 201 });
+    }
     return NextResponse.json(entry, { status: 201 });
   } catch (error) {
     if (error instanceof Error && error.message === "ACTIVE_WAITLIST_EXISTS") {

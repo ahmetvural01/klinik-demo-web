@@ -7,11 +7,25 @@ import { request as playwrightRequest } from "playwright-core";
 const prisma = new PrismaClient();
 const baseUrl = process.env.TEST_BASE_URL || "http://localhost:3000";
 
+/**
+ * İlk 9 haneden algoritmaya uygun TC kimlik no üretir (10. ve 11. kontrol
+ * haneleri; bkz. src/lib/tc-kimlik.ts). Personel düzenleme ucu (PUT) da yeni
+ * yazılan TC'yi algoritmayla denetler; rastgele 11 hane artık 400 alır.
+ */
+function validIdentity(firstNine: string) {
+  const digits = Array.from(firstNine, Number);
+  const odd = digits[0] + digits[2] + digits[4] + digits[6] + digits[8];
+  const even = digits[1] + digits[3] + digits[5] + digits[7];
+  const tenth = ((odd * 7 - even) % 10 + 10) % 10;
+  const eleventh = (digits.reduce((sum, digit) => sum + digit, 0) + tenth) % 10;
+  return `${firstNine}${tenth}${eleventh}`;
+}
+
 async function main() {
   const suffix = `${Date.now()}${Math.floor(Math.random() * 1000)}`;
   const adminIdentity = `8${suffix.slice(-10)}`;
   const targetIdentity = `7${suffix.slice(-10)}`;
-  const changedIdentity = `6${suffix.slice(-10)}`;
+  const changedIdentity = validIdentity(`6${suffix.slice(-8)}`);
   const adminPassword = `Admin!${suffix}`;
   const oldPassword = `Old!${suffix}`;
   const newPassword = `New!${suffix}`;

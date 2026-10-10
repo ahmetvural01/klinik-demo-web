@@ -9,20 +9,25 @@ import { Tabs, useTabParam } from "@/components/ui/Tabs";
 import { Toolbar, ActiveFilters, type ActiveFilter } from "@/components/ui/Toolbar";
 import { SearchInput } from "@/components/ui/SearchInput";
 import { Select } from "@/components/ui/Input";
+import { ChoiceCards } from "@/components/ui/ChoiceCards";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
-import { Modal } from "@/components/ui/Modal";
+import { Callout } from "@/components/ui/Callout";
 import { LoadErrorState } from "@/components/ui/LoadErrorState";
 import { createSceneIllustration } from "@/components/ui/SceneIllustration";
 import { DoctorSelect } from "@/components/staff/DoctorSelect";
+import { ManagerRequestButton } from "@/components/takip/ManagerRequestButton";
 import type { PickedPatient } from "@/components/patient/PatientPicker";
-import { LabOrderDetailPanel, type SharedLabOrder } from "@/components/lab/LabOrderDetailPanel";
+import { LabOrderDetailModal } from "@/components/lab/LabOrderDetailModal";
 import { LabNewOrderModal } from "@/components/lab/LabNewOrderModal";
 import { LabStatusBadge } from "@/components/lab/LabStatusBadge";
 import { useLabOrderActions } from "@/components/lab/useLabOrderActions";
-import { fetchJson, normalizeLabOrders, type LabOrderView, type LabTripView } from "@/components/lab/lab-order-model";
+import { getLabRowAction } from "@/components/lab/lab-row-action";
+import { fetchJson, normalizeLabOrder, normalizeLabOrders, phoneSearchKey, type LabOrderView, type LabTripView } from "@/components/lab/lab-order-model";
+import { cachedGet } from "@/lib/client-cache";
 import { formatPhoneNumber } from "@/lib/format";
+import type { StaffLike } from "@/lib/staff-roles";
 import {
   LAB_LABELS,
   expectedReturnAt,
@@ -30,26 +35,30 @@ import {
   stageDetail,
   summarizeLabOrders,
   teethList,
-  type LabOrderSummary,
 } from "@/lib/lab-workflow";
 
 const LabEmptyIcon = createSceneIllustration("lab");
 
-const TAB_KEYS = ["acik", "gonderilmedi", "laboratuvarda", "klinikte", "tamamlandi", "iptal"] as const;
+const TAB_KEYS = ["acik", "gonderilmedi", "laboratuvarda", "klinikte", "kapanan"] as const;
 type TabKey = (typeof TAB_KEYS)[number];
+type ClosedKind = "done" | "cancelled";
+/** Eski bağlantılar (?tab=tamamlandi / ?tab=iptal) "Kapanan" sekmesine eşlenir. */
+const LEGACY_CLOSED_TABS: Record<string, ClosedKind> = { tamamlandi: "done", iptal: "cancelled" };
+const CLOSED_STATUS: Record<ClosedKind, string> = { done: "HASTAYA_TAKILDI", cancelled: "IPTAL" };
 
 const TAB_EMPTY: Record<TabKey, { title: string; description: string }> = {
-  acik: { title: "Açık lab işi yok", description: "Laboratuvara gönderilen her iş hastaya takılana kadar burada görünür." },
-  gonderilmedi: { title: "Gönderilmeyi bekleyen iş yok", description: "Açılıp henüz laboratuvara gönderilmemiş işler burada görünür." },
+  acik: { title: "Açık lab işi yok", description: "Laboratuvara giden her iş hastaya takılana kadar burada görünür." },
+  gonderilmedi: { title: "Gönderilecek iş yok", description: "Açılıp henüz laboratuvara gönderilmemiş işler burada görünür." },
   laboratuvarda: { title: "Laboratuvarda iş yok", description: "Laboratuvara gönderilen ve dönüşü beklenen işler burada görünür." },
   klinikte: { title: "Klinikte bekleyen iş yok", description: "Laboratuvardan gelen, prova veya takma bekleyen işler burada görünür." },
-  tamamlandi: { title: "Tamamlanan iş yok", description: "Hastaya takılan işler burada görünür." },
-  iptal: { title: "İptal edilen iş yok", description: "İptal edilen işler nedeniyle birlikte burada görünür." },
+  kapanan: { title: "Kapanan iş yok", description: "Hastaya takılan ya da iptal edilen işler burada görünür." },
 };
 
 const PAGE_SIZE = 25;
 /** Tamamlanan / iptal edilen işlerden ekrana getirilen en yeni kayıt sayısı. */
 const CLOSED_LIMIT = 300;
+/** Pencereye dönülünce en çok bu sıklıkla yenilenir (her odakta tam liste çekilmesin). */
+const FOCUS_REFRESH_MS = 30_000;
 
 type ViewSummary = ReturnType<typeof getOrderSummary<LabTripView>>;
 type Row = { order: LabOrderView; summary: ViewSummary };
@@ -60,8 +69,7 @@ function matchesTab(tab: TabKey, summary: ViewSummary) {
     case "gonderilmedi": return summary.stage === "new";
     case "laboratuvarda": return summary.stage === "atLab" || summary.stage === "late";
     case "klinikte": return summary.stage === "clinic";
-    case "tamamlandi": return summary.stage === "done";
-    case "iptal": return summary.stage === "cancelled";
+    case "kapanan": return true;
   }
 }
 
@@ -80,67 +88,109 @@ function urgency(row: Row) {
   }
 }
 
+const NO_ORDERS: LabOrderView[] = [];
+
+function toRows(orders: LabOrderView[]): Row[] {
+  return orders.map((order) => ({ order, summary: getOrderSummary(order) }));
+}
+
+function upsert(list: LabOrderView[], next: LabOrderView) {
+  return list.some((order) => order.id === next.id) ? list.map((order) => (order.id === next.id ? next : order)) : [next, ...list];
+}
+
 export default function LabPage() {
-  const { can } = usePermissions();
+  const { can, role, userId } = usePermissions();
   const canWriteLab = can("lab:write");
   const canCompleteLab = can("lab:complete");
   const canCancelLab = can("lab:delete");
   const canAddLab = can("finance:write");
   const searchParams = useSearchParams();
 
-  const [orders, setOrders] = useState<LabOrderView[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [closedCapped, setClosedCapped] = useState(false);
-  const loadSequenceRef = useRef(0);
+  // Açık işler — sayfanın asıl listesi. Kapanan işler yalnız o sekme açılınca çekilir
+  // (önceden her açılışta ve her yenilemede 300 + 300 kapanan iş de geliyordu).
+  const [openOrders, setOpenOrders] = useState<LabOrderView[]>([]);
+  const [openLoaded, setOpenLoaded] = useState(false);
+  const [openError, setOpenError] = useState<string | null>(null);
+  const [staleError, setStaleError] = useState<string | null>(null);
+  const [closedOrders, setClosedOrders] = useState<Partial<Record<ClosedKind, LabOrderView[]>>>({});
+  const [closedLoading, setClosedLoading] = useState(false);
+  const [closedError, setClosedError] = useState<string | null>(null);
+  const openSeqRef = useRef(0);
+  const closedSeqRef = useRef(0);
+  const lastLoadAtRef = useRef(0);
+  const openLoadedRef = useRef(false);
   const [labNames, setLabNames] = useState<string[]>([]);
   const [labsLoading, setLabsLoading] = useState(true);
   const [labsError, setLabsError] = useState("");
   const [labsReloadKey, setLabsReloadKey] = useState(0);
 
-  const [tab, setTab] = useTabParam(TAB_KEYS, "acik");
+  const legacyClosed = LEGACY_CLOSED_TABS[searchParams.get("tab") || ""];
+  const [tabParam, setTab] = useTabParam(TAB_KEYS, "acik");
+  const tab: TabKey = legacyClosed ? "kapanan" : tabParam;
+  const [closedKind, setClosedKind] = useState<ClosedKind>(legacyClosed || "done");
   const [search, setSearch] = useState("");
   const [labFilter, setLabFilter] = useState(() => searchParams.get("labName") || "");
-  const [doctorFilter, setDoctorFilter] = useState("");
+  // ?doktor=<id>: ana sayfadaki "lab işiniz klinikte" satırı hekimin kendi listesine açılır.
+  const [doctorParam] = useState(() => searchParams.get("doktor") || "");
+  const [doctorFilter, setDoctorFilter] = useState(doctorParam);
   const [doctorFilterName, setDoctorFilterName] = useState("");
   const [page, setPage] = useState(1);
 
   const [detailOrderId, setDetailOrderId] = useState<string | null>(null);
+  const [linkedOrder, setLinkedOrder] = useState<LabOrderView | null>(null);
   const [newOpen, setNewOpen] = useState(false);
   const [newPatient, setNewPatient] = useState<PickedPatient | null>(null);
   const [newLabName, setNewLabName] = useState("");
   const deepLinkHandledRef = useRef(false);
 
-  const load = useCallback(async () => {
-    const sequence = ++loadSequenceRef.current;
-    setLoadError(null);
-    setLoading(true);
+  // Eski "Tamamlandı / İptal edildi" bağlantısı: adres yeni sekmeye çevrilir.
+  useEffect(() => {
+    if (legacyClosed) setTab("kapanan");
+  }, [legacyClosed, setTab]);
+
+  const loadOpen = useCallback(async () => {
+    const sequence = ++openSeqRef.current;
     try {
-      // Açık işlerin hepsi; biten ve iptal edilenlerden en yenileri. Önceden tek
-      // istekte en yeni 300 iş geliyordu; eski ama hâlâ açık iş listeden düşebiliyordu.
-      const [openPayload, donePayload, cancelledPayload] = await Promise.all([
-        fetchJson("/api/lab-orders?status=DEVAM_EDIYOR&limit=2000", undefined, "Laboratuvar işleri yüklenemedi."),
-        fetchJson(`/api/lab-orders?status=HASTAYA_TAKILDI&limit=${CLOSED_LIMIT}`, undefined, "Laboratuvar işleri yüklenemedi."),
-        fetchJson(`/api/lab-orders?status=IPTAL&limit=${CLOSED_LIMIT}`, undefined, "Laboratuvar işleri yüklenemedi."),
-      ]);
-      if (sequence !== loadSequenceRef.current) return;
-      const done = normalizeLabOrders(donePayload);
-      const cancelled = normalizeLabOrders(cancelledPayload);
-      setClosedCapped(done.length >= CLOSED_LIMIT || cancelled.length >= CLOSED_LIMIT);
-      setOrders([...normalizeLabOrders(openPayload), ...done, ...cancelled]);
+      const payload = await fetchJson("/api/lab-orders?status=DEVAM_EDIYOR&limit=2000", undefined, "Laboratuvar işleri yüklenemedi.");
+      if (sequence !== openSeqRef.current) return;
+      setOpenOrders(normalizeLabOrders(payload));
+      setOpenError(null);
+      setStaleError(null);
+      openLoadedRef.current = true;
+      setOpenLoaded(true);
+      lastLoadAtRef.current = Date.now();
     } catch (error) {
-      if (sequence === loadSequenceRef.current) setLoadError(error instanceof Error ? error.message : "Laboratuvar işleri yüklenemedi.");
-    } finally {
-      if (sequence === loadSequenceRef.current) setLoading(false);
+      if (sequence !== openSeqRef.current) return;
+      const message = error instanceof Error ? error.message : "Laboratuvar işleri yüklenemedi.";
+      // Liste ekrandaysa kaybolmaz; üstünde "yenilenemedi" şeridi görünür.
+      if (openLoadedRef.current) setStaleError(message);
+      else setOpenError(message);
     }
   }, []);
-  const loadRef = useRef(load);
-  useEffect(() => { loadRef.current = load; }, [load]);
 
-  useEffect(() => { void load(); }, [load]);
+  const loadClosed = useCallback(async (kind: ClosedKind) => {
+    const sequence = ++closedSeqRef.current;
+    setClosedLoading(true);
+    setClosedError(null);
+    try {
+      const payload = await fetchJson(`/api/lab-orders?status=${CLOSED_STATUS[kind]}&limit=${CLOSED_LIMIT}`, undefined, "Kapanan işler yüklenemedi.");
+      if (sequence !== closedSeqRef.current) return;
+      setClosedOrders((current) => ({ ...current, [kind]: normalizeLabOrders(payload) }));
+    } catch (error) {
+      if (sequence === closedSeqRef.current) setClosedError(error instanceof Error ? error.message : "Kapanan işler yüklenemedi.");
+    } finally {
+      if (sequence === closedSeqRef.current) setClosedLoading(false);
+    }
+  }, []);
 
-  // Laboratuvar listesi: "Satın Alma" ekranında Laboratuvar türündeki firmalar.
-  // lab:read yetkisiyle okunur (önceden firma ekranının yetkisi gerekiyordu).
+  useEffect(() => { void loadOpen(); }, [loadOpen]);
+
+  const closedLoaded = Boolean(closedOrders[closedKind]);
+  useEffect(() => {
+    if (tab === "kapanan" && !closedLoaded) void loadClosed(closedKind);
+  }, [closedKind, closedLoaded, loadClosed, tab]);
+
+  // Laboratuvar listesi: "Satın alma" ekranında Laboratuvar türündeki firmalar (lab:read ile okunur).
   useEffect(() => {
     let active = true;
     setLabsLoading(true);
@@ -155,37 +205,99 @@ export default function LabPage() {
     return () => { active = false; };
   }, [labsReloadKey]);
 
-  // Başka bir personel iş ekleyip güncellediğinde ve sekmeye dönülünce listeyi tazele.
+  // Doktor kendi hastalarının işleriyle başlar (filtre etiketinden kaldırılabilir).
+  // Kimlik kabuktan (layout) gelir; ad, hekim seçicisinin zaten okuduğu personel
+  // listesinden (aynı önbellekli istek). Önceden ayrıca /api/auth/me isteniyordu.
+  // Adreste ?doktor= varsa o süzgeç geçerlidir (etiket adı aşağıdaki efektten).
+  const doctorDefaultRef = useRef(false);
+  useEffect(() => {
+    if (role !== "DOKTOR" || doctorDefaultRef.current || doctorParam) return;
+    doctorDefaultRef.current = true;
+    let active = true;
+    const apply = (id: string, name: string) => {
+      if (!active || !id) return;
+      setDoctorFilter((current) => current || id);
+      setDoctorFilterName((current) => current || name);
+    };
+    if (userId) {
+      apply(userId, "");
+      // Yalnız etiket adı yazılır; kullanıcı bu arada filtreyi kaldırdıysa geri gelmez.
+      cachedGet<StaffLike[]>("/api/staff", 60_000, { throwOnError: true })
+        .then((staff) => {
+          const name = (staff || []).find((member) => member.id === userId)?.fullName || "";
+          if (active && name) setDoctorFilterName((current) => current || name);
+        })
+        .catch(() => undefined);
+    } else {
+      cachedGet<{ id?: string; fullName?: string } | null>("/api/auth/me", 60_000)
+        .then((me) => apply(me?.id || "", me?.fullName || ""))
+        .catch(() => undefined);
+    }
+    return () => { active = false; };
+  }, [doctorParam, role, userId]);
+
+  // Adresten gelen hekim süzgecinin etiket adı (aynı önbellekli personel listesi).
+  useEffect(() => {
+    if (!doctorParam) return;
+    let active = true;
+    cachedGet<StaffLike[]>("/api/staff", 60_000, { throwOnError: true })
+      .then((staff) => {
+        const name = (staff || []).find((member) => member.id === doctorParam)?.fullName || "";
+        if (active && name) setDoctorFilterName((current) => current || name);
+      })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [doctorParam]);
+
+  // Başka bir personel iş ekleyip güncellediğinde (sunucu olayı) ve sekmeye
+  // dönülünce liste sessizce tazelenir: eldeki liste ekranda kalır.
+  const refreshRef = useRef<() => void>(() => undefined);
+  useEffect(() => {
+    refreshRef.current = () => {
+      void loadOpen();
+      if (tab === "kapanan") void loadClosed(closedKind);
+    };
+  }, [closedKind, loadClosed, loadOpen, tab]);
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
-    const refresh = () => {
-      if (document.hidden) return;
+    const schedule = () => {
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => { void loadRef.current(); }, 150);
+      timer = setTimeout(() => refreshRef.current(), 400);
     };
-    window.addEventListener("ks:realtime-sync", refresh);
-    window.addEventListener("focus", refresh);
-    document.addEventListener("visibilitychange", refresh);
+    const onRealtime = () => { if (!document.hidden) schedule(); };
+    const onReturn = () => {
+      if (document.hidden || Date.now() - lastLoadAtRef.current < FOCUS_REFRESH_MS) return;
+      schedule();
+    };
+    window.addEventListener("ks:realtime-sync", onRealtime);
+    window.addEventListener("focus", onReturn);
+    document.addEventListener("visibilitychange", onReturn);
     return () => {
       if (timer) clearTimeout(timer);
-      window.removeEventListener("ks:realtime-sync", refresh);
-      window.removeEventListener("focus", refresh);
-      document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("ks:realtime-sync", onRealtime);
+      window.removeEventListener("focus", onReturn);
+      document.removeEventListener("visibilitychange", onReturn);
     };
   }, []);
 
+  // Eylemden sonra sunucunun döndürdüğü güncel iş yerine yazılır; iş hangi
+  // listeye aitse oraya taşınır. Eşzamanlı eski yükleme sonucu bunu ezmesin.
   const replaceOrder = useCallback((next: LabOrderView) => {
-    loadSequenceRef.current += 1;
-    setLoading(false);
-    setOrders((current) => (current.some((order) => order.id === next.id)
-      ? current.map((order) => (order.id === next.id ? next : order))
-      : [next, ...current]));
+    openSeqRef.current += 1;
+    closedSeqRef.current += 1;
+    setClosedLoading(false);
+    setOpenOrders((current) => (next.status === "DEVAM_EDIYOR" ? upsert(current, next) : current.filter((order) => order.id !== next.id)));
+    setClosedOrders((current) => ({
+      done: current.done && (next.status === "HASTAYA_TAKILDI" ? upsert(current.done, next) : current.done.filter((order) => order.id !== next.id)),
+      cancelled: current.cancelled && (next.status === "IPTAL" ? upsert(current.cancelled, next) : current.cancelled.filter((order) => order.id !== next.id)),
+    }));
+    setLinkedOrder((current) => (current && current.id === next.id ? next : current));
   }, []);
 
   const actions = useLabOrderActions({ onChanged: replaceOrder, labNames });
 
   // Derin bağlantılar: ?yeni=1 (üst bardaki "Yeni" menüsü), ?new=1&patientId=…
-  // (hasta dosyası, firma ekranı), ?orderId=… (bildirim/hasta dosyası).
+  // (hasta dosyası, tedarikçi ekranı), ?orderId=… (bildirim/hasta dosyası).
   useEffect(() => {
     if (deepLinkHandledRef.current) return;
     const wantsNew = searchParams.get("yeni") === "1" || searchParams.get("new") === "1";
@@ -196,7 +308,13 @@ export default function LabPage() {
     ["yeni", "new", "patientId", "patientName", "orderId"].forEach((key) => params.delete(key));
     window.history.replaceState(null, "", `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}`);
 
-    if (orderId) setDetailOrderId(orderId);
+    if (orderId) {
+      setDetailOrderId(orderId);
+      // Kapanmış bir iş açık listede yoktur; tek başına okunur.
+      fetchJson(`/api/lab-orders/${encodeURIComponent(orderId)}`, undefined, "Lab işi açılamadı.")
+        .then((payload) => setLinkedOrder(normalizeLabOrder(payload)))
+        .catch(() => undefined);
+    }
     if (!wantsNew || !canWriteLab) return;
     const patientId = searchParams.get("patientId") || "";
     const patientName = searchParams.get("patientName") || "";
@@ -213,51 +331,53 @@ export default function LabPage() {
     }
   }, [canWriteLab, searchParams]);
 
-  const rows = useMemo<Row[]>(() => orders.map((order) => ({ order, summary: getOrderSummary(order) })), [orders]);
+  const closedList = closedOrders[closedKind] ?? NO_ORDERS;
+  const openRows = useMemo<Row[]>(() => toRows(openOrders), [openOrders]);
+  const listRows = useMemo<Row[]>(() => (tab === "kapanan" ? toRows(closedList) : openRows), [closedList, openRows, tab]);
 
-  const filteredRows = useMemo(() => {
+  const matchesFilters = useCallback(({ order }: Row) => {
+    if (labFilter && order.labName !== labFilter) return false;
+    if (doctorFilter && order.doctor.id !== doctorFilter) return false;
     const query = search.trim().toLocaleLowerCase("tr-TR");
-    return rows.filter(({ order }) => {
-      if (labFilter && order.labName !== labFilter) return false;
-      if (doctorFilter && order.doctor.id !== doctorFilter) return false;
-      if (!query) return true;
-      return [order.patient.fullName, order.labName, order.labType, order.doctor.fullName, order.patient.phone || "", order.teeth || ""]
-        .some((value) => value.toLocaleLowerCase("tr-TR").includes(query));
-    });
-  }, [doctorFilter, labFilter, rows, search]);
+    if (!query) return true;
+    // Telefon, ekranda görünen biçimden bağımsız aranır: "(0555) 100-0105" = "5551000105".
+    const phoneQuery = phoneSearchKey(search);
+    if (phoneQuery.length >= 3 && phoneSearchKey(order.patient.phone).includes(phoneQuery)) return true;
+    return [order.patient.fullName, order.labName, order.labType, order.doctor.fullName, order.teeth || ""]
+      .some((value) => value.toLocaleLowerCase("tr-TR").includes(query));
+  }, [doctorFilter, labFilter, search]);
 
-  const counts = useMemo(() => summarizeLabOrders(filteredRows.map((row) => row.order)), [filteredRows]);
+  // Sekme sayıları açık işlerden, aynı filtrelerle (menü rozeti ve ana sayfa aynı sayımı kullanır).
+  const counts = useMemo(() => summarizeLabOrders(openRows.filter(matchesFilters).map((row) => row.order)), [matchesFilters, openRows]);
 
-  const tabRows = useMemo(() => filteredRows
-    .filter((row) => matchesTab(tab, row.summary))
+  const tabRows = useMemo(() => listRows
+    .filter((row) => matchesFilters(row) && matchesTab(tab, row.summary))
     .sort((a, b) => {
       const [ga, va] = urgency(a);
       const [gb, vb] = urgency(b);
       return ga - gb || va - vb;
-    }), [filteredRows, tab]);
+    }), [listRows, matchesFilters, tab]);
 
-  useEffect(() => { setPage(1); }, [tab, search, labFilter, doctorFilter]);
+  useEffect(() => { setPage(1); }, [tab, closedKind, search, labFilter, doctorFilter]);
   const pageCount = Math.max(1, Math.ceil(tabRows.length / PAGE_SIZE));
   const pageRows = tabRows.slice((Math.min(page, pageCount) - 1) * PAGE_SIZE, Math.min(page, pageCount) * PAGE_SIZE);
 
   const labOptions = useMemo(() => {
     const map = new Map<string, { open: number; late: number }>();
     for (const name of labNames) map.set(name, { open: 0, late: 0 });
-    for (const { order, summary } of rows) {
+    for (const { order, summary } of openRows) {
       const entry = map.get(order.labName) || { open: 0, late: 0 };
-      if (summary.stage !== "done" && summary.stage !== "cancelled") entry.open += 1;
+      entry.open += 1;
       if (summary.stage === "late") entry.late += 1;
       map.set(order.labName, entry);
     }
     return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0], "tr"));
-  }, [labNames, rows]);
+  }, [labNames, openRows]);
 
-  const detailOrder = detailOrderId ? orders.find((order) => order.id === detailOrderId) || null : null;
-  const findOrder = (order: SharedLabOrder) => orders.find((item) => item.id === order.id) || null;
-  const withOrder = (fn: (order: LabOrderView) => void) => (order: SharedLabOrder) => {
-    const found = findOrder(order);
-    if (found) fn(found);
-  };
+  const detailOrder = detailOrderId
+    ? [...openOrders, ...(closedOrders.done || []), ...(closedOrders.cancelled || [])].find((order) => order.id === detailOrderId)
+      || (linkedOrder?.id === detailOrderId ? linkedOrder : null)
+    : null;
 
   const openNew = () => {
     setNewPatient(null);
@@ -265,23 +385,34 @@ export default function LabPage() {
     setNewOpen(true);
   };
 
-  // Satırdaki tek eylem: işin sıradaki adımı.
-  const rowAction = ({ order, summary }: Row): { label: string; run: () => void } | null => {
-    if (summary.stage === "new") return canWriteLab ? { label: LAB_LABELS.send, run: () => actions.openSend(order) } : null;
-    if (summary.stage === "atLab" || summary.stage === "late") {
-      return canWriteLab && summary.pendingTrip ? { label: LAB_LABELS.receive, run: () => actions.openReceive(order, summary.pendingTrip || undefined) } : null;
-    }
-    if (summary.stage === "clinic") {
-      const finished = summary.templateFinished || !summary.nextStep;
-      if (finished && canCompleteLab) return { label: LAB_LABELS.complete, run: () => actions.openComplete(order) };
-      if (canWriteLab) return { label: LAB_LABELS.send, run: () => actions.openSend(order) };
-      if (canCompleteLab) return { label: LAB_LABELS.complete, run: () => actions.openComplete(order) };
-    }
-    return null;
+  // "Laboratuvardan geldi" tek tıkla kaydeder (geri alınabilir); "Laboratuvara
+  // gönder" şablondan dolu pencereyi açar (gönderim adımı silinemez — Enter ile
+  // kaydedilir); "Hastaya takıldı" fatura ve onay gerektirdiği için pencere açar.
+  const runRowAction = ({ order }: Row, kind: string) => {
+    if (kind === "send") actions.quickSend(order);
+    else if (kind === "receive") actions.quickReceive(order);
+    else if (kind === "complete") actions.openComplete(order);
   };
 
-  const stageLine = (summary: LabOrderSummary) => (
-    <span className={summary.stage === "late" ? "font-semibold text-red-700" : "text-slate-600"}>{stageDetail(summary)}</span>
+  const actionCell = (row: Row) => {
+    const action = getLabRowAction(row.summary, { canWrite: canWriteLab, canComplete: canCompleteLab });
+    if (!action) return null;
+    if (action.kind === "awaitComplete") return <span className="text-xs font-semibold text-slate-500">{action.label}</span>;
+    return (
+      <Button
+        size="sm"
+        variant="secondary"
+        loading={actions.quickBusyId === row.order.id}
+        disabled={actions.busy && actions.quickBusyId !== row.order.id}
+        onClick={() => runRowAction(row, action.kind)}
+      >
+        {action.label}
+      </Button>
+    );
+  };
+
+  const stageLine = (summary: ViewSummary) => (
+    <span className={summary.stage === "late" ? "font-semibold text-red-700" : "text-slate-500"}>{stageDetail(summary)}</span>
   );
 
   const workLine = (order: LabOrderView) => {
@@ -289,18 +420,16 @@ export default function LabPage() {
     return [teeth.length ? `Diş ${teeth.join(", ")}` : "", order.labName, order.doctor.fullName].filter(Boolean).join(" · ");
   };
 
+  // Durum tek sütunda: rozet + o aşamanın tek cümlesi (önceden "Şu an" ve "Durum" iki sütunda aynı şeyi söylüyordu).
   const statusCell = ({ summary }: Row) => (
-    <div className="flex flex-wrap items-center gap-1">
-      <LabStatusBadge stage={summary.stage} />
-      {summary.rework && <Badge tone="neutral" size="sm">Yeniden yapım</Badge>}
+    <div className="min-w-0 space-y-0.5">
+      <div className="flex flex-wrap items-center gap-1">
+        <LabStatusBadge stage={summary.stage} />
+        {summary.rework && <Badge tone="neutral" size="sm">Yeniden yapım</Badge>}
+      </div>
+      <p className="max-w-[340px] text-xs">{stageLine(summary)}</p>
     </div>
   );
-
-  const actionButton = (row: Row) => {
-    const action = rowAction(row);
-    if (!action) return null;
-    return <Button size="sm" variant="secondary" onClick={action.run}>{action.label}</Button>;
-  };
 
   const columns: ListTableColumn<Row>[] = [
     {
@@ -323,9 +452,8 @@ export default function LabPage() {
         </div>
       ),
     },
-    { key: "now", header: "Şu an", render: ({ summary }) => <p className="max-w-[320px] text-sm">{stageLine(summary)}</p> },
     { key: "status", header: "Durum", render: statusCell },
-    { key: "actions", header: "", align: "right", render: actionButton },
+    { key: "actions", header: "", align: "right", render: actionCell },
   ];
 
   const filters: ActiveFilter[] = [
@@ -334,83 +462,110 @@ export default function LabPage() {
   ];
 
   const empty = TAB_EMPTY[tab];
-  const filtered = Boolean(search || labFilter || doctorFilter);
+  const filtered = Boolean(search.trim() || labFilter || doctorFilter);
+  const isClosedTab = tab === "kapanan";
+  const listLoading = isClosedTab ? closedLoading && !closedLoaded : !openLoaded && !openError;
+  const listError = isClosedTab ? (closedLoaded ? null : closedError) : openError;
+  const listStaleError = isClosedTab ? (closedLoaded ? closedError : null) : staleError;
+  const closedCapped = isClosedTab && (closedOrders[closedKind]?.length || 0) >= CLOSED_LIMIT;
 
   return (
     <div className="mx-auto max-w-7xl space-y-3 pb-8">
       <PageHeader
         icon="flask"
         title="Laboratuvar"
-        description="Laboratuvara giden işler: ne gönderildi, ne zaman dönecek, sıradaki adım ne."
+        description="Laboratuvara giden işler ve sıradaki adım."
         actions={canWriteLab ? <Button icon={Plus} onClick={openNew}>{LAB_LABELS.newOrder}</Button> : undefined}
       />
-
-      {labsError && <LoadErrorState compact message={labsError} onRetry={() => setLabsReloadKey((value) => value + 1)} />}
-      {canWriteLab && !labsLoading && !labsError && labNames.length === 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          <span>
-            Henüz tanımlı laboratuvar yok. {canAddLab
-              ? "“Yeni lab işi” penceresinde laboratuvarı ekleyebilir ya da “Satın Alma” ekranında Laboratuvar türünde firma tanımlayabilirsiniz."
-              : "Yöneticiniz “Satın Alma” ekranında Laboratuvar türünde firma tanımlamalı."}
-          </span>
-          {can("finance:read") && <Button href="/firma" variant="secondary" size="sm">{"Satın Alma'ya git"}</Button>}
-        </div>
-      )}
 
       <Tabs<TabKey>
         ariaLabel="Lab işi durumu"
         value={tab}
         onChange={setTab}
         items={[
-          { key: "acik", label: "Açık işler", count: counts.open },
-          { key: "gonderilmedi", label: "Gönderilmedi", count: counts.notSent },
-          { key: "laboratuvarda", label: "Laboratuvarda", count: counts.atLab, countTone: counts.late > 0 ? "critical" : "neutral" },
-          { key: "klinikte", label: "Klinikte", count: counts.clinic },
-          { key: "tamamlandi", label: "Tamamlandı" },
-          { key: "iptal", label: "İptal edildi" },
+          { key: "acik", label: "Açık işler" },
+          { key: "gonderilmedi", label: "Gönderilecek", count: counts.notSent, countLabel: "gönderilecek iş" },
+          { key: "laboratuvarda", label: "Laboratuvarda", count: counts.atLab, countTone: counts.late > 0 ? "critical" : "neutral", countLabel: "laboratuvardaki iş" },
+          { key: "klinikte", label: "Klinikte", count: counts.clinic, countLabel: "klinikteki iş" },
+          { key: "kapanan", label: "Kapanan" },
         ]}
       />
 
-      <div className="ui-surface overflow-hidden">
-        <Toolbar>
-          <SearchInput
-            value={search}
-            onChange={setSearch}
-            placeholder="Hasta, telefon, hekim, laboratuvar veya iş türü ara"
-            slashShortcut
-            wrapperClassName="flex-1 min-w-[220px]"
-          />
-          <Select aria-label="Laboratuvar" value={labFilter} onChange={(event) => setLabFilter(event.target.value)} className="sm:w-56">
-            <option value="">Tüm laboratuvarlar</option>
-            {labOptions.map(([name, info]) => (
-              <option key={name} value={name}>
-                {name}{info.open ? ` — ${info.open} açık` : ""}{info.late ? `, ${info.late} gecikmiş` : ""}
-              </option>
-            ))}
-          </Select>
-          <DoctorSelect
-            value={doctorFilter}
-            onChange={(doctorId, doctor) => { setDoctorFilter(doctorId); setDoctorFilterName(doctor?.fullName || ""); }}
-            emptyLabel="Tüm hekimler"
-            aria-label="Hekim"
-            className="sm:w-52"
-          />
-        </Toolbar>
-        {filters.length > 0 && (
-          <div className="border-t border-slate-100 px-3 py-2">
-            <ActiveFilters filters={filters} onClearAll={() => { setLabFilter(""); setDoctorFilter(""); setDoctorFilterName(""); }} />
-          </div>
-        )}
-      </div>
-
-      {counts.late > 0 && tab !== "laboratuvarda" && tab !== "tamamlandi" && tab !== "iptal" && (
-        <p role="status" className="flex flex-wrap items-center gap-2 text-sm text-red-700">
-          <span className="font-semibold">{counts.late} iş laboratuvardan zamanında dönmedi.</span>
-          <button type="button" className="font-semibold underline underline-offset-2" onClick={() => setTab("laboratuvarda")}>Laboratuvarda sekmesini aç</button>
-        </p>
+      {labsError && <LoadErrorState compact message={labsError} onRetry={() => setLabsReloadKey((value) => value + 1)} />}
+      {canWriteLab && !labsLoading && !labsError && labNames.length === 0 && (
+        <Callout
+          tone="warning"
+          compact
+          title="Tanımlı laboratuvar yok"
+          // Ekleyemeyen kişi (Satın alma'yı yalnız görebilse de) yöneticiye iletir;
+          // Satın alma bağlantısı yalnız ekleyebilen ve o ekranı açabilen kişiye.
+          action={canAddLab
+            ? can("finance:read") ? <Button href="/firma" variant="secondary" size="sm">Satın alma</Button> : undefined
+            : <ManagerRequestButton label="Yöneticiden laboratuvar tanımlamasını iste" taskTitle="Laboratuvar firması tanımlanmalı" taskDetails="Yeni lab işi açılamıyor: Satın alma ekranında Laboratuvar türünde firma tanımlı değil." taskType="LAB" />}
+        >
+          {canAddLab
+            ? can("finance:read")
+              ? "Laboratuvarı “Yeni lab işi” penceresinde ya da Satın alma ekranında ekleyebilirsiniz."
+              : "“Yeni lab işi” penceresinde laboratuvarı ekleyebilirsiniz."
+            : "Yöneticiniz “Satın alma” ekranında Laboratuvar türünde firma tanımlamalı."}
+          {/* Süzgeçte eski işlerin laboratuvar adları görünür; bunlar firma kartı değildir. */}
+          {labOptions.length > 0 && " Yeni lab işi için Laboratuvar türünde firma kartı gerekli; eski işlerdeki adlar firma kartına bağlı değil."}
+        </Callout>
+      )}
+      {tab === "acik" && counts.late > 0 && (
+        <Callout
+          tone="critical"
+          compact
+          action={<Button size="sm" variant="secondary" onClick={() => setTab("laboratuvarda")}>Gecikenleri göster</Button>}
+        >
+          {counts.late} iş laboratuvardan zamanında dönmedi.
+        </Callout>
       )}
 
-      {closedCapped && (tab === "tamamlandi" || tab === "iptal") && (
+      <Toolbar
+        filterCount={filters.length}
+        filters={(
+          <>
+            <Select aria-label="Laboratuvar" value={labFilter} onChange={(event) => setLabFilter(event.target.value)} className="sm:w-56">
+              <option value="">Tüm laboratuvarlar</option>
+              {labOptions.map(([name, info]) => (
+                <option key={name} value={name}>
+                  {name}{info.open ? ` — ${info.open} açık` : ""}{info.late ? `, ${info.late} gecikmiş` : ""}
+                </option>
+              ))}
+            </Select>
+            <DoctorSelect
+              value={doctorFilter}
+              onChange={(doctorId, doctor) => { setDoctorFilter(doctorId); setDoctorFilterName(doctor?.fullName || ""); }}
+              emptyLabel="Tüm hekimler"
+              aria-label="Hekim"
+              className="sm:w-52"
+            />
+          </>
+        )}
+      >
+        <SearchInput
+          value={search}
+          onChange={setSearch}
+          placeholder="Hasta, telefon, hekim, laboratuvar veya iş türü ara"
+          slashShortcut
+          wrapperClassName="flex-1 min-w-[220px]"
+        />
+        {/* Kapanan sekmesinde hangi kapanış türü gösterilsin — telefonda da görünür kalır. */}
+        {isClosedTab && (
+          <ChoiceCards<ClosedKind>
+            label="Kapanan işler"
+            labelHidden
+            variant="pills"
+            value={closedKind}
+            onChange={setClosedKind}
+            options={[{ value: "done", label: "Hastaya takılan" }, { value: "cancelled", label: "İptal edilen" }]}
+          />
+        )}
+      </Toolbar>
+      <ActiveFilters filters={filters} onClearAll={() => { setLabFilter(""); setDoctorFilter(""); setDoctorFilterName(""); }} />
+
+      {closedCapped && (
         <p className="text-xs text-slate-500">Son {CLOSED_LIMIT} kayıt gösteriliyor. Daha eski bir işi hastanın dosyasındaki Laboratuvar bölümünden açabilirsiniz.</p>
       )}
 
@@ -418,9 +573,10 @@ export default function LabPage() {
         columns={columns}
         rows={pageRows}
         rowKey={({ order }) => order.id}
-        loading={loading}
-        error={loadError}
-        onRetry={() => void load()}
+        loading={listLoading}
+        error={listError}
+        staleError={listStaleError}
+        onRetry={() => (isClosedTab ? void loadClosed(closedKind) : void loadOpen())}
         emptyText={filtered ? "Aramaya uyan iş yok" : empty.title}
         emptyDescription={filtered ? "Aramayı veya filtreleri değiştirin." : empty.description}
         emptyIcon={filtered ? undefined : LabEmptyIcon}
@@ -428,7 +584,7 @@ export default function LabPage() {
         emptyAction={!filtered && canWriteLab && (tab === "acik" || tab === "gonderilmedi") ? <Button icon={Plus} onClick={openNew}>{LAB_LABELS.newOrder}</Button> : undefined}
         onRowClick={({ order }) => setDetailOrderId(order.id)}
         getRowAriaLabel={({ order }) => `${order.patient.fullName} — ${order.labType} işinin ayrıntısını aç`}
-        rowClassName={({ summary }) => (summary.stage === "late" ? "bg-red-50/40" : "")}
+        rowClassName={({ summary }) => (summary.stage === "late" ? "bg-red-50/40" : summary.stage === "cancelled" ? "opacity-75" : "")}
         mobileCard={(row) => (
           <div className="space-y-1.5">
             <div className="flex items-start justify-between gap-2">
@@ -439,40 +595,20 @@ export default function LabPage() {
               <LabStatusBadge stage={row.summary.stage} />
             </div>
             <p className="text-xs">{stageLine(row.summary)}</p>
-            {rowAction(row) && <div className="pt-0.5">{actionButton(row)}</div>}
+            {actionCell(row) && <div className="pt-0.5">{actionCell(row)}</div>}
           </div>
         )}
         pager={tabRows.length > PAGE_SIZE ? { page: Math.min(page, pageCount), pageCount, pageSize: PAGE_SIZE, total: tabRows.length, onPageChange: setPage } : undefined}
       />
 
-      {/* İş ayrıntısı — bir eylem penceresi açıkken gizlenir; aynı anda tek pencere. */}
-      <Modal
-        open={Boolean(detailOrder) && !actions.isOpen}
-        onClose={() => setDetailOrderId(null)}
-        title={detailOrder ? detailOrder.labType : "Lab işi"}
-        size="lg"
-        module="flask"
-        trackFormChanges={false}
-        footer={<Button variant="secondary" onClick={() => setDetailOrderId(null)}>Kapat</Button>}
-      >
-        {detailOrder && (
-          <LabOrderDetailPanel
-            order={detailOrder}
-            canWrite={canWriteLab}
-            canComplete={canCompleteLab}
-            onAddTrip={withOrder(actions.openSend)}
-            onReceive={(order, trip) => { const found = findOrder(order); if (found) actions.openReceive(found, found.trips.find((item) => item.id === trip.id)); }}
-            onEditTrip={(order, trip) => { const found = findOrder(order); const target = found?.trips.find((item) => item.id === trip.id); if (found && target) actions.openEditTrip(found, target); }}
-            onAddInvoice={withOrder((order) => actions.openInvoice(order, null))}
-            onEditInvoice={(order, invoice) => { const found = findOrder(order); const target = found?.invoices.find((item) => item.id === invoice.id); if (found && target) actions.openInvoice(found, target); }}
-            onDeleteInvoice={(order, invoice) => { const found = findOrder(order); const target = found?.invoices.find((item) => item.id === invoice.id); if (found && target) void actions.cancelInvoice(found, target); }}
-            onComplete={canCompleteLab ? withOrder(actions.openComplete) : undefined}
-            onRpt={withOrder(actions.openRework)}
-            onEditOrder={withOrder(actions.openEditOrder)}
-            onCancel={canCancelLab ? withOrder(actions.openCancel) : undefined}
-          />
-        )}
-      </Modal>
+      <LabOrderDetailModal
+        order={detailOrder}
+        onClose={() => { setDetailOrderId(null); setLinkedOrder(null); }}
+        actions={actions}
+        canWrite={canWriteLab}
+        canComplete={canCompleteLab}
+        canCancel={canCancelLab}
+      />
 
       {actions.modals}
 
@@ -487,6 +623,8 @@ export default function LabPage() {
         initialLabName={newLabName}
         labNames={labNames}
         labsLoading={labsLoading}
+        labsError={labsError}
+        onRetryLabs={() => setLabsReloadKey((value) => value + 1)}
         canAddLab={canAddLab}
         onLabCreated={(name) => setLabNames((current) => Array.from(new Set([...current, name])).sort((a, b) => a.localeCompare(b, "tr")))}
       />

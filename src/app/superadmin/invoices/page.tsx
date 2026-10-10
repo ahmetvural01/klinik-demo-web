@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Plus } from "lucide-react";
@@ -14,10 +14,11 @@ import { EmptyValue, ListTable, type ListSort, type ListTableColumn } from "@/co
 import { createModuleEmptyIcon } from "@/components/ui/ModuleIcon";
 import { useLatestRequest } from "@/lib/use-latest-request";
 import { InvoiceCreateModal } from "@/components/superadmin/InvoiceCreateModal";
-import { InvoiceRowActions } from "@/components/superadmin/InvoiceRowActions";
+import { ChoiceCards } from "@/components/ui/ChoiceCards";
+import { InvoiceReminderNote, InvoiceRowActions } from "@/components/superadmin/InvoiceRowActions";
 import { EMPTY_INVOICE_SUMMARY, type InvoiceSummary, type InvoiceViewStatus } from "@/components/superadmin/invoice-status";
 import { INVOICE_STATUS_META } from "@/components/superadmin/sa-labels";
-import { count, daysUntil, money, shortDate } from "@/components/superadmin/sa-format";
+import { daysUntil, money, shortDate } from "@/components/superadmin/sa-format";
 import { errorMessage, isAbort, saGet } from "@/components/superadmin/sa-fetch";
 
 const InvoiceEmptyIcon = createModuleEmptyIcon("hakediş");
@@ -35,18 +36,26 @@ type Invoice = {
   institutionId: string;
   institution: { id: string; name: string; subscriptionPlan: string; billingCycle: string } | null;
   lastReminderAt: string | null;
+  lastReminderStatus?: string | null;
   reminderCount: number;
 };
 
 const STATUS_KEYS = ["OPEN", "OVERDUE", "PENDING", "PAID", "CANCELLED", "ALL"] as const;
 type StatusKey = (typeof STATUS_KEYS)[number];
+type TabKey = "OPEN" | "PAID" | "CANCELLED" | "ALL";
+type OpenFilter = "OPEN" | "OVERDUE" | "PENDING";
 
 /**
  * Faturalar — kliniklere kesilen platform faturaları. Varsayılan görünüm iş
  * kuyruğu: ödenmemiş (bekleyen + gecikmiş) faturalar, vadesi en eski üstte.
  * Durum, Kontrol Paneli ve klinik dosyasıyla AYNI kuraldan türetilir; iptal
- * edilen fatura hiçbir borç toplamına girmez. Satır eylemleri (Tahsil edildi,
+ * edilen fatura hiçbir borç toplamına girmez. Satır eylemleri (Tahsil et,
  * Hatırlat, İptal et) yalnız açık faturada görünür.
+ *
+ * Sekmeler dört: Ödenmemiş · Ödendi · İptal · Tümü. "Gecikmiş" ve "Vadesi
+ * gelmemiş" Ödenmemiş'in alt süzgecidir (önceden üç sekme aynı faturaları
+ * çakışarak gösteriyordu). Adres aynı kalır: `?status=OVERDUE` bağlantıları
+ * (Kontrol Paneli) Ödenmemiş › Gecikmiş'i açar.
  */
 export default function InvoicesPage() {
   const router = useRouter();
@@ -65,6 +74,8 @@ export default function InvoicesPage() {
   const [sort, setSort] = useState<ListSort>({ key: "dueDate", dir: "asc" });
   const [createOpen, setCreateOpen] = useState(false);
   const [clinicName, setClinicName] = useState<string | null>(null);
+  // Adı öğrenilmiş klinik: sekme değişince ad için yeniden istek atılmaz.
+  const knownClinicRef = useRef<string | null>(null);
   const beginLoad = useLatestRequest();
 
   useEffect(() => {
@@ -100,7 +111,22 @@ export default function InvoicesPage() {
         const list = Array.isArray(data?.invoices) ? data.invoices : [];
         setInvoices(list);
         setSummary(data?.summary ?? EMPTY_INVOICE_SUMMARY);
-        if (institutionId && list[0]?.institution?.name) setClinicName(list[0].institution.name);
+        if (!institutionId) return;
+        if (list[0]?.institution?.name) {
+          knownClinicRef.current = institutionId;
+          setClinicName(list[0].institution.name);
+          return;
+        }
+        if (knownClinicRef.current === institutionId) return;
+        // Listede o kliniğin faturası yoksa adı ayrıca öğrenilir. Önceden bu
+        // (ağır) klinik dosyası isteği her açılışta listeyle birlikte atılıyordu.
+        saGet<{ name: string }>(`/api/superadmin/institutions/${institutionId}`, "", request.signal)
+          .then((clinic) => {
+            if (!request.isLatest()) return;
+            knownClinicRef.current = institutionId;
+            setClinicName(clinic?.name ?? null);
+          })
+          .catch(() => undefined);
       })
       .catch((error) => {
         if (isAbort(error) || !request.isLatest()) return;
@@ -111,17 +137,11 @@ export default function InvoicesPage() {
       });
   }, [beginLoad, debouncedQuery, institutionId, status, reloadKey]);
 
-  // Klinik filtresiyle gelindiyse ve listede o kliniğin faturası yoksa adını ayrıca öğren.
+  // Klinik süzgeci kalkınca ad da temizlenir (ad yukarıdaki liste isteğinden gelir).
   useEffect(() => {
-    if (!institutionId) {
-      setClinicName(null);
-      return;
-    }
-    const controller = new AbortController();
-    saGet<{ name: string }>(`/api/superadmin/institutions/${institutionId}`, "", controller.signal)
-      .then((data) => setClinicName(data?.name ?? null))
-      .catch(() => undefined);
-    return () => controller.abort();
+    if (institutionId) return;
+    knownClinicRef.current = null;
+    setClinicName(null);
   }, [institutionId]);
 
   const clearInstitution = () => {
@@ -161,22 +181,26 @@ export default function InvoicesPage() {
     );
   };
 
+  const actionTarget = (row: Invoice) => ({
+    id: row.id,
+    invoiceNo: row.invoiceNo,
+    amount: row.amount,
+    status: row.status,
+    institutionName: row.institution?.name,
+    lastReminderAt: row.lastReminderAt,
+    lastReminderStatus: row.lastReminderStatus,
+    reminderCount: row.reminderCount,
+  });
+
   const statusCell = (row: Invoice) => (
     <div>
       <Badge tone={INVOICE_STATUS_META[row.status].tone}>{INVOICE_STATUS_META[row.status].label}</Badge>
       {row.status === "PAID" && row.paidAt && <p className="mt-0.5 text-xs text-slate-500">{shortDate(row.paidAt)}</p>}
-      {(row.status === "PENDING" || row.status === "OVERDUE") && row.reminderCount > 0 && (
-        <p className="mt-0.5 text-xs text-slate-500">{row.reminderCount} hatırlatma · son {shortDate(row.lastReminderAt)}</p>
-      )}
+      <InvoiceReminderNote invoice={actionTarget(row)} />
     </div>
   );
 
-  const actions = (row: Invoice) => (
-    <InvoiceRowActions
-      invoice={{ id: row.id, invoiceNo: row.invoiceNo, amount: row.amount, status: row.status, institutionName: row.institution?.name, lastReminderAt: row.lastReminderAt, reminderCount: row.reminderCount }}
-      onChanged={reload}
-    />
-  );
+  const actions = (row: Invoice) => <InvoiceRowActions invoice={actionTarget(row)} onChanged={reload} />;
 
   const columns: ListTableColumn<Invoice>[] = [
     {
@@ -197,24 +221,24 @@ export default function InvoicesPage() {
     { key: "actions", header: "", align: "right", render: actions },
   ];
 
-  const tabItems = [
-    { key: "OPEN" as const, label: "Ödenmemiş", count: summary.openCount },
-    { key: "OVERDUE" as const, label: "Gecikmiş", count: summary.overdueCount, countTone: "critical" as const },
-    { key: "PENDING" as const, label: "Vadesi gelmemiş", count: summary.upcomingCount },
-    { key: "PAID" as const, label: "Ödendi", count: summary.paidCount },
-    { key: "CANCELLED" as const, label: "İptal", count: summary.cancelledCount },
-    { key: "ALL" as const, label: "Tümü" },
+  const tab: TabKey = status === "OVERDUE" || status === "PENDING" ? "OPEN" : (status as TabKey);
+  const tabItems: { key: TabKey; label: string; count?: number; countTone?: "critical" | "neutral" }[] = [
+    { key: "OPEN", label: "Ödenmemiş", count: summary.openCount, countTone: summary.overdueCount > 0 ? "critical" : "neutral" },
+    { key: "PAID", label: "Ödendi", count: summary.paidCount },
+    { key: "CANCELLED", label: "İptal", count: summary.cancelledCount },
+    { key: "ALL", label: "Tümü" },
   ];
+  const openFilter: OpenFilter = status === "OVERDUE" || status === "PENDING" ? status : "OPEN";
 
   const filters = institutionId ? [{ key: "clinic", label: `Klinik: ${clinicName || "seçili klinik"}`, onRemove: clearInstitution }] : [];
-  const emptyText = debouncedQuery || institutionId ? "Bu aramaya uyan fatura yok" : status === "OPEN" ? "Ödenmemiş fatura yok" : status === "OVERDUE" ? "Gecikmiş fatura yok" : "Fatura yok";
+  const emptyText = debouncedQuery || institutionId ? "Bu aramaya uyan fatura yok" : status === "OPEN" ? "Ödenmemiş fatura yok" : status === "OVERDUE" ? "Gecikmiş fatura yok" : status === "PENDING" ? "Vadesi gelmemiş fatura yok" : "Fatura yok";
 
   return (
     <section className="space-y-4">
       <PageHeader
         icon="hakediş"
         title="Faturalar"
-        description="Kliniklere kesilen platform faturaları: tahsilat, hatırlatma ve iptal."
+        description="Kliniklere kesilen platform faturaları."
         stats={[
           { label: "Gecikmiş", value: money(summary.overdueAmount), color: summary.overdueAmount > 0 ? "text-red-700" : undefined },
           { label: "Vadesi gelmemiş", value: money(summary.upcomingAmount) },
@@ -223,12 +247,28 @@ export default function InvoicesPage() {
         actions={<Button icon={Plus} onClick={() => setCreateOpen(true)}>Yeni fatura</Button>}
       />
 
-      <Tabs ariaLabel="Fatura durumu" size="sm" items={tabItems} value={status as StatusKey} onChange={setStatus} />
+      <Tabs ariaLabel="Fatura durumu" size="sm" items={tabItems} value={tab} onChange={(key) => setStatus(key as StatusKey)} />
 
       <ListTable<Invoice>
         header={
           <>
-            <Toolbar>
+            <Toolbar
+              filters={tab === "OPEN" ? (
+                <ChoiceCards<OpenFilter>
+                  label="Vade"
+                  labelHidden
+                  variant="pills"
+                  value={openFilter}
+                  onChange={(value) => setStatus(value)}
+                  options={[
+                    { value: "OPEN", label: "Tümü" },
+                    { value: "OVERDUE", label: "Gecikmiş", count: summary.overdueCount, countTone: "critical" },
+                    { value: "PENDING", label: "Vadesi gelmemiş", count: summary.upcomingCount },
+                  ]}
+                />
+              ) : undefined}
+              filterCount={openFilter !== "OPEN" ? 1 : 0}
+            >
               <SearchInput value={query} onChange={setQuery} placeholder="Klinik adı, fatura no veya açıklama" slashShortcut wrapperClassName="flex-1 min-w-[220px]" />
             </Toolbar>
             {filters.length > 0 && <div className="px-3 pb-2.5"><ActiveFilters filters={filters} /></div>}
@@ -238,7 +278,9 @@ export default function InvoicesPage() {
         rows={rows}
         rowKey={(row) => row.id}
         loading={loading}
-        error={loadError}
+        // Tahsilat/iptal sonrası yenileme başarısız olursa liste yerinde kalır (ince uyarı şeridi).
+        error={invoices.length ? null : loadError}
+        staleError={invoices.length ? loadError : null}
         onRetry={reload}
         sort={sort}
         onSortChange={changeSort}
@@ -260,7 +302,8 @@ export default function InvoicesPage() {
             <div className="flex items-center justify-between gap-2">
               <div>
                 <p className="font-semibold tabular-nums text-slate-900">{money(row.amount)}</p>
-                <p className="text-xs text-slate-500">Vade {shortDate(row.dueDate) || "—"}{row.reminderCount > 0 ? ` · ${count(row.reminderCount)} hatırlatma` : ""}</p>
+                <p className="text-xs text-slate-500">Vade {shortDate(row.dueDate) || "—"}</p>
+                <InvoiceReminderNote invoice={actionTarget(row)} />
               </div>
               {actions(row)}
             </div>

@@ -1,19 +1,26 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 import { LifeBuoy, MessageCircle, Plus } from "lucide-react";
 import { showToastSafe } from "@/lib/toast-client";
 import { roleLabel } from "@/lib/staff-roles";
 import { usePermissions } from "@/components/auth/PermissionProvider";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
-import { FormErrorBanner, FormField } from "@/components/ui/FormField";
-import { Input, Select, Textarea } from "@/components/ui/Input";
+import { Callout } from "@/components/ui/Callout";
+import { ChoiceCards } from "@/components/ui/ChoiceCards";
+import { FormField } from "@/components/ui/FormField";
+import { FormModal } from "@/components/ui/FormModal";
+import { Textarea } from "@/components/ui/Input";
 import { EmptyValue, ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { Modal } from "@/components/ui/Modal";
+import { formatDateText } from "@/components/ui/Money";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { PageSkeleton } from "@/components/ui/PageSkeleton";
 import { SearchInput } from "@/components/ui/SearchInput";
-import { ActiveFilters, Toolbar } from "@/components/ui/Toolbar";
+import { useTabParam } from "@/components/ui/Tabs";
+import { Toolbar } from "@/components/ui/Toolbar";
 import { matchesSearch } from "@/components/yonetim/search-text";
 
 type Ticket = {
@@ -21,11 +28,15 @@ type Ticket = {
   subject: string;
   message: string;
   answer: string | null;
+  status?: string | null;
+  closedAt?: string | null;
   createdAt: string;
   user?: { id: string; fullName: string; role: string } | null;
 };
 
-type StatusFilter = "" | "bekliyor" | "yanitlandi";
+type TicketState = "bekliyor" | "yanitlandi" | "kapandi";
+type StatusFilter = "tum" | TicketState;
+const STATUS_FILTERS: readonly StatusFilter[] = ["tum", "bekliyor", "yanitlandi", "kapandi"];
 
 const SUPPORT_TOPICS = [
   "Giriş ve yetki",
@@ -37,38 +48,77 @@ const SUPPORT_TOPICS = [
   "Rapor / dışa aktarma",
   "Diğer",
 ] as const;
-
-const STATUS_OPTIONS: Array<{ value: StatusFilter; label: string }> = [
-  { value: "", label: "Tüm talepler" },
-  { value: "bekliyor", label: "Yanıt bekleyenler" },
-  { value: "yanitlandi", label: "Yanıtlananlar" },
-];
+type SupportTopic = (typeof SUPPORT_TOPICS)[number];
 
 const WHATSAPP_URL = "https://api.whatsapp.com/send/?phone=903228028162";
 const MESSAGE_MAX = 5000;
+const SUBJECT_MAX = 120;
 
-function formatDateTime(value: string) {
-  return new Date(value).toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+/**
+ * Süperadmin listesiyle aynı kural: kapatılan talep (status CLOSED) yanıtsız
+ * olsa da "Kapandı"dır. Önceden durum yalnız yanıta bakıyordu; kapatılmış
+ * yanıtsız talep sonsuza dek "Yanıt bekliyor" görünüyordu.
+ */
+function ticketState(ticket: Ticket): TicketState {
+  if (ticket.status === "CLOSED") return "kapandi";
+  return ticket.answer ? "yanitlandi" : "bekliyor";
 }
+
+const STATE_BADGE: Record<TicketState, { tone: "warning" | "success" | "neutral"; label: string }> = {
+  bekliyor: { tone: "warning", label: "Yanıt bekliyor" },
+  yanitlandi: { tone: "success", label: "Yanıtlandı" },
+  kapandi: { tone: "neutral", label: "Kapandı" },
+};
 
 function StatusBadge({ ticket }: { ticket: Ticket }) {
-  return ticket.answer
-    ? <Badge tone="success">Yanıtlandı</Badge>
-    : <Badge tone="warning">Yanıt bekliyor</Badge>;
+  const state = STATE_BADGE[ticketState(ticket)];
+  return <Badge tone={state.tone}>{state.label}</Badge>;
 }
 
-export default function DestekPage() {
+/**
+ * Ayrı "Konu başlığı" alanı yok: konu + mesajın ilk satırı başlık olur.
+ * Listede aynı konudan beş talep aynı adla görünmez; form iki alana iner.
+ */
+/**
+ * Derin bağlantıdaki konu: tam ad ("SMS / WhatsApp") ya da adın bir parçası
+ * ("SMS"). Listede olmayan değer yok sayılır (serbest başlık yazdırılmaz).
+ */
+function topicFromParam(value: string | null): SupportTopic | null {
+  const wanted = (value || "").trim().toLocaleLowerCase("tr-TR");
+  if (!wanted) return null;
+  return SUPPORT_TOPICS.find((topic) => topic.toLocaleLowerCase("tr-TR") === wanted)
+    ?? SUPPORT_TOPICS.find((topic) => topic.toLocaleLowerCase("tr-TR").split(" / ").includes(wanted))
+    ?? null;
+}
+
+/** Ön doldurulan mesaj: en fazla 500 karakter (adres çubuğundan gelen metin kısa tutulur). */
+const PREFILL_MAX = 500;
+
+function buildSubject(topic: SupportTopic, message: string) {
+  const firstLine = message.trim().split(/\r?\n/)[0]?.trim() || "";
+  const text = firstLine ? `${topic} · ${firstLine}` : topic;
+  return text.length > SUBJECT_MAX ? `${text.slice(0, SUBJECT_MAX - 1).trimEnd()}…` : text;
+}
+
+function DestekContent() {
   const { can } = usePermissions();
   const canWrite = can("support:write");
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("");
+  const [statusFilter, setStatusFilter] = useTabParam<StatusFilter>(STATUS_FILTERS, "tum", "durum");
   const [selected, setSelected] = useState<Ticket | null>(null);
 
   const [formOpen, setFormOpen] = useState(false);
-  const [form, setForm] = useState({ topic: SUPPORT_TOPICS[0] as string, customSubject: "", message: "" });
+  const [topic, setTopic] = useState<SupportTopic>(SUPPORT_TOPICS[0]);
+  const [message, setMessage] = useState("");
+  // Formun açıldığı metin (ör. "Kredi iste" ön doldurması): dokunulmadan kapatılınca
+  // "Değişiklikler kaybolsun mu?" sorulmasın; yalnız kullanıcının yazdığı değişiklik sayılır.
+  const [initialMessage, setInitialMessage] = useState("");
   const [formSubmitted, setFormSubmitted] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -81,7 +131,9 @@ export default function DestekPage() {
       const data = await response.json().catch(() => null);
       if (!response.ok || !Array.isArray(data)) throw new Error(data?.message || "Destek talepleri yüklenemedi.");
       setTickets(data);
+      setLoaded(true);
     } catch (error) {
+      // Eldeki liste korunur; üstte "yenilenemedi" şeridi görünür.
       setLoadError(error instanceof Error ? error.message : "Destek talepleri yüklenemedi.");
     } finally {
       setLoading(false);
@@ -90,37 +142,63 @@ export default function DestekPage() {
 
   useEffect(() => { void load(); }, [load]);
 
-  const waitingCount = tickets.filter((ticket) => !ticket.answer).length;
-
-  const filtered = useMemo(() => tickets.filter((ticket) => {
-    if (statusFilter === "bekliyor" && ticket.answer) return false;
-    if (statusFilter === "yanitlandi" && !ticket.answer) return false;
-    return matchesSearch([ticket.subject, ticket.message, ticket.answer, ticket.user?.fullName], query);
-  }), [query, statusFilter, tickets]);
-
-  const subject = form.topic === "Diğer" ? form.customSubject.trim() : form.topic;
-  const formErrors = {
-    subject: !subject ? "Kısa bir konu başlığı yazın." : subject.length > 120 ? "Konu en fazla 120 karakter olabilir." : undefined,
-    message: !form.message.trim() ? "Sorunu veya isteğinizi yazın." : form.message.length > MESSAGE_MAX ? `Mesaj en fazla ${MESSAGE_MAX} karakter olabilir.` : undefined,
-  };
-
-  const openForm = () => {
-    setForm({ topic: SUPPORT_TOPICS[0], customSubject: "", message: "" });
+  const openForm = useCallback((prefill = "", initialTopic: SupportTopic = SUPPORT_TOPICS[0]) => {
+    setTopic(initialTopic);
+    setMessage(prefill);
+    setInitialMessage(prefill);
     setFormSubmitted(false);
     setFormError(null);
     setFormOpen(true);
-  };
+  }, []);
+
+  // Derin bağlantı: ?yeni=1 formu açar (hesap menüsü, hata ekranındaki "Destek talebi aç");
+  // ?hata=<kod> mesajın başına hata kodunu yazar; ?konu= konuyu seçer, ?metin= mesajı
+  // doldurur (İletişim › "Kredi iste": boş form yerine hazır istek). Parametreler bir
+  // kez okunup adresten silinir.
+  const deepLinkHandled = useRef(false);
+  useEffect(() => {
+    if (deepLinkHandled.current || searchParams.get("yeni") !== "1") return;
+    deepLinkHandled.current = true;
+    const errorCode = (searchParams.get("hata") || "").replace(/[^\w-]/g, "").slice(0, 64);
+    const prefillText = (searchParams.get("metin") || "").trim().slice(0, PREFILL_MAX);
+    const prefillTopic = topicFromParam(searchParams.get("konu"));
+    // Hata ekranından gelen talep hiçbir modüle ait değildir: konu "Diğer" seçili gelir.
+    const prefill = errorCode ? `Hata kodu: ${errorCode}\n${prefillText}` : prefillText;
+    if (canWrite) openForm(prefill, prefillTopic ?? (errorCode ? "Diğer" : SUPPORT_TOPICS[0]));
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("yeni");
+    params.delete("hata");
+    params.delete("konu");
+    params.delete("metin");
+    const rest = params.toString();
+    window.history.replaceState(null, "", rest ? `${pathname}?${rest}` : pathname);
+  }, [canWrite, openForm, pathname, searchParams]);
+
+  const counts = useMemo(() => {
+    const result: Record<TicketState, number> = { bekliyor: 0, yanitlandi: 0, kapandi: 0 };
+    for (const ticket of tickets) result[ticketState(ticket)] += 1;
+    return result;
+  }, [tickets]);
+
+  const filtered = useMemo(() => tickets.filter((ticket) => {
+    if (statusFilter !== "tum" && ticketState(ticket) !== statusFilter) return false;
+    return matchesSearch([ticket.subject, ticket.message, ticket.answer, ticket.user?.fullName], query);
+  }), [query, statusFilter, tickets]);
+
+  const messageError = !message.trim()
+    ? "Sorunu veya isteğinizi yazın."
+    : message.length > MESSAGE_MAX ? `Mesaj en fazla ${MESSAGE_MAX} karakter olabilir.` : undefined;
 
   const send = async () => {
     setFormSubmitted(true);
     setFormError(null);
-    if (formErrors.subject || formErrors.message) return;
+    if (messageError) return;
     setSending(true);
     try {
       const response = await fetch("/api/support", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subject, message: form.message.trim() }),
+        body: JSON.stringify({ subject: buildSubject(topic, message), message: message.trim() }),
       });
       const data = await response.json().catch(() => null);
       if (!response.ok) {
@@ -142,7 +220,7 @@ export default function DestekPage() {
       key: "createdAt",
       header: "Tarih",
       cellClassName: "whitespace-nowrap text-sm text-slate-600 tabular-nums",
-      render: (ticket) => formatDateTime(ticket.createdAt),
+      render: (ticket) => formatDateText(ticket.createdAt, "datetime"),
     },
     {
       key: "subject",
@@ -167,52 +245,62 @@ export default function DestekPage() {
     { key: "status", header: "Durum", render: (ticket) => <StatusBadge ticket={ticket} /> },
   ];
 
-  const activeFilters = [
-    ...(statusFilter ? [{ key: "durum", label: STATUS_OPTIONS.find((option) => option.value === statusFilter)?.label || "", onRemove: () => setStatusFilter("") }] : []),
-  ];
+  const selectedState = selected ? ticketState(selected) : null;
+  const narrowed = statusFilter !== "tum" || Boolean(query.trim());
 
   return (
     <section className="space-y-3">
       <PageHeader
         icon="support"
         title="Destek"
-        description="Programla ilgili sorun ve isteklerinizi destek ekibine iletin; yanıtlar burada görünür."
-        stats={waitingCount > 0 ? [{ label: "Yanıt bekleyen", value: waitingCount, color: "text-amber-700" }] : undefined}
+        description="Programla ilgili sorun ve isteklerinizi destek ekibine iletin."
         actions={(
           <>
-            <Button variant="secondary" icon={MessageCircle} onClick={() => window.open(WHATSAPP_URL, "_blank", "noopener,noreferrer")}>
+            <Button variant="secondary" icon={MessageCircle} href={WHATSAPP_URL} target="_blank" title="WhatsApp destek hattı yeni sekmede açılır">
               WhatsApp ile yaz
             </Button>
-            {canWrite && <Button icon={Plus} onClick={openForm}>Yeni talep</Button>}
+            {canWrite && <Button icon={Plus} onClick={() => openForm()}>Yeni talep</Button>}
           </>
         )}
       />
 
       {!canWrite && (
-        <p className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-600">
-          Talep açma izniniz yok. Acil durumlarda WhatsApp destek hattına yazabilir veya klinik yöneticinize iletebilirsiniz.
-        </p>
+        <Callout tone="neutral" role="note">
+          Talep açma izniniz yok. Acil durumda WhatsApp destek hattına yazın veya klinik yöneticinize iletin.
+        </Callout>
       )}
 
       <Toolbar>
         <SearchInput value={query} onChange={setQuery} placeholder="Konu, mesaj veya gönderen ara" wrapperClassName="flex-1 min-w-[220px]" />
-        <Select aria-label="Durum" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as StatusFilter)} className="sm:w-52">
-          {STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-        </Select>
+        <ChoiceCards
+          label="Durum"
+          labelHidden
+          variant="pills"
+          value={statusFilter}
+          onChange={setStatusFilter}
+          options={[
+            { value: "tum", label: "Tümü" },
+            { value: "bekliyor", label: "Yanıt bekleyen", count: counts.bekliyor, countTone: "warning" },
+            { value: "yanitlandi", label: "Yanıtlanan" },
+            { value: "kapandi", label: "Kapanan" },
+          ]}
+        />
       </Toolbar>
-      <ActiveFilters filters={activeFilters} />
 
       <ListTable
         columns={columns}
         rows={filtered}
         rowKey={(ticket) => ticket.id}
-        loading={loading}
-        error={loadError}
+        loading={loading && !loaded}
+        error={loaded ? null : loadError}
+        staleError={loaded ? loadError : null}
         onRetry={() => void load()}
         emptyIcon={LifeBuoy}
-        emptyText={tickets.length === 0 ? "Henüz destek talebi yok" : "Aramanızla eşleşen talep yok"}
-        emptyDescription={tickets.length === 0 && canWrite ? "Programda takıldığınız bir yer olursa buradan yazın; yanıtı bu listede görürsünüz." : undefined}
-        emptyAction={tickets.length === 0 && canWrite ? <Button icon={Plus} onClick={openForm}>Yeni talep</Button> : undefined}
+        emptyText={tickets.length === 0 ? "Henüz destek talebi yok" : query.trim() ? "Aramanızla eşleşen talep yok" : "Bu durumda talep yok"}
+        emptyDescription={tickets.length === 0 && canWrite ? "Programda takıldığınız bir yer olursa buradan yazın." : undefined}
+        emptyAction={tickets.length === 0 && canWrite
+          ? <Button icon={Plus} onClick={() => openForm()}>Yeni talep</Button>
+          : narrowed ? <Button variant="secondary" onClick={() => { setQuery(""); setStatusFilter("tum"); }}>Filtreleri temizle</Button> : undefined}
         onRowClick={setSelected}
         getRowAriaLabel={(ticket) => `${ticket.subject} talebini aç`}
         mobileCard={(ticket) => (
@@ -222,7 +310,7 @@ export default function DestekPage() {
               <StatusBadge ticket={ticket} />
             </div>
             <p className="truncate text-xs text-slate-500">{ticket.message}</p>
-            <p className="text-xs text-slate-400">{formatDateTime(ticket.createdAt)}{ticket.user ? ` · ${ticket.user.fullName}` : ""}</p>
+            <p className="text-xs text-slate-400">{formatDateText(ticket.createdAt, "datetime")}{ticket.user ? ` · ${ticket.user.fullName}` : ""}</p>
           </div>
         )}
       />
@@ -231,7 +319,7 @@ export default function DestekPage() {
         open={Boolean(selected)}
         onClose={() => setSelected(null)}
         title={selected?.subject || "Destek talebi"}
-        description={selected ? `${formatDateTime(selected.createdAt)}${selected.user ? ` · ${selected.user.fullName}` : ""}` : undefined}
+        description={selected ? `${formatDateText(selected.createdAt, "datetime")}${selected.user ? ` · ${selected.user.fullName}` : ""}` : undefined}
         size="lg"
         trackFormChanges={false}
         footer={<Button variant="secondary" onClick={() => setSelected(null)}>Kapat</Button>}
@@ -247,6 +335,10 @@ export default function DestekPage() {
               <p className="mb-1 text-xs font-bold text-slate-500">Destek ekibinin yanıtı</p>
               {selected.answer ? (
                 <p className="whitespace-pre-wrap rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm leading-6 text-emerald-900">{selected.answer}</p>
+              ) : selectedState === "kapandi" ? (
+                <p className="text-sm text-slate-500">
+                  Talep destek ekibi tarafından kapatıldı{selected.closedAt ? ` (${formatDateText(selected.closedAt, "datetime")})` : ""}. Sorun sürüyorsa yeni talep açın.
+                </p>
               ) : (
                 <p className="text-sm text-slate-500">Henüz yanıt gelmedi. Acil ise WhatsApp destek hattına yazabilirsiniz.</p>
               )}
@@ -255,42 +347,43 @@ export default function DestekPage() {
         )}
       </Modal>
 
-      <Modal
+      <FormModal
         open={formOpen}
         onClose={() => setFormOpen(false)}
         title="Yeni destek talebi"
-        description="Talebiniz CepKlinik destek ekibine gider; yanıt bu sayfada görünür."
         size="md"
-        footer={(
-          <>
-            <Button variant="secondary" onClick={() => setFormOpen(false)}>Vazgeç</Button>
-            <Button onClick={() => void send()} loading={sending}>Gönder</Button>
-          </>
-        )}
+        onSubmit={() => send()}
+        submitLabel="Gönder"
+        submitting={sending}
+        error={formError}
+        isDirty={message.trim() !== initialMessage.trim()}
       >
-        <form className="space-y-4" noValidate onSubmit={(event) => { event.preventDefault(); void send(); }}>
-          <FormField label="Konu" htmlFor="destek-konu" required>
-            <Select id="destek-konu" value={form.topic} onChange={(event) => setForm((current) => ({ ...current, topic: event.target.value }))}>
-              {SUPPORT_TOPICS.map((topic) => <option key={topic} value={topic}>{topic}</option>)}
-            </Select>
-          </FormField>
-          {form.topic === "Diğer" && (
-            <FormField label="Konu başlığı" htmlFor="destek-konu-ozel" required error={formSubmitted ? formErrors.subject : undefined}>
-              <Input id="destek-konu-ozel" maxLength={120} value={form.customSubject} placeholder="örn: Yazıcı çıktısı" onChange={(event) => setForm((current) => ({ ...current, customSubject: event.target.value }))} />
-            </FormField>
-          )}
-          <FormField
-            label="Mesaj"
-            htmlFor="destek-mesaj"
-            required
-            error={formSubmitted ? formErrors.message : undefined}
-            hint="Hangi ekranda, hangi adımda ne olduğunu yazın. Hastanın TC veya telefon numarasını yazmayın."
-          >
-            <Textarea id="destek-mesaj" rows={5} maxLength={MESSAGE_MAX} value={form.message} onChange={(event) => setForm((current) => ({ ...current, message: event.target.value }))} />
-          </FormField>
-          <FormErrorBanner message={formError} />
-        </form>
-      </Modal>
+        {/* Konu çip olarak seçilir (düğme); pencere açılınca odak doğrudan mesaja gelir. */}
+        <ChoiceCards
+          label="Konu"
+          variant="pills"
+          value={topic}
+          onChange={setTopic}
+          options={SUPPORT_TOPICS.map((item) => ({ value: item, label: item }))}
+        />
+        <FormField
+          label="Mesaj"
+          htmlFor="destek-mesaj"
+          required
+          error={formSubmitted ? messageError : undefined}
+          hint="Hangi ekranda, hangi adımda ne olduğunu yazın. Hastanın TC veya telefon numarasını yazmayın."
+        >
+          <Textarea id="destek-mesaj" rows={5} maxLength={MESSAGE_MAX} value={message} onChange={(event) => setMessage(event.target.value)} />
+        </FormField>
+      </FormModal>
     </section>
+  );
+}
+
+export default function DestekPage() {
+  return (
+    <Suspense fallback={<PageSkeleton toolbar body="table" rows={6} columns={4} label="Destek yükleniyor" />}>
+      <DestekContent />
+    </Suspense>
   );
 }

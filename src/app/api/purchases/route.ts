@@ -10,6 +10,7 @@ import { purchasePaymentToken } from "@/lib/purchase-payment-links";
 import { isValidDateKey, turkeyDayRangeUtc } from "@/lib/tz";
 import { requireActiveBranch } from "@/lib/branch-context";
 import { publicErrorResponse } from "@/lib/public-error";
+import { BUSY_MESSAGE, PURCHASE_TX_OPTIONS, isTransientDbError } from "./transaction-errors";
 
 function toPublicPurchase(purchase: any) {
   if (!purchase) return purchase;
@@ -328,7 +329,7 @@ export async function POST(req: NextRequest) {
       }
 
       return { purchase, items: createdItems, total, firmaIslem, paymentIslem, isReceived };
-    });
+    }, PURCHASE_TX_OPTIONS);
 
     await writeAudit(
       auth.user.id,
@@ -365,6 +366,7 @@ export async function POST(req: NextRequest) {
       }
     }
     console.error("[purchases POST]", e);
+    if (isTransientDbError(e)) return NextResponse.json({ error: BUSY_MESSAGE }, { status: 503 });
     const publicError = publicErrorResponse(e, "Satın alma kaydedilemedi. Lütfen tekrar deneyin.");
     return NextResponse.json({ error: publicError.message }, { status: publicError.status });
   }

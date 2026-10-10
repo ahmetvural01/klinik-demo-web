@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
-import { requireAuth, writeAudit } from "@/lib/api";
+import { invalidateInstitutionCache, requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
+import { syncInstitutionPaymentGate } from "@/lib/billing";
 import { turkeyDateKey, turkeyDayRangeUtc } from "@/lib/tz";
 
 export async function POST(request: NextRequest) {
@@ -115,6 +116,12 @@ export async function POST(request: NextRequest) {
         },
       });
 
+      // Ödeme kilidi (paymentGraceUntil) fatura kesen her yolda aynı işlemde
+      // senkronlanır. Önceden yalnız Faturalar uçları senkronluyordu; SMS
+      // satışıyla kesilen fatura vadesi geçse de klinik "Normal" kalıyordu
+      // (canlı test H2).
+      await syncInstitutionPaymentGate(institution.id, tx);
+
       return { updatedWallet, updatedInstitution, transaction, invoice };
     });
   } catch (error) {
@@ -133,6 +140,8 @@ export async function POST(request: NextRequest) {
     }
     throw error;
   }
+
+  invalidateInstitutionCache(institution.id);
 
   await writeAudit(
     auth.user.id,

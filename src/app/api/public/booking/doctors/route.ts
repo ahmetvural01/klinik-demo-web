@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getDailySchedules } from "@/lib/working-hours";
 import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rate-limit";
+import { effectiveDoctorWhere } from "@/lib/hakedis";
 
 export async function GET(req: NextRequest) {
   const ip = getClientIpFromHeaders(req.headers);
@@ -30,7 +31,8 @@ export async function GET(req: NextRequest) {
         id: true,
         name: true,
         logo: true,
-        settings: { select: { institutionName: true } },
+        phone: true,
+        settings: { select: { institutionName: true, institutionPhone: true } },
         branches: {
           where: { isActive: true },
           select: { id: true, name: true, city: true, district: true, isHeadquarters: true, sortOrder: true },
@@ -44,27 +46,26 @@ export async function GET(req: NextRequest) {
       : institution.branches[0];
     if (!selectedBranch) return NextResponse.json({ error: "Aktif şube bulunamadı" }, { status: 404 });
 
-    const staff = await prisma.user.findMany({
-      where: {
-        institutionId: institution.id,
-        isActive: true,
-        role: { in: ["DOKTOR", "YONETICI"] },
-        branchMemberships: { some: { branchId: selectedBranch.id, isActive: true } },
-      },
-      select: { id: true, fullName: true, role: true, profile: { select: { hideAsDoctor: true } } },
-    });
-
-    const doctors = staff
-      .filter((s) => (s.role === "YONETICI" ? !s.profile?.hideAsDoctor : true))
-      .map((s) => ({ id: s.id, fullName: s.fullName }));
-
-    const dailySchedules = await getDailySchedules(institution.id);
+    // Talep gönderiminde doktor aynı kuralla (effectiveDoctorWhere) doğrulanır;
+    // önceden liste farklı kuralla üretiliyordu ve listede görünen bir yönetici
+    // gönderimde "Doktor bulunamadı" hatası verebiliyordu.
+    const [doctors, dailySchedules] = await Promise.all([
+      prisma.user.findMany({
+        where: effectiveDoctorWhere(institution.id, selectedBranch.id),
+        select: { id: true, fullName: true },
+        orderBy: { fullName: "asc" },
+      }),
+      getDailySchedules(institution.id),
+    ]);
     return NextResponse.json({
       institutionName: institution.settings?.institutionName?.trim() || institution.name,
       logoUrl: institution.logo || null,
+      // Kliniğin hastalara açık telefonu (hasta mesajlarında da yazan numara):
+      // talep sonrası "kliniği arayın" bağlantısı için.
+      institutionPhone: institution.settings?.institutionPhone?.trim() || institution.phone?.trim() || null,
       branches: institution.branches.map(({ sortOrder: _sortOrder, isHeadquarters: _isHeadquarters, ...branch }) => branch),
       selectedBranchId: selectedBranch.id,
-      doctors,
+      doctors: doctors.map((doctor) => ({ id: doctor.id, fullName: doctor.fullName })),
       dailySchedules,
     });
   } catch (error) {

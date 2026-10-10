@@ -23,7 +23,8 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: "Kullanıcı bulunamadı" }, { status: 404 });
 
   const isValid = await verifyPassword(password, user.passwordHash);
-  if (!isValid) return NextResponse.json({ error: "Şifre hatalı" }, { status: 401 });
+  // Yanlış şifre bir alan hatasıdır; 401 "oturum yok" anlamına gelir.
+  if (!isValid) return NextResponse.json({ error: "Şifre hatalı", message: "Şifre hatalı.", field: "password" }, { status: 400 });
 
   await prisma.user.update({
     where: { id: auth.user.id },

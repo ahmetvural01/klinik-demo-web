@@ -92,6 +92,6 @@ export async function POST(req: NextRequest) {
   return completePlatformLogin(
     user,
     institutionInput,
-    usedBackupCode ? "Superadmin yedek kod ile giris yapti" : "Superadmin 2FA ile giris yapti",
+    usedBackupCode ? "Süperadmin yedek kod ile giriş yaptı" : "Süperadmin 2FA ile giriş yaptı",
   );
 }

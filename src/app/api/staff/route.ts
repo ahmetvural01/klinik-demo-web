@@ -3,14 +3,15 @@ import bcrypt from "bcryptjs";
 import { Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { validateWorkHoursRange } from "@/lib/working-hours-core";
-import { requireAuth, writeAudit } from "@/lib/api";
+import { hasEffectivePermission, requireAuth, writeAudit } from "@/lib/api";
 import { checkStaffLimit } from "@/lib/staff-limits";
 import { TC_NO_REGEX, TC_NO_MESSAGE } from "@/lib/validators";
+import { isValidTurkishIdentityNumber } from "@/lib/tc-kimlik";
 import { requireActiveBranch } from "@/lib/branch-context";
 
 const STAFF_ROLES = new Set<Role>(["YONETICI", "DOKTOR", "ASISTAN", "BANKO", "MUHASEBE"]);
 
-export async function GET(_request: NextRequest) {
+export async function GET(request: NextRequest) {
   try {
     const auth = await requireAuth("staff:read");
     if (auth.error) return auth.error;
@@ -18,6 +19,15 @@ export async function GET(_request: NextRequest) {
     if (!activeBranch.ok || !auth.user.institutionId) {
       return NextResponse.json({ message: activeBranch.ok ? "Kurum bilgisi bulunamadı." : activeBranch.message }, { status: 403 });
     }
+
+    // Varsayılan yanıt seçiciler içindir (doktor seçici, görev/lab pencereleri,
+    // hasta listesi süzgeci...): yalnız ad, rol ve mesai. Önceden her seçici
+    // bütün personelin TC kimlik numarasını (KVKK) ve profil fotoğrafını
+    // (kişi başı 15–35 KB) indiriyordu. Personel sayfası `?details=1` ister:
+    // fotoğraf gelir; TC yalnız personel kaydı yazabilen (staff:write) kişiye
+    // döner — TC ile arama ve düzenleme yalnız onun işidir.
+    const details = request.nextUrl.searchParams.get("details") === "1";
+    const includeIdentity = details && await hasEffectivePermission(auth.user, "staff:write");
 
     const staff = await prisma.user.findMany({
       where: {
@@ -35,7 +45,7 @@ export async function GET(_request: NextRequest) {
       select: {
         id: true,
         fullName: true,
-        identityNo: true,
+        identityNo: includeIdentity,
         email: true,
         role: true,
         isActive: true,
@@ -43,7 +53,7 @@ export async function GET(_request: NextRequest) {
         kkYuzde: true,
         genelYuzde: true,
         maasYuzde: true,
-        profile: { select: { workStart: true, workEnd: true, photoUrl: true, hideAsDoctor: true } },
+        profile: { select: { workStart: true, workEnd: true, photoUrl: details, hideAsDoctor: true } },
         branchMemberships: { where: { branchId: activeBranch.branchId, isActive: true }, select: { branchId: true, isPrimary: true, kkYuzde: true, genelYuzde: true, maasYuzde: true, branch: { select: { name: true, code: true } } } },
       },
       orderBy: { createdAt: "desc" }
@@ -52,8 +62,11 @@ export async function GET(_request: NextRequest) {
     // Komisyon oranları (kkYuzde/genelYuzde/maasYuzde) doktorların net
     // maaşını belirleyen hassas bilgidir — DOKTOR/ASISTAN/BANKO rolleri de
     // `staff:read` iznine sahip olduğundan bu alanlar önceden herkese
-    // sızıyordu (bkz. denetim raporu). Yalnızca YONETICI/SUPERADMIN görebilir.
-    const canSeeRates = auth.user.role === "YONETICI" || auth.user.role === "SUPERADMIN";
+    // sızıyordu (bkz. denetim raporu). Yalnız hakediş özetini zaten gören
+    // (finance:read; yönetici `*` ile dahil) görür. Önceden üst düzey alanlar
+    // silinse de şube üyeliğindeki (branchMemberships[0]) aynı üç oran herkese
+    // gidiyordu; artık oradan da çıkarılır.
+    const canSeeRates = await hasEffectivePermission(auth.user, "finance:read");
     const result = canSeeRates
       ? staff.map((person) => ({
           ...person,
@@ -61,7 +74,10 @@ export async function GET(_request: NextRequest) {
           genelYuzde: person.branchMemberships[0]?.genelYuzde ?? person.genelYuzde,
           maasYuzde: person.branchMemberships[0]?.maasYuzde ?? person.maasYuzde,
         }))
-      : staff.map(({ kkYuzde: _kkYuzde, genelYuzde: _genelYuzde, maasYuzde: _maasYuzde, ...rest }) => rest);
+      : staff.map(({ kkYuzde: _kkYuzde, genelYuzde: _genelYuzde, maasYuzde: _maasYuzde, branchMemberships, ...rest }) => ({
+          ...rest,
+          branchMemberships: branchMemberships.map(({ kkYuzde: _bkk, genelYuzde: _bgenel, maasYuzde: _bmaas, ...membership }) => membership),
+        }));
 
     return NextResponse.json(result);
   } catch (error) {
@@ -96,6 +112,12 @@ export async function POST(request: NextRequest) {
   if (typeof body.identityNo !== "string" || !TC_NO_REGEX.test(body.identityNo)) {
     return NextResponse.json({ message: TC_NO_MESSAGE }, { status: 400 });
   }
+  // TC aynı zamanda giriş kimliği ve ilk şifredir: yanlış yazılmış bir numara
+  // sonradan zor fark edilir (canlı H-4). Hasta formundaki algoritmayla aynı
+  // kural; ekran da aynı kontrolü yapar.
+  if (!isValidTurkishIdentityNumber(body.identityNo)) {
+    return NextResponse.json({ message: "Geçerli bir TC kimlik no yazın; numarayı kimlikten kontrol edin.", field: "identityNo" }, { status: 400 });
+  }
 
   // bkz. src/app/api/staff/[id]/route.ts PUT — YONETICI (tüm yetkiler) rolü
   // sadece zaten YONETICI/SUPERADMIN olan bir aktör tarafından atanabilir.
@@ -107,6 +129,19 @@ export async function POST(request: NextRequest) {
   }
   if (body.hideAsDoctor !== undefined && typeof body.hideAsDoctor !== "boolean") {
     return NextResponse.json({ message: "Doktor görünürlüğü geçersiz." }, { status: 400 });
+  }
+  // Hakediş oranları (isteğe bağlı) kayıtla birlikte şube üyeliğine yazılır.
+  // Önceden pencere kaydın ardından ayrı bir PUT atıyor, oran geçmişine aynı
+  // değerli iki satır (1970 ve bugün) düşüyordu. İlk oran geçmiş satırı
+  // gerektirmez: geçmiş yoksa hakediş güncel oranı kullanır.
+  const initialRates: { kkYuzde?: number; genelYuzde?: number; maasYuzde?: number } = {};
+  for (const field of ["kkYuzde", "genelYuzde", "maasYuzde"] as const) {
+    if (body[field] === undefined) continue;
+    const value = Number(body[field]);
+    if (!Number.isFinite(value) || value < 0 || value > 100) {
+      return NextResponse.json({ message: "Komisyon oranları 0-100 arasında olmalıdır." }, { status: 400 });
+    }
+    initialRates[field] = value;
   }
   const workStart = typeof body.workStart === "string" ? body.workStart : "08:30";
   const workEnd = typeof body.workEnd === "string" ? body.workEnd : "18:00";
@@ -168,6 +203,7 @@ export async function POST(request: NextRequest) {
           create: {
             branchId: activeBranch.branchId,
             isPrimary: true,
+            ...initialRates,
           },
         },
       },
@@ -191,7 +227,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: error.message.slice("STAFF_LIMIT:".length) }, { status: 409 });
     }
     if (error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2002") {
-      return NextResponse.json({ message: "Bu TC kimlik numarası kurumda zaten kayıtlı." }, { status: 409 });
+      // İşten ayrılıp dönen personel yeni kayıt değil, eski kaydın geri açılmasıdır.
+      return NextResponse.json({ message: "Bu TC kimlik numarası kurumda zaten kayıtlı. Kişi daha önce pasife alındıysa Personel listesinde \"Pasif\" süzgecinden yeniden aktif edin.", field: "identityNo" }, { status: 409 });
     }
     console.error("[staff POST] fallback:", error);
     return NextResponse.json({ message: "Personel oluşturulamadı." }, { status: 503 });

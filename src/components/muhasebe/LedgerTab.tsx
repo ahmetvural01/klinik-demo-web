@@ -1,24 +1,31 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Ban, ExternalLink, Pencil, Plus } from "lucide-react";
+import { Ban, ExternalLink, Pencil } from "lucide-react";
 import { ListTable, EmptyValue, type ListTableColumn } from "@/components/ui/ListTable";
 import { Toolbar, ActiveFilters, type ActiveFilter } from "@/components/ui/Toolbar";
 import { SearchInput } from "@/components/ui/SearchInput";
-import { Input, Select } from "@/components/ui/Input";
-import { Tabs } from "@/components/ui/Tabs";
-import { Badge } from "@/components/ui/Badge";
+import { Select } from "@/components/ui/Input";
+import { ChoiceCards } from "@/components/ui/ChoiceCards";
+import { StatStrip, type StatItem } from "@/components/ui/StatStrip";
+import { DateRangeFilter } from "@/components/ui/DateRangeFilter";
+import { ExportMenu } from "@/components/ui/ExportMenu";
+import { ActionMenu, type ActionMenuItem } from "@/components/ui/ActionMenu";
 import { Button, IconButton } from "@/components/ui/Button";
+import { Callout } from "@/components/ui/Callout";
+import { Disclosure } from "@/components/ui/Disclosure";
+import { DescriptionList } from "@/components/ui/DescriptionList";
+import { Badge } from "@/components/ui/Badge";
+import { formatDateText } from "@/components/ui/Money";
+import { useDateRangeParam } from "@/lib/use-date-range-param";
+import { formatRangeLabel, rangeDayCount, type DatePresetKey } from "@/lib/date-presets";
+import { LEDGER_PERIODS as SHARED_LEDGER_PERIODS } from "@/lib/ledger-periods";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
-import { downloadCsv } from "@/lib/csv-export";
-import { turkeyDateKey } from "@/lib/tz";
-import { METHOD_LABELS, methodLabel, money, shortDate, todayKey } from "@/components/muhasebe/muhasebe-utils";
-import { ExportMenu } from "@/components/muhasebe/ExportMenu";
+import { FINANCE_TOOLBAR_CLASS, METHOD_LABELS, doctorLabel, methodLabel, money, shortDate } from "@/components/muhasebe/muhasebe-utils";
+import { useLoadWhenActive } from "@/components/muhasebe/finance-hooks";
 import type { EditTarget, LedgerExpense, LedgerPayment } from "@/components/muhasebe/EditEntryModal";
-import type { EntryKind } from "@/components/muhasebe/EntryModal";
 
 export type LedgerRow = {
   key: string;
@@ -35,6 +42,9 @@ export type LedgerRow = {
   method: string;
   amount: number;
   locked: boolean;
+  /** İptal edilmiş kayıt ("İptal edilenler" görünümü); salt okunur. */
+  voided?: boolean;
+  voidedAt?: string | null;
   payment?: LedgerPayment;
   expense?: LedgerExpense;
 };
@@ -42,77 +52,86 @@ export type LedgerRow = {
 type Totals = { tahsilat: number; tahsilatCount: number; gider: number; giderCount: number; net: number; byMethod: Record<string, { in: number; out: number }> };
 type LedgerResponse = { rows: LedgerRow[]; total: number; page: number; pageCount: number; take: number; truncated: boolean; totals: Totals; sources: { payments: boolean; expenses: boolean } };
 
-export type PeriodKey = "bugun" | "hafta" | "ay" | "gecen-ay" | "3ay" | "yil" | "ozel";
-const PERIOD_LABELS: Record<PeriodKey, string> = {
-  bugun: "Bugün",
-  hafta: "Bu hafta",
-  ay: "Bu ay",
-  "gecen-ay": "Geçen ay",
-  "3ay": "Son 3 ay",
-  yil: "Bu yıl",
-  ozel: "Tarih aralığı seç",
-};
-const TYPE_ITEMS = [
-  { key: "HEPSI" as const, label: "Tümü" },
-  { key: "TAHSILAT" as const, label: "Tahsilat" },
-  { key: "GIDER" as const, label: "Gider" },
+/** "IPTAL": dönemde iptal edilmiş tahsilat ve giderler (salt okunur iz). */
+export type LedgerType = "HEPSI" | "TAHSILAT" | "GIDER" | "IPTAL";
+export const isLedgerType = (value: string | null | undefined): value is LedgerType =>
+  value === "HEPSI" || value === "TAHSILAT" || value === "GIDER" || value === "IPTAL";
+
+/** Dönemler (ortak sözlük, src/lib/ledger-periods.ts). Eski içe aktarmalar için burada da dışa açık. */
+export const LEDGER_PERIODS: readonly DatePresetKey[] = SHARED_LEDGER_PERIODS;
+const TYPE_OPTIONS: { value: LedgerType; label: string }[] = [
+  { value: "HEPSI", label: "Tümü" },
+  { value: "TAHSILAT", label: "Tahsilat" },
+  { value: "GIDER", label: "Gider" },
+  { value: "IPTAL", label: "İptal edilenler" },
 ];
-const SUBTYPE_LABEL: Record<LedgerRow["subtype"], string> = { tahsilat: "Tahsilat", gider: "Gider", hakedis: "Hakediş ödemesi", firma: "Firma ödemesi" };
+// Tek kaynaklı kullanıcı (ör. banko yalnız tahsilatları görür): tür ayrımı yok, yalnız iptal izi.
+const SINGLE_SOURCE_TYPE_OPTIONS = TYPE_OPTIONS.filter((option) => option.value === "HEPSI" || option.value === "IPTAL");
+const TYPE_FILTER_LABEL: Record<Exclude<LedgerType, "HEPSI">, string> = {
+  TAHSILAT: "Yalnız tahsilat",
+  GIDER: "Yalnız gider",
+  IPTAL: "İptal edilenler",
+};
 const PAGE_SIZE = 50;
 
-/** Seçili dönem → gün aralığı (Türkiye takvimi). */
-export function periodRange(period: PeriodKey, custom?: { from: string; to: string }): { from: string; to: string } {
-  const today = todayKey();
-  const day = (offsetDays: number, base = today) => {
-    const date = new Date(`${base}T12:00:00Z`);
-    date.setUTCDate(date.getUTCDate() + offsetDays);
-    return date.toISOString().slice(0, 10);
-  };
-  if (period === "bugun") return { from: today, to: today };
-  if (period === "hafta") {
-    const weekday = new Date(`${today}T12:00:00Z`).getUTCDay() || 7;
-    return { from: day(1 - weekday), to: today };
-  }
-  if (period === "gecen-ay") {
-    const firstThis = `${today.slice(0, 7)}-01`;
-    const lastPrev = day(-1, firstThis);
-    return { from: `${lastPrev.slice(0, 7)}-01`, to: lastPrev };
-  }
-  if (period === "3ay") return { from: day(-89), to: today };
-  if (period === "yil") return { from: `${today.slice(0, 4)}-01-01`, to: today };
-  if (period === "ozel" && custom?.from && custom?.to) return custom;
-  return { from: `${today.slice(0, 7)}-01`, to: today };
+const signedMoney = (value: number) => `${value < 0 ? "−" : value > 0 ? "+" : ""}${money(Math.abs(value))}`;
+
+/** Satırın kalın ilk satırı: kimden alındı / neye ödendi. */
+function rowTitle(row: LedgerRow) {
+  if (row.subtype === "tahsilat") return row.who || "Hasta";
+  if (row.subtype === "gider") return row.item;
+  if (row.subtype === "firma") return row.who || "Firma ödemesi";
+  return row.who || "Hakediş ödemesi";
 }
 
+/**
+ * İkinci satır: tahsilatta doktor ve not, giderde not ve fatura no, firma ve
+ * hakediş ödemesinde türü. Önceden her tahsilatta "Tahsilat", her giderde
+ * "Klinik gideri" sabit metni tekrar ediyordu; fatura no hiç görünmüyordu.
+ */
+function rowDetail(row: LedgerRow) {
+  const faturaNo = row.expense?.faturaNo ? `Fatura ${row.expense.faturaNo}` : "";
+  if (row.subtype === "tahsilat") return [doctorLabel(row.doctor), row.note].filter(Boolean).join(" · ");
+  if (row.subtype === "gider") return [row.note, faturaNo].filter(Boolean).join(" · ");
+  if (row.subtype === "firma") return ["Firma ödemesi", row.note].filter(Boolean).join(" · ");
+  return [row.item, row.note].filter(Boolean).join(" · ");
+}
+
+const timeText = (value: string) => formatDateText(value, "time");
+
 type Props = {
+  /** Sekme ekranda mı (gizli sekme istek atmaz). */
+  active: boolean;
+  refreshKey: number;
+  /** Adres çubuğunda dönem yokken kullanılan dönem. */
+  defaultPeriod: DatePresetKey;
+  tur: LedgerType;
+  onTurChange: (tur: LedgerType) => void;
+  /** Tahsilatlar listede (payments:read). */
+  showPayments: boolean;
+  /** Giderler listede (finance:read); yoksa yalnız tahsilatlar görünür. */
+  showExpenses: boolean;
   canWritePayments: boolean;
   canRefundPayments: boolean;
   canWriteFinance: boolean;
-  refreshKey: number;
-  initial?: { period?: PeriodKey; from?: string; to?: string; tur?: "HEPSI" | "TAHSILAT" | "GIDER" };
+  /** Dışa aktarma (finance:export). */
+  canExport: boolean;
   onEdit: (target: EditTarget) => void;
-  onNew: (kind: EntryKind) => void;
   onChanged: () => void;
 };
 
-function timeText(value: string) {
-  return new Date(value).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Istanbul" });
-}
-
-export function LedgerTab({ canWritePayments, canRefundPayments, canWriteFinance, refreshKey, initial, onEdit, onNew, onChanged }: Props) {
+export function LedgerTab({
+  active, refreshKey, defaultPeriod, tur, onTurChange, showPayments, showExpenses,
+  canWritePayments, canRefundPayments, canWriteFinance, canExport, onEdit, onChanged,
+}: Props) {
   const router = useRouter();
-  const [period, setPeriod] = useState<PeriodKey>(initial?.period || (initial?.from && initial?.to ? "ozel" : "ay"));
-  const [customFrom, setCustomFrom] = useState(initial?.from || `${todayKey().slice(0, 7)}-01`);
-  const [customTo, setCustomTo] = useState(initial?.to || todayKey());
-  const [tur, setTur] = useState<"HEPSI" | "TAHSILAT" | "GIDER">(initial?.tur || "HEPSI");
+  const period = useDateRangeParam(LEDGER_PERIODS, defaultPeriod);
   const [yontem, setYontem] = useState("HEPSI");
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [page, setPage] = useState(1);
   const [data, setData] = useState<LedgerResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [filtersOpen, setFiltersOpen] = useState(false);
   const sequenceRef = useRef(0);
 
   useEffect(() => {
@@ -120,42 +139,50 @@ export function LedgerTab({ canWritePayments, canRefundPayments, canWriteFinance
     return () => window.clearTimeout(timer);
   }, [search]);
 
-  const range = useMemo(() => periodRange(period, { from: customFrom, to: customTo }), [period, customFrom, customTo]);
-  const rangeInvalid = period === "ozel" && (!customFrom || !customTo || customFrom > customTo);
-
-  const buildParams = useCallback((extra: Record<string, string> = {}) => {
-    const params = new URLSearchParams({ from: range.from, to: range.to, tur, yontem, ...extra });
+  const range = period.range;
+  // Tür, giderleri göremeyen kullanıcıda "Tümü" ya da "İptal edilenler" (listede zaten yalnız tahsilat var).
+  const effectiveTur: LedgerType = showExpenses || tur === "IPTAL" ? tur : "HEPSI";
+  const cancelledView = effectiveTur === "IPTAL";
+  const query = useMemo(() => {
+    if (!range || period.error) return null;
+    const params = new URLSearchParams({ from: range.from, to: range.to, tur: effectiveTur, yontem });
     if (debouncedSearch) params.set("q", debouncedSearch);
-    return params;
-  }, [debouncedSearch, range.from, range.to, tur, yontem]);
+    return params.toString();
+  }, [debouncedSearch, effectiveTur, period.error, range, yontem]);
+
+  // Sayfa numarası süzgece bağlı: süzgeç değişince ek istek atmadan 1. sayfaya döner.
+  const [pageState, setPageState] = useState<{ query: string | null; page: number }>({ query: null, page: 1 });
+  const page = pageState.query === query ? pageState.page : 1;
+  const setPage = (next: number) => setPageState({ query, page: next });
 
   const load = useCallback(async () => {
-    if (rangeInvalid) return;
+    if (!query) return;
     const sequence = ++sequenceRef.current;
     setLoading(true);
-    setError("");
     try {
-      const response = await fetch(`/api/muhasebe/defter?${buildParams({ page: String(page), take: String(PAGE_SIZE) }).toString()}`, { cache: "no-store" });
+      const response = await fetch(`/api/muhasebe/defter?${query}&page=${page}&take=${PAGE_SIZE}`, { cache: "no-store" });
       const body = await response.json().catch(() => null);
       if (sequence !== sequenceRef.current) return;
       if (!response.ok || !Array.isArray(body?.rows)) throw new Error(body?.message || "Gelir ve gider listesi yüklenemedi.");
       setData(body as LedgerResponse);
-      if (body?.page && body.page !== page) setPage(body.page);
+      setError("");
+      if (body.page && body.page !== page) setPageState({ query, page: body.page });
     } catch (loadError) {
       if (sequence !== sequenceRef.current) return;
       setError(loadError instanceof Error ? loadError.message : "Gelir ve gider listesi yüklenemedi.");
     } finally {
       if (sequence === sequenceRef.current) setLoading(false);
     }
-  }, [buildParams, page, rangeInvalid]);
+  }, [page, query]);
 
-  useEffect(() => { void load(); }, [load, refreshKey]);
-  useEffect(() => { setPage(1); }, [range.from, range.to, tur, yontem, debouncedSearch]);
+  useLoadWhenActive(active, `${query}|${page}|${refreshKey}`, () => void load());
 
-  const canEdit = (row: LedgerRow) => !row.locked && (row.kind === "TAHSILAT" ? canWritePayments : canWriteFinance);
-  const canVoid = (row: LedgerRow) => !row.locked && (row.kind === "TAHSILAT" ? canRefundPayments : canWriteFinance);
+  // İptal edilmiş kayıt salt okunur iz: düzenlenmez, yeniden iptal edilmez.
+  const canEdit = (row: LedgerRow) => !row.voided && !row.locked && (row.kind === "TAHSILAT" ? canWritePayments : canWriteFinance);
+  const canVoid = (row: LedgerRow) => !row.voided && !row.locked && (row.kind === "TAHSILAT" ? canRefundPayments : canWriteFinance);
 
   const openRow = (row: LedgerRow) => {
+    if (row.voided) return;
     if (row.locked) {
       if (row.whoId) router.push(`/firma-detay?id=${encodeURIComponent(row.whoId)}`);
       return;
@@ -173,108 +200,126 @@ export function LedgerTab({ canWritePayments, canRefundPayments, canWriteFinance
       : row.subtype === "hakedis"
         ? `${row.who || "Doktor"} — ${row.item}, ${money(row.amount)} iptal edilir; o ayın kalan hakedişi geri açılır.`
         : `${row.item} — ${money(row.amount)} gideri iptal edilir ve raporlardan çıkar.`;
-    if (!(await confirmDialog({ title, message, danger: true, confirmText: isPayment ? "Tahsilatı iptal et" : "Gideri iptal et", cancelText: "Vazgeç" }))) return;
+    if (!(await confirmDialog({ title, message, danger: true, confirmText: isPayment ? "Tahsilatı iptal et" : row.subtype === "hakedis" ? "Ödemeyi iptal et" : "Gideri iptal et", cancelText: "Vazgeç" }))) return;
     const response = await fetch(isPayment ? `/api/payments/${row.id}` : `/api/gider/${row.id}`, { method: "DELETE" }).catch(() => null);
     if (response?.ok) {
-      showToastSafe({ message: isPayment ? "Tahsilat iptal edildi." : "Gider iptal edildi.", type: "success" });
+      showToastSafe({ message: isPayment ? "Tahsilat iptal edildi." : row.subtype === "hakedis" ? "Hakediş ödemesi iptal edildi." : "Gider iptal edildi.", type: "success" });
       onChanged();
-      void load();
       return;
     }
     const body = await response?.json().catch(() => null);
     showToastSafe({ title: "İptal edilemedi", message: body?.message || body?.error || "Bağlantınızı kontrol edip tekrar deneyin.", type: "error", duration: 6000 });
   };
 
-  const fetchAllRows = async (): Promise<LedgerRow[] | null> => {
-    const response = await fetch(`/api/muhasebe/defter?${buildParams({ all: "1" }).toString()}`, { cache: "no-store" }).catch(() => null);
+  // ── Dışa aktarma: seçili dönem ve süzgeçlerin TÜM kayıtları (sunucu finance:export ister).
+  const fetchAllRows = async (): Promise<LedgerRow[]> => {
+    if (!query) throw new Error("Önce geçerli bir dönem seçin.");
+    const response = await fetch(`/api/muhasebe/defter?${query}&all=1`, { cache: "no-store" }).catch(() => null);
     const body = await response?.json().catch(() => null);
-    if (!response?.ok || !Array.isArray(body?.rows)) {
-      showToastSafe({ message: body?.message || "Dışa aktarım için liste alınamadı.", type: "error" });
-      return null;
-    }
+    if (!response?.ok || !Array.isArray(body?.rows)) throw new Error(body?.message || "Dışa aktarım için liste alınamadı.");
     return body.rows as LedgerRow[];
   };
 
   const exportRows = (rows: LedgerRow[]) => rows.map((row) => ({
     Tarih: `${shortDate(row.date)}${row.hasTime ? ` ${timeText(row.date)}` : ""}`,
     Kim: row.who || "",
-    Kalem: row.item,
+    Kalem: row.voided ? `İptal edildi — ${row.item}` : row.item,
     Doktor: row.doctor || "",
     Açıklama: row.note || "",
     Yöntem: methodLabel(row.method),
+    "Fatura no": row.expense?.faturaNo || "",
     Tutar: `${row.kind === "TAHSILAT" ? "" : "-"}${row.amount.toFixed(2).replace(".", ",")}`,
   }));
+  const fileBase = range ? `gelir-gider-${range.from}-${range.to}` : "gelir-gider";
 
   const exportExcel = async () => {
     const rows = await fetchAllRows();
-    if (!rows) return;
-    downloadCsv(`gelir-gider-${range.from}-${range.to}.csv`, exportRows(rows));
+    const { downloadCsv } = await import("@/lib/csv-export");
+    downloadCsv(`${fileBase}.csv`, exportRows(rows));
   };
 
   const exportPdf = async () => {
     const rows = await fetchAllRows();
-    if (!rows) return;
-    const { addPdfSection, addPdfTitle, createPdfDoc } = await import("@/lib/pdf-export");
+    const { addPdfSection, addPdfTitle, createPdfDoc, preparePdfFonts } = await import("@/lib/pdf-export");
+    // Türkçe yazı tipi oturumun ilk PDF'inde de yüklü olsun (yoksa harfler dönüştürülür).
+    await preparePdfFonts();
     const doc = createPdfDoc("l");
     const totals = data?.totals;
-    addPdfTitle(doc, "Gelir ve gider", `${shortDate(range.from)} – ${shortDate(range.to)} · Tahsilat ${money(totals?.tahsilat)} · Gider ${money(totals?.gider)} · Fark ${money(totals?.net)}`);
-    addPdfSection(doc, 28, "Hareketler", ["Tarih", "Kim", "Kalem", "Doktor", "Açıklama", "Yöntem", "Tutar"],
-      exportRows(rows).map((row) => [row.Tarih, row.Kim, row.Kalem, row.Doktor, row.Açıklama, row.Yöntem, row.Tutar]));
-    doc.save(`gelir-gider-${range.from}-${range.to}.pdf`);
+    addPdfTitle(
+      doc,
+      cancelledView ? "İptal edilen kayıtlar" : showExpenses ? "Gelir ve gider" : "Tahsilatlar",
+      cancelledView
+        ? `${formatRangeLabel(range)} · İptal edilen kayıtlar toplamlara girmez`
+        : `${formatRangeLabel(range)} · Tahsilat ${money(totals?.tahsilat)} · Gider ${money(totals?.gider)} · Fark ${money(totals?.net)}`,
+    );
+    addPdfSection(doc, 28, "Hareketler", ["Tarih", "Kim", "Kalem", "Doktor", "Açıklama", "Yöntem", "Fatura no", "Tutar"],
+      exportRows(rows).map((row) => [row.Tarih, row.Kim, row.Kalem, row.Doktor, row.Açıklama, row.Yöntem, row["Fatura no"], row.Tutar]));
+    doc.save(`${fileBase}.pdf`);
   };
 
+  // ── Görünüm
+  const singleDay = range ? rangeDayCount(range) === 1 : false;
+  // Özel aralık hatalıyken (hata seçicinin altında) önceki dönemin toplamları ve satırları
+  // ekranda kalmaz: kullanıcı yeni dönemin rakamı sanmasın (canlı H12 ile aynı sınıf).
+  const invalidPeriod = Boolean(period.error);
+
+  // İptal edilmiş kayıt: üstü çizili ve soluk (toplamlara girmez).
   const amountCell = (row: LedgerRow) => (
-    <span className={`whitespace-nowrap font-bold tabular-nums ${row.kind === "TAHSILAT" ? "text-emerald-700" : "text-red-700"}`}>
+    <span className={`whitespace-nowrap font-bold tabular-nums ${row.voided ? "text-slate-400 line-through" : row.kind === "TAHSILAT" ? "text-emerald-700" : "text-red-700"}`}>
       {row.kind === "TAHSILAT" ? "+" : "−"}{money(row.amount)}
     </span>
   );
+  const voidedBadge = (row: LedgerRow) => (row.voided ? (
+    <Badge tone="neutral" title={row.voidedAt ? `${shortDate(row.voidedAt)} tarihinde iptal edildi` : undefined}>İptal edildi</Badge>
+  ) : null);
 
-  const secondLine = (row: LedgerRow) => [row.doctor ? `Dr. ${row.doctor}` : "", row.note].filter(Boolean).join(" · ");
-
-  const rowActions = (row: LedgerRow) => (
-    <div className="flex justify-end gap-1">
-      {row.locked ? (
-        row.whoId ? <IconButton icon={ExternalLink} title="Firma ekstresinde aç" href={`/firma-detay?id=${encodeURIComponent(row.whoId)}`} size="sm" /> : null
-      ) : (
-        <>
-          {canEdit(row) && <IconButton icon={Pencil} title="Düzenle" size="sm" onClick={() => openRow(row)} />}
-          {canVoid(row) && <IconButton icon={Ban} title={row.kind === "TAHSILAT" ? "Tahsilatı iptal et" : "Gideri iptal et"} tone="danger" size="sm" onClick={() => void voidRow(row)} />}
-        </>
-      )}
-    </div>
-  );
+  const rowActions = (row: LedgerRow) => {
+    if (row.voided) return null;
+    if (row.locked) {
+      return row.whoId
+        ? <div className="flex justify-end"><IconButton icon={ExternalLink} title="Firma ekstresinde aç (firma ödemeleri orada yönetilir)" href={`/firma-detay?id=${encodeURIComponent(row.whoId)}`} size="sm" /></div>
+        : null;
+    }
+    const items: ActionMenuItem[] = [];
+    if (canEdit(row)) items.push({ key: "edit", label: "Düzenle", icon: Pencil, onSelect: () => openRow(row) });
+    if (canVoid(row)) {
+      items.push({
+        key: "void",
+        label: row.kind === "TAHSILAT" ? "Tahsilatı iptal et" : row.subtype === "hakedis" ? "Ödemeyi iptal et" : "Gideri iptal et",
+        icon: Ban,
+        danger: true,
+        separatorBefore: items.length > 0,
+        onSelect: () => void voidRow(row),
+      });
+    }
+    if (items.length === 0) return null;
+    return <div className="flex justify-end"><ActionMenu items={items} label={`${rowTitle(row)} için işlemler`} /></div>;
+  };
 
   const columns: ListTableColumn<LedgerRow>[] = [
     {
       key: "tarih",
-      header: "Tarih",
+      header: singleDay ? "Saat" : "Tarih",
       cellClassName: "whitespace-nowrap",
-      render: (row) => (
+      render: (row) => (singleDay ? (
+        row.hasTime ? <span className="text-sm tabular-nums text-slate-700">{timeText(row.date)}</span> : <EmptyValue />
+      ) : (
         <div>
-          <p className="text-sm text-slate-700">{shortDate(row.date)}</p>
-          {row.hasTime && <p className="text-xs text-slate-400">{timeText(row.date)}</p>}
+          <p className="text-sm tabular-nums text-slate-700">{shortDate(row.date)}</p>
+          {row.hasTime && <p className="text-xs tabular-nums text-slate-400">{timeText(row.date)}</p>}
         </div>
-      ),
+      )),
     },
     {
-      key: "kim",
-      header: "Kim",
-      render: (row) => row.who
-        ? (row.subtype === "firma" && row.whoId
-          ? <Link href={`/firma-detay?id=${encodeURIComponent(row.whoId)}`} className="font-semibold text-slate-800 hover:text-primary hover:underline">{row.who}</Link>
-          : <span className="font-semibold text-slate-800">{row.who}</span>)
-        : <span className="text-sm text-slate-500">Klinik gideri</span>,
-    },
-    {
-      key: "kalem",
-      header: "Kalem",
+      key: "kayit",
+      header: "Kayıt",
       render: (row) => (
-        <div className="min-w-0 max-w-[340px]">
-          <p className="truncate text-sm text-slate-800">
-            {row.item}
-            {row.locked && <Badge tone="neutral" className="ml-1.5 align-middle" title="Firma ekranından yönetilir">Firmadan</Badge>}
+        <div className="min-w-0 max-w-[420px]">
+          <p className="flex min-w-0 items-center gap-1.5 font-semibold text-slate-800">
+            <span className="truncate">{rowTitle(row)}</span>
+            {voidedBadge(row)}
           </p>
-          {secondLine(row) && <p className="truncate text-xs text-slate-500" title={secondLine(row)}>{secondLine(row)}</p>}
+          {rowDetail(row) && <p className="truncate text-xs text-slate-500" title={rowDetail(row)}>{rowDetail(row)}</p>}
         </div>
       ),
     },
@@ -283,137 +328,149 @@ export function LedgerTab({ canWritePayments, canRefundPayments, canWriteFinance
     { key: "islem", header: "", align: "right", render: rowActions },
   ];
 
+  // ── Özet: yalnız karar verdiren sayılar; değer gelmeden "₺0" yazılmaz.
+  // "İptal edilenler" görünümünde özet yok (iptal edilen kayıt toplamlara girmez).
   const totals = data?.totals;
-  const methodSummary = totals
-    ? Object.entries(totals.byMethod)
-        .filter(([, value]) => value.in > 0 || value.out > 0)
-        .map(([key, value]) => `${METHOD_LABELS[key] || key}: ${value.in > 0 ? `+${money(value.in)}` : ""}${value.in > 0 && value.out > 0 ? " / " : ""}${value.out > 0 ? `−${money(value.out)}` : ""}`)
+  const showIn = showPayments && effectiveTur !== "GIDER";
+  const showOut = showExpenses && effectiveTur !== "TAHSILAT";
+  const cash = totals?.byMethod?.NAKIT || { in: 0, out: 0 };
+  const stats: StatItem[] = cancelledView ? [] : [
+    // Sıfır tutar işaretsiz ve renksiz ("−₺0,00" kırmızı görünmesin).
+    ...(showIn ? [{ key: "in", label: "Tahsilat", value: signedMoney(totals?.tahsilat ?? 0), tone: (totals?.tahsilat ?? 0) > 0 ? "success" as const : "neutral" as const, hint: totals ? `${totals.tahsilatCount} kayıt` : undefined }] : []),
+    ...(showOut ? [{ key: "out", label: "Gider", value: signedMoney(-(totals?.gider ?? 0)), tone: (totals?.gider ?? 0) > 0 ? "critical" as const : "neutral" as const, hint: totals ? `${totals.giderCount} kayıt` : undefined }] : []),
+    ...(showIn && showOut ? [{ key: "net", label: "Fark", value: signedMoney(totals?.net ?? 0), tone: (totals?.net ?? 0) < 0 ? "critical" as const : "neutral" as const }] : []),
+    ...(yontem === "HEPSI" ? [{
+      key: "cash",
+      // Gideri görmeyen (banko) için yalnız kasaya giren nakit; diğerleri için giren − çıkan.
+      label: showOut ? "Nakit değişimi" : "Nakit tahsilat",
+      value: showOut ? signedMoney(cash.in - cash.out) : money(cash.in),
+      // Kısa yazım: telefonda kutuya sığsın; çıkış yoksa değeri tekrar etmez.
+      hint: showOut && cash.out > 0 ? `+${money(cash.in)} · −${money(cash.out)}` : undefined,
+    }] : []),
+  ];
+  const methodEntries = totals && !cancelledView
+    ? Object.entries(totals.byMethod).filter(([, value]) => value.in > 0 || value.out > 0)
     : [];
-  const cash = totals?.byMethod?.NAKIT;
 
   const activeFilters: ActiveFilter[] = [
-    ...(period !== "ay" ? [{ key: "period", label: period === "ozel" ? `${shortDate(range.from)} – ${shortDate(range.to)}` : PERIOD_LABELS[period], onRemove: () => setPeriod("ay") }] : []),
-    ...(tur !== "HEPSI" ? [{ key: "tur", label: tur === "TAHSILAT" ? "Yalnız tahsilat" : "Yalnız gider", onRemove: () => setTur("HEPSI") }] : []),
+    ...(period.activeFilter ? [period.activeFilter] : []),
+    ...(effectiveTur !== "HEPSI" ? [{ key: "tur", label: TYPE_FILTER_LABEL[effectiveTur], onRemove: () => onTurChange("HEPSI") }] : []),
     ...(yontem !== "HEPSI" ? [{ key: "yontem", label: methodLabel(yontem), onRemove: () => setYontem("HEPSI") }] : []),
     ...(debouncedSearch ? [{ key: "q", label: `"${debouncedSearch}"`, onRemove: () => setSearch("") }] : []),
   ];
   const filterCount = activeFilters.filter((filter) => filter.key !== "q").length;
-
-  const summary = (
-    <div className="border-b border-slate-100 px-4 py-3">
-      {totals ? (
-        <>
-          <dl className="flex flex-wrap items-baseline gap-x-5 gap-y-1 text-sm">
-            <div className="flex items-baseline gap-1.5">
-              <dt className="text-slate-500">Tahsilat</dt>
-              <dd className="font-bold tabular-nums text-emerald-700">+{money(totals.tahsilat)}</dd>
-              <dd className="text-xs text-slate-400">({totals.tahsilatCount})</dd>
-            </div>
-            <div className="flex items-baseline gap-1.5">
-              <dt className="text-slate-500">Gider</dt>
-              <dd className="font-bold tabular-nums text-red-700">−{money(totals.gider)}</dd>
-              <dd className="text-xs text-slate-400">({totals.giderCount})</dd>
-            </div>
-            <div className="flex items-baseline gap-1.5">
-              <dt className="text-slate-500">Fark</dt>
-              <dd className={`font-extrabold tabular-nums ${totals.net >= 0 ? "text-slate-900" : "text-red-700"}`}>{totals.net >= 0 ? "" : "−"}{money(Math.abs(totals.net))}</dd>
-            </div>
-            {cash && (cash.in > 0 || cash.out > 0) && (
-              <div className="flex items-baseline gap-1.5" title="Nakit tahsilat eksi nakit ödenen gider">
-                <dt className="text-slate-500">Kasadaki nakit değişimi</dt>
-                <dd className="font-bold tabular-nums text-slate-800">{cash.in - cash.out >= 0 ? "+" : "−"}{money(Math.abs(cash.in - cash.out))}</dd>
-              </div>
-            )}
-          </dl>
-          {methodSummary.length > 1 && <p className="mt-1 text-xs text-slate-500">{methodSummary.join(" · ")}</p>}
-          {data?.truncated && <p className="mt-1 text-xs font-semibold text-amber-700">Bu dönemde çok fazla kayıt var; listenin tamamı için dönemi daraltın.</p>}
-          {data && !data.sources.expenses && <p className="mt-1 text-xs text-slate-500">Giderleri görme yetkiniz yok; yalnız tahsilatlar listelenir.</p>}
-        </>
-      ) : (
-        <p className="text-sm text-slate-400">{loading ? "Toplamlar hesaplanıyor…" : " "}</p>
-      )}
-    </div>
-  );
+  const narrowed = Boolean(debouncedSearch) || effectiveTur !== "HEPSI" || yontem !== "HEPSI";
+  // "İptal edilenler" tek başına süzgeç sayılmaz: boşsa "süzgeci temizle" değil, başka dönem önerilir.
+  const plainCancelledView = cancelledView && !debouncedSearch && yontem === "HEPSI";
+  const clearFilters = () => { onTurChange("HEPSI"); setYontem("HEPSI"); setSearch(""); };
 
   return (
     <div className="space-y-3">
       <Toolbar
-        actions={(
-          <ExportMenu onExcel={exportExcel} onPdf={exportPdf} disabled={!data || data.total === 0} />
+        className={FINANCE_TOOLBAR_CLASS}
+        filterCount={filterCount}
+        filters={(
+          <>
+            {/* Özel aralıkta tarih alanları açılınca seçici ezilmesin: sığmazsa alt satıra iner. */}
+            <div className="min-w-0 sm:shrink-0">
+              <DateRangeFilter {...period.filterProps} size="sm" />
+            </div>
+            <ChoiceCards
+              label="Kayıt türü"
+              labelHidden
+              variant="pills"
+              value={effectiveTur}
+              onChange={onTurChange}
+              options={showExpenses && showPayments ? TYPE_OPTIONS : SINGLE_SOURCE_TYPE_OPTIONS}
+            />
+            <Select aria-label="Ödeme yöntemi" size="sm" value={yontem} onChange={(event) => setYontem(event.target.value)} className="sm:w-auto">
+              <option value="HEPSI">Tüm yöntemler</option>
+              {Object.entries(METHOD_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+            </Select>
+          </>
         )}
+        actions={canExport ? (
+          <ExportMenu
+            disabled={invalidPeriod || !data || data.total === 0}
+            disabledReason={invalidPeriod ? "Önce geçerli bir tarih aralığı seçin" : "Dışa aktarılacak kayıt yok"}
+            onExcel={exportExcel}
+            onPdf={exportPdf}
+          />
+        ) : undefined}
       >
         <SearchInput
           value={search}
           onChange={setSearch}
-          placeholder="Hasta, firma, gider türü veya açıklama ara"
+          placeholder={showExpenses ? "Hasta, firma, gider türü veya fatura no ara" : "Hasta, doktor veya açıklama ara"}
           wrapperClassName="flex-1 min-w-[220px]"
         />
-        <Button
-          variant="secondary"
-          size="sm"
-          className="sm:hidden"
-          aria-expanded={filtersOpen}
-          onClick={() => setFiltersOpen((value) => !value)}
-        >
-          {filtersOpen ? "Filtreleri gizle" : `Filtrele${filterCount ? ` (${filterCount})` : ""}`}
-        </Button>
-        <div className={`${filtersOpen ? "flex" : "hidden"} flex-col gap-2 sm:flex sm:flex-row sm:flex-wrap sm:items-center`}>
-          <Select aria-label="Dönem" size="sm" value={period} onChange={(event) => setPeriod(event.target.value as PeriodKey)} className="sm:w-auto">
-            {(Object.keys(PERIOD_LABELS) as PeriodKey[]).map((key) => <option key={key} value={key}>{PERIOD_LABELS[key]}</option>)}
-          </Select>
-          {period === "ozel" && (
-            <div className="flex items-center gap-2">
-              <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-600">
-                Başlangıç
-                <Input type="date" size="sm" value={customFrom} max={customTo || undefined} onChange={(event) => setCustomFrom(event.target.value)} className="w-auto" />
-              </label>
-              <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-600">
-                Bitiş
-                <Input type="date" size="sm" value={customTo} min={customFrom || undefined} max={turkeyDateKey()} onChange={(event) => setCustomTo(event.target.value)} className="w-auto" />
-              </label>
-            </div>
-          )}
-          <Tabs ariaLabel="Kayıt türü" size="sm" items={TYPE_ITEMS} value={tur} onChange={setTur} />
-          <Select aria-label="Ödeme yöntemi" size="sm" value={yontem} onChange={(event) => setYontem(event.target.value)} className="sm:w-auto">
-            <option value="HEPSI">Tüm yöntemler</option>
-            {Object.entries(METHOD_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-          </Select>
-        </div>
       </Toolbar>
-      <ActiveFilters
-        filters={activeFilters}
-        onClearAll={() => { setPeriod("ay"); setTur("HEPSI"); setYontem("HEPSI"); setSearch(""); }}
-      />
-      {rangeInvalid && <p className="text-sm font-semibold text-red-600">Başlangıç tarihi bitiş tarihinden sonra olamaz.</p>}
+      <ActiveFilters filters={activeFilters} onClearAll={() => { period.reset(); clearFilters(); }} />
+
+      {/* Telefonda dönem "Filtreler" içinde gizli: tutarların hangi döneme ait olduğu burada yazar. */}
+      {/* Özel aralıkta aynı tarih zaten etkin süzgeç olarak yazar; tekrar edilmez. */}
+      {!invalidPeriod && range && period.filterProps.value.preset !== "ozel" && <p className="px-1 text-xs text-slate-500 sm:hidden">Dönem: {formatRangeLabel(range)}</p>}
+      {/* İlk yükleme hata verdiyse özet hiç çizilmez (hata listede); bilinmeyen değer "0" görünmez. */}
+      {!invalidPeriod && stats.length > 0 && (totals || !error || loading) && <StatStrip items={stats} loading={!totals} aria-label="Dönem özeti" />}
+      {!invalidPeriod && cancelledView && (
+        <p className="px-1 text-xs text-slate-500">İptal edilen tahsilat ve giderler iz olarak listelenir; toplamlara ve raporlara girmez.</p>
+      )}
+      {!invalidPeriod && data?.truncated && (
+        <Callout tone="warning" compact>Bu dönemde çok fazla kayıt var; listenin tamamı için dönemi daraltın.</Callout>
+      )}
+      {!invalidPeriod && methodEntries.length > 1 && (
+        <Disclosure title="Yönteme göre dağılım" summary={`${methodEntries.length} yöntem`} className="bg-white">
+          <DescriptionList
+            layout="rows"
+            items={methodEntries.map(([key, value]) => ({
+              key,
+              label: methodLabel(key),
+              value: (
+                <span className="tabular-nums">
+                  {value.in > 0 && <span className="text-emerald-700">+{money(value.in)}</span>}
+                  {value.in > 0 && value.out > 0 && <span className="text-slate-400"> · </span>}
+                  {value.out > 0 && <span className="text-red-700">−{money(value.out)}</span>}
+                </span>
+              ),
+            }))}
+          />
+        </Disclosure>
+      )}
 
       <ListTable
         columns={columns}
-        rows={data?.rows || []}
+        rows={invalidPeriod ? [] : data?.rows || []}
         rowKey={(row) => row.key}
-        loading={loading}
-        error={error || null}
+        // İlk istek daha başlamadan "kayıt yok" yanıp sönmesin.
+        loading={!invalidPeriod && (loading || (!data && !error && Boolean(query)))}
+        error={invalidPeriod || data ? null : error || null}
+        staleError={!invalidPeriod && data ? error || null : null}
         onRetry={() => void load()}
-        header={summary}
-        emptyText={debouncedSearch || tur !== "HEPSI" || yontem !== "HEPSI" ? "Aramaya uyan kayıt yok" : "Bu dönemde kayıt yok"}
-        emptyDescription={debouncedSearch || tur !== "HEPSI" || yontem !== "HEPSI" ? "Filtreleri temizleyip tekrar deneyin." : "Dönemi değiştirin ya da yeni bir tahsilat veya gider ekleyin."}
-        emptyAction={canWritePayments && !debouncedSearch ? <Button size="sm" variant="secondary" icon={Plus} onClick={() => onNew("gelir")}>Tahsilat al</Button> : undefined}
-        getRowAriaLabel={(row) => `${SUBTYPE_LABEL[row.subtype]}: ${row.who || row.item}, ${money(row.amount)}`}
+        onRowClick={openRow}
+        isRowClickable={(row) => canEdit(row) || Boolean(!row.voided && row.locked && row.whoId)}
+        getRowAriaLabel={(row) => `${rowTitle(row)}, ${money(row.amount)} — ${row.locked ? "firma ekstresinde aç" : "düzenle"}`}
+        emptyText={invalidPeriod ? "Tarih aralığını düzeltin" : plainCancelledView ? "Bu dönemde iptal edilen kayıt yok" : narrowed ? "Filtreye uyan kayıt yok" : "Bu dönemde kayıt yok"}
+        emptyDescription={invalidPeriod ? "Liste geçerli bir başlangıç ve bitiş tarihiyle yüklenir." : narrowed && !plainCancelledView ? "Filtreleri temizleyip tekrar deneyin." : "Başka bir dönem seçin."}
+        emptyAction={!invalidPeriod && narrowed && !plainCancelledView ? <Button size="sm" variant="secondary" onClick={clearFilters}>Filtreleri temizle</Button> : undefined}
         mobileCard={(row) => (
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <p className="truncate font-semibold text-slate-900">{row.who || row.item}</p>
-              <p className="truncate text-xs text-slate-500">
-                {shortDate(row.date)}{row.hasTime ? ` ${timeText(row.date)}` : ""} · {row.who ? row.item : "Klinik gideri"} · {methodLabel(row.method)}
+              <p className="flex min-w-0 items-center gap-1.5 font-semibold text-slate-900">
+                <span className="truncate">{rowTitle(row)}</span>
+                {voidedBadge(row)}
               </p>
-              {secondLine(row) && <p className="truncate text-xs text-slate-400">{secondLine(row)}</p>}
+              <p className="truncate text-xs text-slate-500">
+                {[singleDay ? (row.hasTime ? timeText(row.date) : "") : `${shortDate(row.date)}${row.hasTime ? ` ${timeText(row.date)}` : ""}`, methodLabel(row.method)].filter(Boolean).join(" · ")}
+              </p>
+              {rowDetail(row) && <p className="truncate text-xs text-slate-400">{rowDetail(row)}</p>}
             </div>
-            <div className="flex shrink-0 flex-col items-end gap-1.5">
+            <div className="flex shrink-0 flex-col items-end gap-1">
               {amountCell(row)}
               {rowActions(row)}
             </div>
           </div>
         )}
-        pager={data && data.total > PAGE_SIZE ? {
+        pager={!invalidPeriod && data && data.total > PAGE_SIZE ? {
           page: data.page,
           pageCount: data.pageCount,
           pageSize: PAGE_SIZE,

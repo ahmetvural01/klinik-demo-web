@@ -90,7 +90,10 @@ export async function GET() {
 
   const visibleTemplates = merged.map((template) => ({
     ...template,
-    content: canReadSms ? template.content : (template.whatsappContent || ""),
+    // Tek metin kuralı (src/lib/sms-templates.ts renderCommunicationTemplate):
+    // WhatsApp'tan da bu metin gider. Yalnız WhatsApp yetkisi olan roller
+    // önceden eski, gönderilmeyen WhatsApp metnini görüyordu.
+    content: template.content,
     defaultContent: canReadSms ? template.defaultContent : undefined,
     whatsappContent: canReadWhatsapp ? template.whatsappContent : null,
     whatsappTemplateName: canReadWhatsapp ? template.whatsappTemplateName : null,

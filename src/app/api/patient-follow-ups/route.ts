@@ -5,7 +5,7 @@ import { requireAuth, writeAudit } from "@/lib/api";
 import { requireActiveBranch } from "@/lib/branch-context";
 import { patientFollowUpCreateSchema } from "@/lib/validators";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
-import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
+import { shouldHidePatientPhoneForUser } from "@/lib/patient-visibility-server";
 import { FOLLOW_UP_INCLUDE, maskFollowUpPhone } from "./follow-up-include";
 
 export async function GET(request: NextRequest) {
@@ -80,7 +80,7 @@ export async function GET(request: NextRequest) {
       take: 500,
     });
 
-    const hidePhone = await shouldHidePatientPhoneForRole(auth.user.role);
+    const hidePhone = await shouldHidePatientPhoneForUser(auth.user);
     const result = items.map((item) => maskFollowUpPhone(item, hidePhone));
 
     return NextResponse.json(result);
@@ -189,6 +189,6 @@ export async function POST(request: NextRequest) {
 
   await writeAudit(auth.user.id, "PATIENT_FOLLOW_UP_CREATE", `${patient.fullName} için takip oluşturuldu`);
   // Liste (GET) gibi oluşturma yanıtı da telefon görme yetkisine uyar.
-  const hidePhone = await shouldHidePatientPhoneForRole(auth.user.role);
+  const hidePhone = await shouldHidePatientPhoneForUser(auth.user);
   return NextResponse.json(maskFollowUpPhone(followUp, hidePhone), { status: 201 });
 }

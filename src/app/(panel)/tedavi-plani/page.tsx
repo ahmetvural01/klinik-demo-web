@@ -1,528 +1,295 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Plus } from "lucide-react";
-import { cachedGet } from "@/lib/client-cache";
-import { confirmDialog } from "@/lib/confirm-client";
-import { Button } from "@/components/ui/Button";
-import { PageHeader } from "@/components/ui/PageHeader";
-import { Badge, type BadgeTone } from "@/components/ui/Badge";
-import { Modal } from "@/components/ui/Modal";
-import { SearchSelect } from "@/components/ui/SearchSelect";
-import { showToastSafe } from "@/lib/toast-client";
-import { EmptyState } from "@/components/ui/EmptyState";
-import { createSceneIllustration } from "@/components/ui/SceneIllustration";
 import { usePermissions } from "@/components/auth/PermissionProvider";
-import { LoadErrorState } from "@/components/ui/LoadErrorState";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Tabs, useTabParam } from "@/components/ui/Tabs";
+import { Toolbar, ActiveFilters, type ActiveFilter } from "@/components/ui/Toolbar";
+import { SearchInput } from "@/components/ui/SearchInput";
+import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import { Button } from "@/components/ui/Button";
+import { Badge } from "@/components/ui/Badge";
+import { Money, DateText } from "@/components/ui/Money";
+import { ProgressBar } from "@/components/ui/ProgressBar";
+import { createSceneIllustration } from "@/components/ui/SceneIllustration";
+import { DoctorSelect } from "@/components/staff/DoctorSelect";
+import type { PickedPatient } from "@/components/patient/PatientPicker";
+import { NewPlanModal } from "./_components/NewPlanModal";
+import { PlanDetailModal } from "./_components/PlanDetailModal";
+import { PLAN_STATUS, apiMessage, planProgress, type PlanListResponse, type PlanStatus, type TreatmentPlan } from "./_components/plan-shared";
 
 const TedaviEmptyIcon = createSceneIllustration("tedavi");
 
-type PlanStatus = "PLANLANDI" | "DEVAM_EDIYOR" | "TAMAMLANDI" | "IPTAL";
-type StepStatus = "BEKLIYOR" | "YAPILDI" | "TAMAMLANDI" | "IPTAL";
+const TAB_KEYS = ["tumu", "planlandi", "devam", "tamamlandi", "iptal"] as const;
+type TabKey = (typeof TAB_KEYS)[number];
+const TAB_STATUS: Record<TabKey, PlanStatus | ""> = { tumu: "", planlandi: "PLANLANDI", devam: "DEVAM_EDIYOR", tamamlandi: "TAMAMLANDI", iptal: "IPTAL" };
+const PAGE_SIZE = 30;
 
-type Step = {
-  id: string; order: number; treatmentName: string; toothNo?: string;
-  amount: number; status: StepStatus; doneAt?: string; note?: string;
-};
-
-type Plan = {
-  id: string; title: string; status: PlanStatus; totalCost?: number; notes?: string; createdAt: string;
-  patient: { id: string; fullName: string; tcNo: string };
-  doctor:  { id: string; fullName: string };
-  steps:   Step[];
-};
-
-type Patient = { id: string; fullName: string; tcNo: string };
-type Doctor  = { id: string; fullName: string; role: string; profile?: { hideAsDoctor?: boolean | null } | null };
-
-const STATUS_CFG: Record<PlanStatus, { label: string; bg: string; text: string; tone: BadgeTone }> = {
-  PLANLANDI:    { label: "Planlandı",    bg: "bg-primary/10",   text: "text-primary",   tone: "info" },
-  DEVAM_EDIYOR: { label: "Devam Ediyor", bg: "bg-amber-100",  text: "text-amber-700",  tone: "warning" },
-  TAMAMLANDI:   { label: "Tamamlandı",   bg: "bg-emerald-100",text: "text-emerald-700",tone: "success" },
-  IPTAL:        { label: "İptal",        bg: "bg-red-100",    text: "text-red-600",    tone: "critical" },
-};
-
-const STEP_STATUS: Record<StepStatus, { label: string; tone: BadgeTone }> = {
-  BEKLIYOR: { label: "Bekliyor", tone: "neutral" },
-  YAPILDI:  { label: "Yapıldı",  tone: "success" },
-  TAMAMLANDI: { label: "Yapıldı", tone: "success" },
-  IPTAL:    { label: "İptal",    tone: "critical" },
-};
-
-const CURRENCY = new Intl.NumberFormat("tr-TR", { style: "currency", currency: "TRY", minimumFractionDigits: 0 });
-
-const EMPTY_STATUS_COUNTS: Record<PlanStatus, number> = { PLANLANDI: 0, DEVAM_EDIYOR: 0, TAMAMLANDI: 0, IPTAL: 0 };
+/** Adres çubuğundaki hasta/plan/yeni parametrelerini (geri tuşu bozulmadan) günceller. */
+function replaceParams(update: (params: URLSearchParams) => void) {
+  const params = new URLSearchParams(window.location.search);
+  update(params);
+  const query = params.toString();
+  window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
+}
 
 export default function TedaviPlaniPage() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
   const { can } = usePermissions();
-  const [plans,    setPlans]    = useState<Plan[]>([]);
-  const [loading,  setLoading]  = useState(true);
-  const [filter,   setFilter]   = useState<"" | PlanStatus>("");
-  const [doctorFilter, setDoctorFilter] = useState("");
-  const [search,   setSearch]   = useState("");
+  const canWrite = can("treatment:write");
+  const searchParams = useSearchParams();
+  const [tab, setTab] = useTabParam(TAB_KEYS, "tumu");
+
+  // Hasta dosyasından ?patientId= ile gelince liste o hastaya süzülür (önceden
+  // her bağlantı boş "Yeni plan" formu açıyordu); yeni form yalnız ?yeni=1 ile.
+  const patientId = searchParams.get("patientId") || "";
+  const patientNameParam = searchParams.get("patientName") || "";
+  const [patientName, setPatientName] = useState(patientNameParam);
+
+  const [plans, setPlans] = useState<TreatmentPlan[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [stats, setStats] = useState<PlanListResponse["stats"] | null>(null);
+  const [total, setTotal] = useState(0);
+  const [pageCount, setPageCount] = useState(1);
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [selected, setSelected] = useState<Plan | null>(null);
-  const [showNew,  setShowNew]  = useState(false);
-  const [page,       setPage]       = useState(1);
-  const [pageCount,  setPageCount]  = useState(1);
-  const [stats, setStats] = useState<{ total: number; byStatus: Record<PlanStatus, number> }>({ total: 0, byStatus: EMPTY_STATUS_COUNTS });
-  const [loadError, setLoadError] = useState("");
+  const [doctorFilter, setDoctorFilter] = useState("");
+  const [doctorFilterName, setDoctorFilterName] = useState("");
   const loadSequenceRef = useRef(0);
 
+  const [selected, setSelected] = useState<TreatmentPlan | null>(null);
+  const [newOpen, setNewOpen] = useState(false);
+  const [newPatient, setNewPatient] = useState<PickedPatient | null>(null);
+  const deepLinkHandledRef = useRef(false);
+
   useEffect(() => {
-    const timer = setTimeout(() => { setDebouncedSearch(search.trim()); setPage(1); }, 300);
+    const timer = setTimeout(() => setDebouncedSearch(search.trim()), 300);
     return () => clearTimeout(timer);
   }, [search]);
+  useEffect(() => { setPage(1); }, [tab, doctorFilter, debouncedSearch, patientId]);
+  useEffect(() => { if (patientNameParam) setPatientName(patientNameParam); }, [patientNameParam]);
 
-  useEffect(() => { setPage(1); }, [filter, doctorFilter]);
-
-  // New plan form
-  const [patients,  setPatients]  = useState<Patient[]>([]);
-  const [doctors,   setDoctors]   = useState<Doctor[]>([]);
-  const [newPlan,   setNewPlan]   = useState({ patientId: "", doctorId: "", title: "", notes: "" });
-  const [newSteps,  setNewSteps]  = useState([{ treatmentName: "", toothNo: "", amount: "" }]);
-  const [saving,    setSaving]    = useState(false);
-  const [patientQuery, setPatientQuery] = useState("");
-  const [patientSearchLoading, setPatientSearchLoading] = useState(false);
-  const [patientSearchError, setPatientSearchError] = useState("");
-  const [doctorLoadError, setDoctorLoadError] = useState("");
-  const [doctorReloadKey, setDoctorReloadKey] = useState(0);
-  const canCreatePlan = can("treatment:write");
-
-  // Hasta detayından "Yeni Tedavi Planı" ile gelindiğinde hasta ikinci kez
-  // aranmasın diye form önceden dolu açılır (bkz. denetim raporu — randevu
-  // sayfasında zaten kurulan aynı desen).
-  useEffect(() => {
-    const qpPatientId = searchParams.get("patientId");
-    const qpPatientName = searchParams.get("patientName");
-    if (qpPatientId && canCreatePlan) {
-      setNewPlan((p) => ({ ...p, patientId: qpPatientId }));
-      setPatientQuery(qpPatientName || "");
-      setShowNew(true);
-      const next = new URLSearchParams(Array.from(searchParams.entries()));
-      next.delete("patientId");
-      next.delete("patientName");
-      router.replace(`?${next.toString()}`, { scroll: false });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, canCreatePlan]);
-
-  useEffect(() => {
-    setDoctorLoadError("");
-    cachedGet<unknown>("/api/staff", 60_000, { throwOnError: true, force: doctorReloadKey > 0 })
-      .then((data) => {
-        if (!Array.isArray(data)) throw new Error("Doktor listesi beklenmeyen biçimde döndü.");
-        setDoctors(data.filter((user: Doctor) => user.role === "DOKTOR" || (user.role === "YONETICI" && user.profile?.hideAsDoctor === false)));
-      })
-      .catch((loadError) => {
-        setDoctors([]);
-        setDoctorLoadError(loadError instanceof Error ? loadError.message : "Doktor listesi yüklenemedi.");
-      });
-  }, [doctorReloadKey]);
-
-  useEffect(() => {
-    const q = patientQuery.trim();
-    const controller = new AbortController();
-    const timer = setTimeout(() => {
-      setPatientSearchLoading(true);
-      setPatientSearchError("");
-      const params = new URLSearchParams({ take: "20", summary: "false" });
-      if (q) params.set("q", q);
-      fetch(`/api/patients?${params.toString()}`, { signal: controller.signal })
-        .then(async (r) => {
-          const d = await r.json().catch(() => ({}));
-          if (!r.ok) throw new Error(d?.message || "Hasta araması başarısız");
-          setPatients(Array.isArray(d) ? d : (d.patients || []));
-        })
-        .catch((searchError) => {
-          if (searchError instanceof DOMException && searchError.name === "AbortError") return;
-          setPatients([]);
-          setPatientSearchError(searchError instanceof Error ? searchError.message : "Hasta araması yapılamadı.");
-        })
-        .finally(() => {
-          if (!controller.signal.aborted) setPatientSearchLoading(false);
-        });
-    }, 250);
-    return () => {
-      clearTimeout(timer);
-      controller.abort();
-    };
-  }, [patientQuery]);
-
-  useEffect(() => {
-    fetchPlans();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filter, doctorFilter, debouncedSearch, page]);
-
-  function fetchPlans() {
+  const load = useCallback(async () => {
     const sequence = ++loadSequenceRef.current;
     setLoading(true);
-    setLoadError("");
-    const params = new URLSearchParams({ page: String(page) });
-    if (filter) params.set("status", filter);
-    if (doctorFilter) params.set("doctorId", doctorFilter);
-    if (debouncedSearch) params.set("q", debouncedSearch);
-    fetch(`/api/treatment-plans?${params.toString()}`)
-      .then(async (r) => {
-        const d = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(d?.message || d?.error || "Tedavi planları yüklenemedi");
-        if (sequence !== loadSequenceRef.current) return;
-        setPlans(Array.isArray(d.items) ? d.items : []);
-        const nextPageCount = Math.max(1, Number(d.pageCount) || 1);
-        setPageCount(nextPageCount);
-        if (page > nextPageCount) setPage(nextPageCount);
-        if (d.stats) setStats(d.stats);
-      })
-      .catch((e) => {
-        if (sequence !== loadSequenceRef.current) return;
-        const message = e instanceof Error ? e.message : "Tedavi planları yüklenemedi";
-        setLoadError(message);
-        showToastSafe({ message, type: "error" });
-        setPlans([]);
-      })
-      .finally(() => {
-        if (sequence === loadSequenceRef.current) setLoading(false);
-      });
-  }
-
-  const filtered = plans;
-
-  const newPlanDirty = showNew && (
-    Boolean(newPlan.patientId || newPlan.doctorId || newPlan.title.trim() || newPlan.notes.trim())
-    || newSteps.some((step) => Boolean(step.treatmentName.trim() || step.toothNo.trim() || step.amount))
-    || newSteps.length > 1
-  );
-
-  // Çok alanlı bir form — ESC/İptal ile yanlışlıkla kapatılırsa girilen
-  // hasta/doktor/adım bilgileri sessizce kaybolmamalı (bkz. denetim raporu).
-  function requestCloseNewPlan() {
-    setShowNew(false);
-    setNewPlan({ patientId: "", doctorId: "", title: "", notes: "" });
-    setNewSteps([{ treatmentName: "", toothNo: "", amount: "" }]);
-    setPatientQuery("");
-  }
-
-  async function submitNew() {
-    if (!newPlan.patientId || !newPlan.doctorId || !newPlan.title) return;
-    const steps = newSteps.filter(s => s.treatmentName.trim()).map(s => ({ ...s, amount: Number(s.amount) || 0 }));
-    if (steps.length === 0) {
-      showToastSafe({ message: "Tedavi planına en az bir tedavi adımı ekleyin.", type: "error" });
-      return;
-    }
-    setSaving(true);
     try {
-      const res = await fetch("/api/treatment-plans", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...newPlan, steps }) });
-      if (!res.ok) {
-        const data = await res.json().catch(() => null);
-        showToastSafe({ message: data?.message || data?.error || "Tedavi planı oluşturulamadı", type: "error" });
-        return;
-      }
-      setShowNew(false);
-      setNewPlan({ patientId: "", doctorId: "", title: "", notes: "" });
-      setNewSteps([{ treatmentName: "", toothNo: "", amount: "" }]);
-      setPatientQuery("");
-      fetchPlans();
-    } catch {
-      showToastSafe({ message: "Bağlantı hatası — tedavi planı oluşturulamadı. Lütfen tekrar deneyin.", type: "error" });
+      const params = new URLSearchParams({ page: String(page), take: String(PAGE_SIZE) });
+      const status = TAB_STATUS[tab];
+      if (status) params.set("status", status);
+      if (doctorFilter) params.set("doctorId", doctorFilter);
+      if (debouncedSearch) params.set("q", debouncedSearch);
+      if (patientId) params.set("patientId", patientId);
+      const response = await fetch(`/api/treatment-plans?${params.toString()}`, { cache: "no-store" });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(apiMessage(body, "Tedavi planları yüklenemedi."));
+      if (sequence !== loadSequenceRef.current) return;
+      const data = body as PlanListResponse;
+      setPlans(Array.isArray(data.items) ? data.items : []);
+      setTotal(Number(data.total) || 0);
+      setPageCount(Math.max(1, Number(data.pageCount) || 1));
+      setStats(data.stats ?? null);
+      setLoadError(null);
+      setLoaded(true);
+      // Hasta adı adreste yoksa (eski bağlantı) listedeki ilk plandan alınır.
+      const firstPatient = data.items?.[0]?.patient;
+      if (patientId && firstPatient?.id === patientId) setPatientName((current) => current || firstPatient.fullName);
+    } catch (error) {
+      if (sequence !== loadSequenceRef.current) return;
+      // Liste ekrandaysa kaybolmaz; "yenilenemedi" şeridi görünür.
+      setLoadError(error instanceof Error ? error.message : "Tedavi planları yüklenemedi.");
     } finally {
-      setSaving(false);
+      if (sequence === loadSequenceRef.current) setLoading(false);
     }
-  }
+  }, [debouncedSearch, doctorFilter, page, patientId, tab]);
 
-  async function updateStatus(planId: string, status: string) {
-    if (status === "IPTAL" && !(await confirmDialog({ message: "Bu tedavi planı iptal edilsin mi?", danger: true, confirmText: "İptal Et" }))) return;
-    const res = await fetch(`/api/treatment-plans/${planId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) }).catch(() => null);
-    if (!res?.ok) {
-      const data = await res?.json().catch(() => null);
-      showToastSafe({ message: data?.message || data?.error || "Durum güncellenemedi", type: "error" });
-      return;
+  useEffect(() => { void load(); }, [load]);
+
+  // Derin bağlantılar: ?yeni=1 (hasta seçili yeni plan), ?planId= (planı aç).
+  useEffect(() => {
+    if (deepLinkHandledRef.current) return;
+    const wantsNew = searchParams.get("yeni") === "1";
+    const planId = searchParams.get("planId");
+    if (!wantsNew && !planId) return;
+    deepLinkHandledRef.current = true;
+    replaceParams((params) => { params.delete("yeni"); params.delete("planId"); });
+    if (wantsNew && canWrite) {
+      setNewPatient(patientId ? { id: patientId, fullName: patientNameParam || "Hasta" } : null);
+      setNewOpen(true);
     }
-    fetchPlans();
-    setSelected(s => s ? { ...s, status: status as PlanStatus } : null);
-  }
-
-  async function updateStep(planId: string, stepId: string, status: StepStatus) {
-    const res = await fetch(`/api/treatment-plans/${planId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ stepUpdates: [{ id: stepId, status }] }) }).catch(() => null);
-    if (!res?.ok) {
-      const data = await res?.json().catch(() => null);
-      showToastSafe({ message: data?.message || data?.error || "Adım güncellenemedi", type: "error" });
-      return;
+    if (planId) {
+      fetch(`/api/treatment-plans/${encodeURIComponent(planId)}`, { cache: "no-store" })
+        .then(async (response) => (response.ok ? response.json() : null))
+        .then((plan) => { if (plan && typeof plan === "object" && "id" in plan) setSelected(plan as TreatmentPlan); })
+        .catch(() => undefined);
     }
-    setSelected(s => {
-      if (!s) return null;
-      return { ...s, steps: s.steps.map(st => st.id === stepId ? { ...st, status } : st) };
-    });
-    fetchPlans();
-  }
+  }, [canWrite, patientId, patientNameParam, searchParams]);
 
-  async function deleteStep(planId: string, stepId: string) {
-    if (!(await confirmDialog({ message: "Bu tedavi adımı silinsin mi?", danger: true, confirmText: "Sil" }))) return;
-    const res = await fetch(`/api/treatment-plans/${planId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ stepDeletes: [stepId] }) }).catch(() => null);
-    if (!res?.ok) {
-      const data = await res?.json().catch(() => null);
-      showToastSafe({ message: data?.message || data?.error || "Tedavi adımı silinemedi", type: "error" });
-      return;
-    }
-    const updated = await res.json().catch(() => null);
-    setSelected(s => {
-      if (!s) return null;
-      return { ...s, steps: s.steps.filter(st => st.id !== stepId), totalCost: updated?.totalCost ?? s.totalCost };
-    });
-    fetchPlans();
-  }
+  const clearPatient = () => {
+    replaceParams((params) => { params.delete("patientId"); params.delete("patientName"); });
+    setPatientName("");
+  };
 
-  const inp = "rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20";
+  const onPlanChanged = (plan: TreatmentPlan) => {
+    setSelected(plan);
+    setPlans((current) => current.map((item) => (item.id === plan.id ? { ...item, ...plan, patient: item.patient } : item)));
+    void load();
+  };
+
+  const openNew = () => {
+    setNewPatient(patientId ? { id: patientId, fullName: patientName || "Hasta" } : null);
+    setNewOpen(true);
+  };
+
+  const filters: ActiveFilter[] = [
+    ...(patientId ? [{ key: "patient", label: `Hasta: ${patientName || "seçili hasta"}`, onRemove: clearPatient }] : []),
+    ...(doctorFilter ? [{ key: "doctor", label: doctorFilterName || "Hekim", onRemove: () => { setDoctorFilter(""); setDoctorFilterName(""); } }] : []),
+  ];
+  const filtered = Boolean(debouncedSearch || doctorFilter || patientId || tab !== "tumu");
+
+  const progressCell = (plan: TreatmentPlan) => {
+    const progress = planProgress(plan);
+    if (progress.activeCount === 0) return <span className="text-xs text-slate-400">—</span>;
+    return (
+      <ProgressBar
+        className="min-w-[8rem]"
+        value={progress.doneCount}
+        max={progress.activeCount}
+        aria-label={`${plan.title}: ${progress.doneCount}/${progress.activeCount} adım yapıldı`}
+        valueLabel={false}
+        tone={plan.status === "TAMAMLANDI" ? "success" : "primary"}
+        label={<span className="text-xs text-slate-500">{progress.doneCount}/{progress.activeCount} adım</span>}
+      />
+    );
+  };
+
+  const statusBadge = (plan: TreatmentPlan) => {
+    const status = PLAN_STATUS[plan.status] || { label: plan.status, tone: "neutral" as const };
+    return <Badge tone={status.tone} className="whitespace-nowrap">{status.label}</Badge>;
+  };
+
+  const columns: ListTableColumn<TreatmentPlan>[] = [
+    {
+      key: "plan",
+      header: "Plan",
+      render: (plan) => (
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-slate-900">{plan.title}</p>
+          <p className="truncate text-xs text-slate-500">
+            {plan.doctor.fullName} · <DateText value={plan.createdAt} />
+          </p>
+        </div>
+      ),
+    },
+    // Hastaya süzülmüş listede her satırda aynı ad tekrar etmesin.
+    ...(patientId ? [] : [{ key: "patient", header: "Hasta", render: (plan: TreatmentPlan) => <span className="text-sm text-slate-800">{plan.patient.fullName}</span> }]),
+    { key: "progress", header: "İlerleme", render: progressCell },
+    { key: "total", header: "Tutar", align: "right", headerHint: "İptal edilen adımlar hariç", render: (plan) => <Money value={planProgress(plan).total} className="font-semibold text-slate-800" /> },
+    { key: "status", header: "Durum", align: "right", render: statusBadge },
+  ];
 
   return (
-    <div className="space-y-5">
-      {/* Header */}
+    <div className="mx-auto max-w-7xl space-y-3 pb-8">
       <PageHeader
         icon="tedavi"
-        title="Tedavi Planları"
-        description="Hasta tedavi süreçlerini adım adım planlayın ve ilerlemesini takip edin."
-        stats={[
-          { label: "Toplam Plan", value: stats.total },
-          { label: "Devam Eden", value: stats.byStatus.DEVAM_EDIYOR, color: "text-amber-600" },
-        ]}
-        actions={canCreatePlan && (
-          <Button variant="primary" icon={Plus} onClick={() => setShowNew(true)}>
-            Yeni Tedavi Planı
-          </Button>
-        )}
+        title="Tedavi planları"
+        description="Hastalara hazırlanan planlar ve ilerlemesi."
+        back={patientId ? { href: `/hasta-detay?id=${encodeURIComponent(patientId)}&tab=tedavi`, label: "Hasta dosyası" } : undefined}
+        actions={canWrite ? <Button icon={Plus} onClick={openNew}>Yeni tedavi planı</Button> : undefined}
       />
 
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-100 bg-white px-4 py-3 shadow-sm">
-        <div className="relative flex-1 min-w-48">
-          <svg className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-          <input aria-label={"Hasta veya tedavi planı ara"} value={search} onChange={e => setSearch(e.target.value)} placeholder="Hasta veya tedavi planı ara" className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2.5 pl-8 pr-3 text-sm placeholder-slate-400 focus:border-primary focus:bg-white focus:outline-none" />
-        </div>
-        {(["", "PLANLANDI", "DEVAM_EDIYOR", "TAMAMLANDI", "IPTAL"] as const).map(s => (
-          <button key={s} onClick={() => setFilter(s)} className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${filter === s ? "bg-primary text-white" : "border border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
-            {s === "" ? "Tümü" : STATUS_CFG[s].label}
-          </button>
-        ))}
-        <select value={doctorFilter} onChange={e => setDoctorFilter(e.target.value)} aria-label="Doktor filtresi" className={inp}>
-          <option value="">Tüm doktorlar</option>
-          {doctors.map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
-        </select>
-      </div>
-      {doctorLoadError && <LoadErrorState compact message={doctorLoadError} onRetry={() => setDoctorReloadKey((value) => value + 1)} />}
-      {loadError && <LoadErrorState compact message={loadError} onRetry={fetchPlans} />}
+      <Tabs<TabKey>
+        ariaLabel="Plan durumu"
+        value={tab}
+        onChange={setTab}
+        items={[
+          { key: "tumu", label: "Tümü" },
+          // Sayaç yalnız iş bekleyen durumlarda (başlanacak / süren planlar); yüklenene kadar gösterilmez.
+          { key: "planlandi", label: "Planlandı", count: stats?.byStatus.PLANLANDI },
+          { key: "devam", label: "Devam ediyor", count: stats?.byStatus.DEVAM_EDIYOR },
+          { key: "tamamlandi", label: "Tamamlandı" },
+          { key: "iptal", label: "İptal edildi" },
+        ]}
+      />
 
-      {/* Stats row */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {(["PLANLANDI","DEVAM_EDIYOR","TAMAMLANDI","IPTAL"] as PlanStatus[]).map(s => {
-          const cfg = STATUS_CFG[s];
-          const count = stats.byStatus[s] || 0;
-          const cardBorderClass: Record<PlanStatus, string> = {
-            PLANLANDI: "bg-primary/5 border-primary/15",
-            DEVAM_EDIYOR: "bg-amber-50 border-amber-100",
-            TAMAMLANDI: "bg-emerald-50 border-emerald-100",
-            IPTAL: "bg-red-50 border-red-100",
-          };
-          return (
-            <div key={s} className={`rounded-2xl border p-4 ${cardBorderClass[s]}`}>
-              <p className={`text-[11px] font-bold uppercase tracking-wider ${cfg.text}`}>{cfg.label}</p>
-              <p className={`mt-1 text-2xl font-bold ${cfg.text}`}>{count}</p>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Plans Grid */}
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3" aria-busy={loading}>
-          {!loading && !loadError && filtered.length === 0 && (
-            <div className="col-span-full">
-              <EmptyState
-                icon={TedaviEmptyIcon}
-                illustrative
-                title="Tedavi planı bulunamadı"
-                description="Seçilen filtrede kayıtlı bir tedavi planı yok. Yeni bir hasta için çok adımlı tedavi planı oluşturabilirsiniz."
-              />
-            </div>
-          )}
-          {filtered.map(plan => {
-            const cfg = STATUS_CFG[plan.status];
-            const done = plan.steps.filter(s => s.status === "YAPILDI" || s.status === "TAMAMLANDI").length;
-            const pct  = plan.steps.length > 0 ? Math.round((done / plan.steps.length) * 100) : 0;
-            return (
-              <button key={plan.id} onClick={() => setSelected(plan)} className="cursor-pointer rounded-2xl border border-slate-100 bg-white p-5 text-left shadow-sm transition hover:border-primary/20 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary/30">
-                <div className="flex items-start justify-between gap-2 mb-3">
-                  <div>
-                    <h3 className="font-bold text-slate-900 leading-tight">{plan.title}</h3>
-                    <p className="mt-0.5 text-xs text-slate-500">{plan.patient.fullName}</p>
-                  </div>
-                  <Badge tone={cfg.tone} size="sm">{cfg.label}</Badge>
-                </div>
-                <div className="mb-3">
-                  <div className="mb-1 flex items-center justify-between text-[11px] text-slate-500">
-                    <span>{done}/{plan.steps.length} adım</span>
-                    <span>{pct}%</span>
-                  </div>
-                  <svg className="h-1.5 w-full" viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true">
-                    <line x1="1" y1="2" x2="99" y2="2" stroke="rgb(var(--color-slate-100))" strokeWidth="4" strokeLinecap="round" />
-                    {pct > 0 && (
-                      <line
-                        key={pct}
-                        className="ui-progress-line"
-                        x1="1" y1="2" x2={1 + (98 * pct) / 100} y2="2"
-                        stroke="rgb(var(--app-primary))"
-                        strokeWidth="4"
-                        strokeLinecap="round"
-                        style={{ ["--progress-len" as string]: (98 * pct) / 100 }}
-                      />
-                    )}
-                  </svg>
-                </div>
-                <div className="flex items-center justify-between">
-                  <p className="text-xs text-slate-400">{plan.doctor.fullName}</p>
-                  {plan.totalCost && <p className="text-xs font-bold text-slate-700">{CURRENCY.format(plan.totalCost)}</p>}
-                </div>
-              </button>
-            );
-          })}
-      </div>
-
-      {pageCount > 1 && (
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-slate-500">Sayfa {page} / {pageCount}</p>
-          <div className="flex gap-2">
-            <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-40">← Önceki</button>
-            <button onClick={() => setPage(p => Math.min(pageCount, p + 1))} disabled={page === pageCount} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-40">Sonraki →</button>
-          </div>
-        </div>
-      )}
-
-      {/* Detail Modal */}
-      <Modal
-        open={Boolean(selected)}
-        onClose={() => setSelected(null)}
-        title={selected?.title ?? ""}
-        description={selected ? `${selected.patient.fullName} · ${selected.doctor.fullName}` : undefined}
-        size="lg"
+      <Toolbar
+        filterCount={doctorFilter ? 1 : 0}
+        filters={(
+          <DoctorSelect
+            value={doctorFilter}
+            onChange={(doctorId, doctor) => { setDoctorFilter(doctorId); setDoctorFilterName(doctor?.fullName || ""); }}
+            emptyLabel="Tüm hekimler"
+            aria-label="Hekim"
+            className="sm:w-56"
+          />
+        )}
       >
-        {selected && (
-          <div className="space-y-5">
-            {/* Status control */}
-            {canCreatePlan && <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
-              {(["PLANLANDI","DEVAM_EDIYOR","TAMAMLANDI","IPTAL"] as PlanStatus[]).map(s => (
-                <button key={s} onClick={() => updateStatus(selected.id, s)} className={`rounded-lg px-3 py-2 text-sm font-bold transition ${selected.status === s ? "bg-primary text-white" : "border border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
-                  {STATUS_CFG[s].label}
-                </button>
-              ))}
-            </div>}
-            {/* Steps */}
-            <div>
-              <h3 className="mb-3 text-sm font-bold text-slate-800">Tedavi Adımları</h3>
-              <div className="space-y-2">
-                {selected.steps.map(step => {
-                  const sCfg = STEP_STATUS[step.status] || STEP_STATUS.BEKLIYOR;
-                  return (
-                    <div key={step.id} className="grid gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3 sm:grid-cols-[auto_minmax(0,1fr)_auto_auto_auto_auto] sm:items-center">
-                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white border border-slate-200 text-xs font-bold text-slate-600">{step.order}</span>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-slate-800">{step.treatmentName}</p>
-                        {step.toothNo && <p className="text-[11px] text-slate-400">Diş: {step.toothNo}</p>}
-                      </div>
-                      <span className="shrink-0 text-xs font-bold text-slate-600">{CURRENCY.format(step.amount)}</span>
-                      <Badge tone={sCfg.tone} size="sm">{sCfg.label}</Badge>
-                      {canCreatePlan && <select value={step.status} onChange={e => updateStep(selected.id, step.id, e.target.value as StepStatus)}
-                        disabled={selected.status === "TAMAMLANDI" || selected.status === "IPTAL"}
-                        title={selected.status === "TAMAMLANDI" || selected.status === "IPTAL" ? "Tamamlanmış/iptal edilmiş planın adımları değiştirilemez — önce planı yeniden açın" : undefined}
-                        className="shrink-0 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed disabled:bg-slate-100">
-                        <option value="BEKLIYOR">Bekliyor</option>
-                        <option value="YAPILDI">Yapıldı</option>
-                        <option value="IPTAL">İptal</option>
-                      </select>}
-                      {canCreatePlan && <button
-                        onClick={() => deleteStep(selected.id, step.id)}
-                        disabled={selected.status === "TAMAMLANDI" || selected.status === "IPTAL"}
-                        className="shrink-0 rounded-lg border border-red-200 px-2.5 py-2 text-xs font-bold text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed"
-                      >
-                        Sil
-                      </button>}
-                    </div>
-                  );
-                })}
+        <SearchInput
+          value={search}
+          onChange={setSearch}
+          placeholder="Hasta veya plan adı ara"
+          slashShortcut
+          wrapperClassName="flex-1 min-w-[220px]"
+        />
+      </Toolbar>
+      <ActiveFilters filters={filters} onClearAll={() => { clearPatient(); setDoctorFilter(""); setDoctorFilterName(""); }} />
+
+      <ListTable<TreatmentPlan>
+        columns={columns}
+        rows={plans}
+        rowKey={(plan) => plan.id}
+        loading={loading && !loaded}
+        error={loaded ? null : loadError}
+        staleError={loaded ? loadError : null}
+        onRetry={() => void load()}
+        onRowClick={setSelected}
+        getRowAriaLabel={(plan) => `${plan.title} — ${plan.patient.fullName} planını aç`}
+        emptyText={filtered ? "Bu seçime uyan plan yok" : "Henüz tedavi planı yok"}
+        emptyDescription={filtered ? "Aramayı veya filtreleri değiştirin." : "Uzun süren tedaviler için hastaya plan ve fiyat teklifi hazırlayın."}
+        emptyIcon={filtered ? undefined : TedaviEmptyIcon}
+        emptyIllustrative={!filtered}
+        emptyAction={canWrite ? <Button icon={Plus} variant={filtered ? "secondary" : "primary"} onClick={openNew}>Yeni tedavi planı</Button> : undefined}
+        mobileCard={(plan) => (
+          <div className="space-y-2">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-slate-900">{plan.title}</p>
+                <p className="truncate text-xs text-slate-500">{[patientId ? "" : plan.patient.fullName, plan.doctor.fullName].filter(Boolean).join(" · ")}</p>
               </div>
+              {statusBadge(plan)}
             </div>
-            {selected.totalCost && (
-              <div className="rounded-xl bg-primary/5 px-4 py-3 flex items-center justify-between">
-                <span className="text-sm font-semibold text-primary">Toplam Tutar</span>
-                <span className="text-xl font-black text-primary-strong">{CURRENCY.format(selected.totalCost)}</span>
-              </div>
-            )}
-            {selected.notes && <p className="text-sm text-slate-600 bg-slate-50 rounded-xl p-3">{selected.notes}</p>}
+            <div className="flex items-center gap-3">
+              <div className="min-w-0 flex-1">{progressCell(plan)}</div>
+              <Money value={planProgress(plan).total} className="shrink-0 text-sm font-semibold text-slate-800" />
+            </div>
           </div>
         )}
-      </Modal>
+        pager={pageCount > 1 ? { page, pageCount, pageSize: PAGE_SIZE, total, onPageChange: setPage } : undefined}
+      />
 
-      {/* New Plan Modal */}
-      <Modal open={showNew} onClose={() => void requestCloseNewPlan()} isDirty={newPlanDirty} title="Yeni Tedavi Planı" size="md">
-        <div className="space-y-4">
-          {doctorLoadError && <LoadErrorState compact message={doctorLoadError} onRetry={() => setDoctorReloadKey((value) => value + 1)} />}
-          {patientSearchError && <LoadErrorState compact message={patientSearchError} />}
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-xs font-semibold text-slate-600">Hasta</label>
-              <SearchSelect
-                query={patientQuery}
-                onQueryChange={value => {
-                  setPatientQuery(value);
-                  if (!value) setNewPlan(p => ({ ...p, patientId: "" }));
-                }}
-                options={patients.map(p => ({ id: p.id, label: p.fullName, meta: p.tcNo }))}
-                onSelect={opt => { setNewPlan(p => ({ ...p, patientId: opt.id })); setPatientQuery(opt.label); }}
-                placeholder="Hasta adı yazın…"
-                emptyText={patientSearchLoading ? "Hastalar aranıyor…" : "Hasta bulunamadı"}
-                className={`${inp} w-full`}
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-semibold text-slate-600">Doktor</label>
-              <select aria-label={"Doktor"} value={newPlan.doctorId} onChange={e => setNewPlan(p => ({ ...p, doctorId: e.target.value }))} className={`${inp} w-full`}>
-                <option value="">Seçiniz…</option>
-                {doctors.map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
-              </select>
-            </div>
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-semibold text-slate-600">Plan Başlığı</label>
-            <input aria-label={"Plan Başlığı"} value={newPlan.title} onChange={e => setNewPlan(p => ({ ...p, title: e.target.value }))} maxLength={200} placeholder="Örn: İmplant + Kuron Tedavisi" className={`${inp} w-full`} />
-          </div>
-          <div>
-            <div className="mb-2 flex items-center justify-between">
-              <label className="text-xs font-semibold text-slate-600">Tedavi Adımları</label>
-              <Button variant="ghost" size="sm" onClick={() => setNewSteps(s => [...s, { treatmentName: "", toothNo: "", amount: "" }])}>Adım Ekle</Button>
-            </div>
-            <div className="space-y-2">
-              {newSteps.map((step, i) => (
-                <div key={i} className="grid gap-2 rounded-xl border border-slate-100 bg-slate-50 p-3 sm:grid-cols-[auto_minmax(0,1fr)_90px_110px_auto] sm:items-center">
-                  <span className="shrink-0 flex h-6 w-6 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-slate-500">{i + 1}</span>
-                  <input aria-label={"Tedavi adı"} value={step.treatmentName} onChange={e => setNewSteps(s => s.map((x, j) => j === i ? { ...x, treatmentName: e.target.value } : x))} maxLength={200} placeholder="Tedavi adı" className={`${inp} flex-1`} />
-                  <input aria-label={"Diş no"} value={step.toothNo} onChange={e => setNewSteps(s => s.map((x, j) => j === i ? { ...x, toothNo: e.target.value } : x))} maxLength={50} placeholder="Diş no" className={`${inp} w-full`} />
-                  <input aria-label={"Tutar"} type="number" min="0" max="100000000" step="0.01" value={step.amount} onChange={e => setNewSteps(s => s.map((x, j) => j === i ? { ...x, amount: e.target.value } : x))} placeholder="Tutar" className={`${inp} w-full`} />
-                  {newSteps.length > 1 && <Button variant="danger" size="sm" onClick={() => setNewSteps(s => s.filter((_, j) => j !== i))}>Sil</Button>}
-                </div>
-              ))}
-            </div>
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-semibold text-slate-600">Notlar</label>
-            <textarea aria-label={"Notlar"} value={newPlan.notes} onChange={e => setNewPlan(p => ({ ...p, notes: e.target.value }))} maxLength={5000} rows={2} className={`${inp} w-full resize-none`} placeholder="İsteğe bağlı not…" />
-          </div>
-          <div className="flex gap-3 pt-2">
-            <Button variant="secondary" onClick={() => void requestCloseNewPlan()} fullWidth>İptal</Button>
-            <Button variant="primary" onClick={() => void submitNew()} loading={saving} fullWidth>
-              Oluştur
-            </Button>
-          </div>
-        </div>
-      </Modal>
+      <PlanDetailModal
+        key={selected?.id || "kapali"}
+        plan={selected}
+        onClose={() => setSelected(null)}
+        onChanged={onPlanChanged}
+        canWrite={canWrite}
+      />
+
+      {canWrite && (
+        <NewPlanModal
+          open={newOpen}
+          onClose={() => setNewOpen(false)}
+          initialPatient={newPatient}
+          lockPatient={Boolean(newPatient)}
+          onCreated={(plan) => {
+            setSelected(plan);
+            void load();
+          }}
+        />
+      )}
     </div>
   );
 }

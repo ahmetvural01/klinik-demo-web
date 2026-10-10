@@ -1,10 +1,11 @@
 "use client";
 
 import { useId, useRef } from "react";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Plus } from "lucide-react";
+import { Button } from "@/components/ui/Button";
 import { FormField } from "@/components/ui/FormField";
 import { Textarea } from "@/components/ui/Input";
-import { renderSmsPreview, toStoredText, type SmsPlaceholder } from "@/lib/sms-template-placeholders";
+import { SMS_PLACEHOLDERS, renderSmsPreview, toStoredText, type SmsPlaceholder } from "@/lib/sms-template-placeholders";
 
 export interface SmsMessageEditorProps {
   value: string;
@@ -29,7 +30,15 @@ export interface SmsMessageEditorProps {
   maxLength?: number;
   disabled?: boolean;
   showPreview?: boolean;
+  /**
+   * "always" (varsayılan): önizleme kutusu hep görünür. "auto": yalnız metinde
+   * doldurulacak bir bilgi varsa görünür — değişkensiz metnin önizlemesi metnin
+   * aynısıdır, ekranda iki kez durmasın.
+   */
+  previewMode?: "always" | "auto";
 }
+
+const PLACEHOLDER_TAGS = SMS_PLACEHOLDERS.map((item) => `[${item.label}]`);
 
 // SMS/WhatsApp metni yazma kutusu: imleç konumuna okunaklı bilgi etiketi
 // ("[Hasta Adı]") ekleme + canlı önizleme. `value`/`onChange` HER ZAMAN
@@ -43,13 +52,14 @@ export function SmsMessageEditor({
   previewContext,
   rows = 4,
   label = "Mesaj metni",
-  hint = "Köşeli parantezli bilgiler gönderimde her hastanın kendi bilgisiyle doldurulur.",
+  hint = "Köşeli parantezli bilgiler her hastaya göre doldurulur.",
   required = true,
   error,
   previewWarning,
   maxLength,
   disabled = false,
   showPreview = true,
+  previewMode = "always",
 }: SmsMessageEditorProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fieldId = useId();
@@ -74,10 +84,16 @@ export function SmsMessageEditor({
   };
 
   const counter = maxLength ? `${value.length}/${maxLength} karakter` : `${value.length} karakter`;
+  // Bu mesajda doldurulamayan bilgi önizlemede de boş görünür: hata "hastaya
+  // boş gider" derken önizleme örnek değer gösterip çelişmesin.
+  const allowed = new Set(placeholders.map((item) => item.token));
+  const blanks = Object.fromEntries(SMS_PLACEHOLDERS.filter((item) => !allowed.has(item.token)).map((item) => [item.token, ""]));
+  const hasPlaceholder = PLACEHOLDER_TAGS.some((tag) => value.includes(tag)) || /{{\s*\w+\s*}}/.test(value);
+  const previewVisible = showPreview && (previewMode === "always" || (hasPlaceholder && value.trim().length > 0));
 
   return (
     <div className="space-y-2">
-      <FormField label={label} htmlFor={fieldId} required={required} error={error} hint={error ? undefined : `${hint} ${counter}.`}>
+      <FormField label={label} htmlFor={fieldId} required={required} error={error} hint={error ? undefined : [hint, `${counter}.`].filter(Boolean).join(" ")}>
         <Textarea
           id={fieldId}
           ref={textareaRef}
@@ -89,25 +105,22 @@ export function SmsMessageEditor({
         />
       </FormField>
       {!disabled && placeholders.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5" aria-label="Metne bilgi ekle">
+        // role="group": aria-label rolsüz <div>'de yok sayılıyordu. Çipler ortak
+        // Button (odak halkası, dokunma alanı ve görünüm her yerdekiyle aynı).
+        <div role="group" className="flex flex-wrap items-center gap-1.5" aria-label="Metne bilgi ekle">
           <span className="text-xs font-semibold text-slate-500">Ekle:</span>
           {placeholders.map((p) => (
-            <button
-              key={p.token}
-              type="button"
-              onClick={() => insertPlaceholder(p)}
-              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 transition-colors hover:border-primary/40 hover:text-primary"
-            >
-              + {p.label}
-            </button>
+            <Button key={p.token} variant="secondary" size="sm" icon={Plus} onClick={() => insertPlaceholder(p)}>
+              {p.label}
+            </Button>
           ))}
         </div>
       )}
-      {showPreview && (
+      {previewVisible && (
         <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
           <p className="mb-1 text-xs font-semibold text-slate-500">Hastaya böyle görünür</p>
           <p className="whitespace-pre-wrap break-words text-sm leading-5 text-slate-800">
-            {value.trim() ? renderSmsPreview(toStoredText(value), previewContext) : "Metin yazdıkça örnek bir hastaya nasıl görüneceği burada çıkar."}
+            {value.trim() ? renderSmsPreview(toStoredText(value), { ...previewContext, ...blanks }) : "Metin yazdıkça örnek bir hastaya nasıl görüneceği burada çıkar."}
           </p>
           {previewWarning && (
             <p className="mt-2 flex items-start gap-1.5 text-xs font-medium text-amber-700">

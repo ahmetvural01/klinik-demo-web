@@ -1,5 +1,6 @@
-import { AlertCircle, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { Callout } from "@/components/ui/Callout";
 
 type LoadErrorStateProps = {
   message: string;
@@ -7,21 +8,24 @@ type LoadErrorStateProps = {
   compact?: boolean;
 };
 
+/**
+ * Yükleme hatası: "… yüklenemedi" + "Yeniden dene". Görünüm sayfa formu
+ * hatası (Callout critical) ve pencere hatası (FormErrorBanner) ile TEK
+ * kırmızı kutu dilidir; önceden üç ayrı ikon, renk ve boşlukla çiziliyordu.
+ */
 export function LoadErrorState({ message, onRetry, compact = false }: LoadErrorStateProps) {
   return (
-    <div
+    <Callout
+      tone="critical"
       role="alert"
-      className={`flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 text-red-800 ${compact ? "px-3 py-2 text-xs" : "px-4 py-3 text-sm"}`}
-    >
-      <span className="flex min-w-0 items-center gap-2">
-        <AlertCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
-        <span>{message}</span>
-      </span>
-      {onRetry && (
+      compact={compact}
+      action={onRetry && (
         <Button variant="secondary" size="sm" icon={RefreshCw} onClick={onRetry}>
-          Yeniden Dene
+          Yeniden dene
         </Button>
       )}
-    </div>
+    >
+      {message}
+    </Callout>
   );
 }

@@ -1,11 +1,13 @@
 import { redirect } from "next/navigation";
+import { financeFallbackPath, getFinanceAccess } from "@/app/(panel)/muhasebe/_lib/finance-access";
 
 /**
- * /kasa → bugünün gelir ve gider listesi.
- * "Kasa" bugünkü para hareketidir: liste üstündeki özet tahsilatı, gideri ve
- * kasadaki nakit değişimini gösterir. Yeni tahsilat için üst bardaki
- * "Yeni > Tahsilat" (/muhasebe?islem=gelir) kullanılır.
+ * /kasa → bugünün tahsilat ve giderleri (Muhasebe › Gelir ve gider, "Bugün").
+ * Muhasebe ekranını açamayan kullanıcı (ör. doktor, asistan) önceden
+ * /muhasebe üzerinden /yetkisiz'e düşüyordu; artık kendi günlük ekranına gider.
  */
-export default function KasaRedirectPage() {
-  redirect("/muhasebe?tab=defter&donem=bugun");
+export default async function KasaRedirectPage() {
+  const access = await getFinanceAccess();
+  if (access?.has("finance:center")) redirect("/muhasebe?tab=defter&donem=bugun");
+  redirect(financeFallbackPath(access));
 }

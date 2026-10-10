@@ -33,6 +33,35 @@ export function isAllowedDocumentFile(mimeType: string, size: number) {
   return null;
 }
 
+const startsWith = (bytes: Uint8Array, signature: number[], offset = 0) =>
+  bytes.length >= offset + signature.length && signature.every((value, index) => bytes[offset + index] === value);
+
+/**
+ * Dosyanın ilk baytları bildirilen türle uyuşuyor mu? Tür denetimi yalnız
+ * tarayıcının bildirdiği türe bakıyordu: içi düz metin olan "sahte.png"
+ * kaydediliyordu. PNG 89 50 4E 47, JPEG FF D8 FF, WEBP "RIFF"…"WEBP",
+ * PDF "%PDF-". `head` dosyanın ilk baytlarıdır (en az 12). PDF başlığı
+ * belirtime göre ilk 1024 bayt içinde herhangi bir yerde olabilir (bazı
+ * tarayıcı/yazıcı çıktıları önüne boşluk ya da başka bayt koyar); bu yüzden
+ * PDF için başlık `head` içinde aranır.
+ */
+export function documentContentMatchesType(mimeType: string, head: Uint8Array): boolean {
+  switch (mimeType) {
+    case "image/png": return startsWith(head, [0x89, 0x50, 0x4e, 0x47]);
+    case "image/jpeg": return startsWith(head, [0xff, 0xd8, 0xff]);
+    case "image/webp": return startsWith(head, [0x52, 0x49, 0x46, 0x46]) && startsWith(head, [0x57, 0x45, 0x42, 0x50], 8);
+    case "application/pdf": {
+      const signature = [0x25, 0x50, 0x44, 0x46, 0x2d];
+      const limit = Math.min(head.length, 1024) - signature.length;
+      for (let offset = 0; offset <= limit; offset += 1) {
+        if (startsWith(head, signature, offset)) return true;
+      }
+      return false;
+    }
+    default: return false;
+  }
+}
+
 function extensionFor(mimeType: string) {
   switch (mimeType) {
     case "image/jpeg": return ".jpg";

@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { renderCommunicationTemplate, resolveSmsTemplate } from "@/lib/sms-templates";
 import { dispatchPatientMessage } from "@/lib/notification-dispatch";
 import { operationalInstitutionWhere } from "@/lib/operational-state";
+import { isWithinPatientMessageWindow } from "@/lib/appointment-reminders";
 
 // Doğum günü olan hastalara otomatik kutlama SMS'i — klinik Ayarlar > SMS
 // ekranından açıp kapatabilir (Setting.birthdaySmsEnabled). Yılda bir kez
@@ -18,6 +19,12 @@ export async function runBirthdaySmsSweep(): Promise<{
   skippedNoBalance: number;
 }> {
   const now = new Date();
+  // Kutlama gece gitmesin: saatlik tarama gün değişir değişmez (sunucu UTC ise
+  // Türkiye saatiyle ~03:00) gönderiyordu. Pencere içinde sunucu günü ile
+  // Türkiye günü de aynıdır.
+  if (!isWithinPatientMessageWindow(now)) {
+    return { institutionsChecked: 0, checked: 0, sent: 0, failed: 0, skippedAlreadySent: 0, skippedNoBalance: 0 };
+  }
   const year = now.getFullYear();
   const todayMonth = now.getMonth();
   const todayDate = now.getDate();

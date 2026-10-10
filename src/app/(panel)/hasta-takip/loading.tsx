@@ -1,5 +1,2 @@
-import PanelLoading from "@/components/ui/PanelLoading";
-
-export default function Loading() {
-  return <PanelLoading />;
-}
+// Eski adres Yapılacaklar'a yönlenirken aynı iskelet görünür (sayfa zıplamaz).
+export { default } from "../yapilacaklar/loading";

@@ -2,6 +2,8 @@ import { prisma } from "@/lib/prisma";
 import { dispatchPatientMessage } from "@/lib/notification-dispatch";
 import { ensureDefaultCelebrationDays, isCelebrationDate } from "@/lib/celebration-days";
 import { operationalInstitutionWhere } from "@/lib/operational-state";
+import { isWithinPatientMessageWindow } from "@/lib/appointment-reminders";
+import { resolveClinicDisplayInfo } from "@/lib/clinic-display-name";
 
 // Meslek/resmi gün kutlama SMS'i — süperadmin kataloğu (CelebrationDay) her
 // klinik için varsayılan kapalıdır; klinik CelebrationDaySetting.enabled=true
@@ -26,6 +28,13 @@ export async function runCelebrationDaySmsSweep(): Promise<{
   skippedNoBalance: number;
 }> {
   const now = new Date();
+  // Bayram mesajı gece gitmesin (O12): saatlik tarama gün değişir değişmez
+  // gönderiyordu. Randevu, ödeme ve doğum günü taramalarıyla aynı pencere
+  // (09:00–20:00 Türkiye); pencere dışında hiçbir şey okunmaz, yılda bir kez
+  // kuralı (CelebrationSmsLog) sabah ilk taramada gönderir.
+  if (!isWithinPatientMessageWindow(now)) {
+    return { daysChecked: 0, institutionsChecked: 0, checked: 0, sent: 0, failed: 0, skippedAlreadySent: 0, skippedNoBalance: 0 };
+  }
   const year = now.getFullYear();
   await ensureDefaultCelebrationDays();
 
@@ -54,9 +63,11 @@ export async function runCelebrationDaySmsSweep(): Promise<{
       institutionsChecked += 1;
       const institution = await prisma.institution.findUnique({
         where: { id: setting.institutionId },
-        select: { id: true, name: true, phone: true },
+        select: { id: true, name: true, phone: true, settings: { select: { institutionName: true, institutionPhone: true } } },
       });
       if (!institution) continue;
+      // Hastaya görünen ad ve telefon diğer mesajlarla aynı kuraldan (H-6).
+      const clinic = resolveClinicDisplayInfo(institution);
 
       const patients = await prisma.patient.findMany({
         where: {
@@ -82,14 +93,14 @@ export async function runCelebrationDaySmsSweep(): Promise<{
         }
 
         const message = renderTemplate(day.messageTemplate, {
-          institutionName: institution.name,
-          institutionPhone: institution.phone || "",
+          institutionName: clinic.name,
+          institutionPhone: clinic.phone || "",
           patientName: patient.fullName,
           title: day.title,
         });
         const whatsappMessage = renderTemplate(day.whatsappMessageTemplate || day.messageTemplate, {
-          institutionName: institution.name,
-          institutionPhone: institution.phone || "",
+          institutionName: clinic.name,
+          institutionPhone: clinic.phone || "",
           patientName: patient.fullName,
           title: day.title,
         });
@@ -105,7 +116,7 @@ export async function runCelebrationDaySmsSweep(): Promise<{
           whatsappTemplate: day.whatsappTemplateName ? {
             name: day.whatsappTemplateName,
             language: day.whatsappTemplateLanguage || "tr",
-            bodyParameters: [patient.fullName, institution.name],
+            bodyParameters: [patient.fullName, clinic.name],
           } : undefined,
           idempotencyKey: `celebration:${day.code}:${patient.id}:${year}`,
         });

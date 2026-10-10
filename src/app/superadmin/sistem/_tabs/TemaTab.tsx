@@ -6,10 +6,10 @@ import { THEME_PACKAGES, type ThemePackage } from "@/lib/theme-packages";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { LoadErrorState } from "@/components/ui/LoadErrorState";
-import { ListRowSkeleton } from "@/components/ui/ListSkeleton";
-import { clientMutation } from "@/lib/client-mutation";
+import { CardsSkeleton } from "@/components/ui/PageSkeleton";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
+import { errorMessage, saGet, saSend } from "@/components/superadmin/sa-fetch";
 
 /**
  * Sistem geneli tema. Uygulamak TÜM kliniklerin görünümünü değiştirdiği için
@@ -23,18 +23,21 @@ export default function TemaTab() {
   const [applying, setApplying] = useState<string | null>(null);
 
   useEffect(() => {
+    const controller = new AbortController();
     setLoading(true);
     setLoadError(null);
-    fetch("/api/superadmin/theme", { cache: "no-store" })
-      .then(async (response) => {
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(data?.message || "Tema bilgisi yüklenemedi.");
+    saGet<{ activeTheme?: string }>("/api/superadmin/theme", "Tema bilgisi yüklenemedi.", controller.signal)
+      .then((data) => {
         if (!data?.activeTheme) throw new Error("Tema bilgisi beklenmeyen biçimde döndü.");
-        return data;
+        setActiveTheme(data.activeTheme);
       })
-      .then((data) => setActiveTheme(data.activeTheme))
-      .catch((error) => setLoadError(error instanceof Error ? error.message : "Tema bilgisi yüklenemedi."))
-      .finally(() => setLoading(false));
+      .catch((error) => {
+        if (!controller.signal.aborted) setLoadError(errorMessage(error, "Tema bilgisi yüklenemedi."));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
   }, [reloadKey]);
 
   const activate = async (pkg: ThemePackage) => {
@@ -48,26 +51,21 @@ export default function TemaTab() {
     if (!ok) return;
     setApplying(pkg.id);
     try {
-      await clientMutation(
-        "/api/superadmin/theme",
-        { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ activeTheme: pkg.id }) },
-        "Tema uygulanamadı.",
-      );
+      await saSend("/api/superadmin/theme", "PUT", { activeTheme: pkg.id }, "Tema uygulanamadı.");
       setActiveTheme(pkg.id);
       showToastSafe({ type: "success", message: `"${pkg.name}" uygulandı. Sayfayı yenileyen herkes yeni görünümü görür.`, icon: "settings" });
     } catch (error) {
-      showToastSafe({ type: "error", message: error instanceof Error ? error.message : "Tema uygulanamadı." });
+      showToastSafe({ type: "error", message: errorMessage(error, "Tema uygulanamadı.") });
     } finally {
       setApplying(null);
     }
   };
 
   if (loadError) return <LoadErrorState message={loadError} onRetry={() => setReloadKey((value) => value + 1)} />;
-  if (loading) return <div className="ui-surface"><ListRowSkeleton rows={3} /></div>;
+  if (loading) return <CardsSkeleton count={THEME_PACKAGES.length} columns={3} />;
 
   return (
     <section className="space-y-3">
-      <p className="text-sm text-slate-500">Seçilen renk ve yazı tipi tüm kliniklerde geçerli olur.</p>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {THEME_PACKAGES.map((pkg) => {
           const isActive = pkg.id === activeTheme;
@@ -83,7 +81,7 @@ export default function TemaTab() {
               <div className="space-y-2 p-4">
                 <div className="flex items-center justify-between gap-2">
                   <h3 className="text-sm font-bold text-slate-900" style={{ fontFamily: pkg.fontSans }}>{pkg.name}</h3>
-                  {isActive && <Badge tone="success" icon={CheckCircle2}>Kullanımda</Badge>}
+                  {isActive && <Badge tone="success" icon={CheckCircle2}>Aktif</Badge>}
                 </div>
                 <p className="text-xs leading-relaxed text-slate-500">{pkg.description}</p>
                 {!isActive && (

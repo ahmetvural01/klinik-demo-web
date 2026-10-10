@@ -1,9 +1,12 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, Home, Lock } from "lucide-react";
+import { ArrowLeft, Home } from "lucide-react";
+import { usePermissions } from "@/components/auth/PermissionProvider";
 import { Button } from "@/components/ui/Button";
+import { StatusPage } from "@/components/ui/StatusPage";
+import { buildNavGroups } from "@/lib/nav";
 import { getPanelRouteRequirement } from "@/lib/panel-permissions";
 import { PAGE_TITLES } from "@/lib/page-titles";
 import { PERMISSION_DETAILS } from "@/lib/role-permissions";
@@ -20,6 +23,7 @@ function pageNameFor(path: string) {
 
 function YetkisizContent() {
   const router = useRouter();
+  const { can, hasFeature } = usePermissions();
   const from = useSearchParams().get("from") || "";
   // Yalnız uygulama içi adresler okunur (dışarıdan gelen bağlantı metni gösterilmez).
   const safeFrom = from.startsWith("/") && !from.startsWith("//") ? from : "";
@@ -27,24 +31,36 @@ function YetkisizContent() {
   const requirement = safeFrom ? getPanelRouteRequirement(safeFrom.split("?")[0]) : null;
   const permissionTitles = (requirement?.anyOf || []).map((code) => PERMISSION_DETAILS[code]?.title).filter(Boolean);
 
+  // Başlangıç noktası menüdeki ilk izinli sayfadır. Önceden düğme her zaman
+  // /anasayfa'ya gidiyordu; Ana sayfa izni olmayan rol yine bu ekrana düşüyordu.
+  const home = useMemo(() => buildNavGroups({ can, hasFeature }).flatMap((group) => group.items)[0] ?? null, [can, hasFeature]);
+  const homeHref = home?.href || "/profil";
+  const homeLabel = home?.label || "Profilim";
+  // Bağlantı yeni sekmede açıldıysa geçmiş yoktur; "Geri dön" o zaman başlangıç sayfasına gider.
+  const goBack = () => {
+    if (window.history.length > 1) router.back();
+    else router.replace(homeHref);
+  };
+
   return (
-    <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4 px-4 text-center">
-      <span className="flex h-14 w-14 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-slate-500" aria-hidden="true">
-        <Lock className="h-6 w-6" />
-      </span>
-      <h1 className="font-display text-xl font-extrabold tracking-tight text-slate-900">Bu sayfayı açma izniniz yok</h1>
-      <div className="max-w-md space-y-2 text-sm leading-6 text-slate-600">
-        <p>
-          {pageName ? <><b>{pageName}</b> sayfası</> : "Açmaya çalıştığınız sayfa"} sizin rolünüze kapalı.
-          {permissionTitles.length > 0 && <> Gereken izin: <b>{permissionTitles.join(" veya ")}</b>.</>}
-        </p>
-        <p>Bu işe ihtiyacınız varsa klinik yöneticinizden izin isteyin.</p>
-      </div>
-      <div className="mt-2 flex flex-wrap justify-center gap-2">
-        <Button variant="secondary" icon={ArrowLeft} onClick={() => router.back()}>Geri dön</Button>
-        <Button icon={Home} href="/anasayfa">Anasayfa</Button>
-      </div>
-    </div>
+    <StatusPage
+      kind="forbidden"
+      description={(
+        <>
+          <p>
+            {pageName ? <><b>{pageName}</b> sayfası</> : "Açmaya çalıştığınız sayfa"} sizin rolünüze kapalı.
+            {permissionTitles.length > 0 && <> Gereken izin: <b>{permissionTitles.join(" veya ")}</b>.</>}
+          </p>
+          <p className="mt-2">Bu işe ihtiyacınız varsa klinik yöneticinizden izin isteyin.</p>
+        </>
+      )}
+      actions={(
+        <>
+          <Button variant="secondary" icon={ArrowLeft} onClick={goBack}>Geri dön</Button>
+          <Button icon={Home} href={homeHref}>{homeLabel}</Button>
+        </>
+      )}
+    />
   );
 }
 

@@ -9,10 +9,12 @@ import { SearchInput } from "@/components/ui/SearchInput";
 import { EmptyValue, ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
-import { TabIntro } from "@/components/superadmin/TabIntro";
+import { ChoiceCards } from "@/components/ui/ChoiceCards";
 import { WHATSAPP_STATUS_META } from "@/components/superadmin/sa-labels";
 import { dateTime } from "@/components/superadmin/sa-format";
 import { errorMessage, isAbort, saGet, saSend } from "@/components/superadmin/sa-fetch";
+
+type WaFilter = "all" | "enabled" | "connected" | "error";
 
 type Row = {
   institutionId: string;
@@ -43,6 +45,7 @@ export default function WhatsappProviderTab() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [query, setQuery] = useState("");
+  const [view, setView] = useState<WaFilter>("all");
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const reload = useCallback(() => setReloadKey((value) => value + 1), []);
@@ -66,8 +69,14 @@ export default function WhatsappProviderTab() {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLocaleLowerCase("tr-TR");
-    return rows.filter((row) => !q || row.institutionName.toLocaleLowerCase("tr-TR").includes(q));
-  }, [rows, query]);
+    return rows.filter((row) => {
+      if (q && !row.institutionName.toLocaleLowerCase("tr-TR").includes(q)) return false;
+      if (view === "enabled") return row.whatsappEnabled;
+      if (view === "connected") return row.whatsappEnabled && row.connectionStatus === "CONNECTED";
+      if (view === "error") return row.whatsappEnabled && row.connectionStatus === "ERROR";
+      return true;
+    });
+  }, [rows, query, view]);
 
   const enabledCount = rows.filter((row) => row.whatsappEnabled).length;
   const connectedCount = rows.filter((row) => row.whatsappEnabled && row.connectionStatus === "CONNECTED").length;
@@ -101,7 +110,7 @@ export default function WhatsappProviderTab() {
   };
 
   const statusBadge = (row: Row) => {
-    if (!row.whatsappEnabled) return <span className="text-sm text-slate-400">Kapalı</span>;
+    if (!row.whatsappEnabled) return <Badge tone="neutral">Kapalı</Badge>;
     const meta = WHATSAPP_STATUS_META[row.connectionStatus] || { label: "Bilinmiyor", tone: "neutral" as const };
     return <Badge tone={meta.tone}>{meta.label}</Badge>;
   };
@@ -111,8 +120,8 @@ export default function WhatsappProviderTab() {
       checked={row.whatsappEnabled}
       onChange={() => void toggle(row)}
       disabled={busyId === row.institutionId || !row.institutionActive}
-      label={<span className="sr-only">WhatsApp erişimi</span>}
-      aria-label={`${row.institutionName} WhatsApp erişimi`}
+      label={`${row.institutionName} WhatsApp kullanabilsin`}
+      labelHidden
       className="justify-end"
     />
   );
@@ -136,11 +145,26 @@ export default function WhatsappProviderTab() {
 
   return (
     <section className="space-y-3">
-      <TabIntro text={`Kliniklere WhatsApp kullanımı buradan açılır; klinik numarasını kendi panelinden QR kod ile bağlar. Açık: ${enabledCount} · bağlı: ${connectedCount}${errorCount ? ` · sorunlu: ${errorCount}` : ""}`} />
-
       <ListTable<Row>
         header={
-          <Toolbar>
+          <Toolbar
+            filters={(
+              <ChoiceCards<WaFilter>
+                label="Göster"
+                labelHidden
+                variant="pills"
+                value={view}
+                onChange={setView}
+                options={[
+                  { value: "all", label: "Tümü" },
+                  { value: "enabled", label: "Erişimi açık", count: enabledCount },
+                  { value: "connected", label: "Bağlı", count: connectedCount },
+                  { value: "error", label: "Sorunlu", count: errorCount, countTone: "critical" },
+                ]}
+              />
+            )}
+            filterCount={view === "all" ? 0 : 1}
+          >
             <SearchInput value={query} onChange={setQuery} placeholder="Klinik adı" wrapperClassName="flex-1 min-w-[220px]" />
           </Toolbar>
         }
@@ -148,10 +172,12 @@ export default function WhatsappProviderTab() {
         rows={filtered}
         rowKey={(row) => row.institutionId}
         loading={loading}
-        error={loadError}
+        // Veri varken yenileme hatası listeyi silmez; üstte şerit olarak görünür.
+        error={rows.length > 0 ? null : loadError}
+        staleError={rows.length > 0 ? loadError : null}
         onRetry={reload}
         rowClassName={(row) => (row.institutionActive ? "" : "opacity-60")}
-        emptyText={query ? "Bu adla klinik yok" : "Klinik yok"}
+        emptyText={query || view !== "all" ? "Bu süzgece uyan klinik yok" : "Klinik yok"}
         mobileCard={(row) => (
           <div className="space-y-1.5">
             <div className="flex items-center justify-between gap-2">

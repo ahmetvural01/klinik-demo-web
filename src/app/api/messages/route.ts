@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, writeAudit } from "@/lib/api";
+import { hasEffectivePermission, requireAuth, writeAudit } from "@/lib/api";
 import { requireActiveBranch } from "@/lib/branch-context";
+import { canEditMessage, rejectGhostAuthoring } from "./message-rules";
 
 export async function GET() {
   const auth = await requireAuth("messages:read");
@@ -17,14 +18,21 @@ export async function GET() {
   }
 
   try {
-    const messages = await prisma.message.findMany({
-      where: { institutionId: auth.user.institutionId, branchId: branch.branchId, deletedAt: null },
-      orderBy: { createdAt: "desc" },
-      take: 50,
-      include: { user: { select: { fullName: true, role: true } } },
-    });
+    const [messages, canWrite] = await Promise.all([
+      prisma.message.findMany({
+        where: { institutionId: auth.user.institutionId, branchId: branch.branchId, deletedAt: null },
+        orderBy: { createdAt: "desc" },
+        take: 50,
+        include: { user: { select: { fullName: true, role: true } } },
+      }),
+      hasEffectivePermission(auth.user, "messages:write"),
+    ]);
 
-    return NextResponse.json(messages.reverse());
+    // canEdit: düzenle/sil düğmeleri yalnız işe yarayacağı mesajda görünsün (kural PATCH/DELETE ile aynı).
+    return NextResponse.json(messages.reverse().map((message) => ({
+      ...message,
+      canEdit: canEditMessage(auth.user, message, canWrite),
+    })));
   } catch (error) {
     console.error("[messages GET] fallback:", error);
     return NextResponse.json({ message: "Mesajlar yüklenemedi." }, { status: 503 });
@@ -37,6 +45,8 @@ export async function POST(req: Request) {
   if (!auth.user.institutionId) {
     return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
   }
+  const ghostRejected = rejectGhostAuthoring(auth.user, "mesaj");
+  if (ghostRejected) return ghostRejected;
   const branch = requireActiveBranch(auth.user.branchContext);
   if (!branch.ok) {
     return NextResponse.json({ error: branch.message }, { status: 409 });
@@ -65,7 +75,7 @@ export async function POST(req: Request) {
     });
 
     await writeAudit(auth.user.id, "MESSAGE_CREATE", normalizedText.slice(0, 120));
-    return NextResponse.json(message);
+    return NextResponse.json({ ...message, canEdit: true });
   } catch (error) {
     console.error("[messages POST] fallback:", error);
     return NextResponse.json({ error: "Mesaj gönderilemedi" }, { status: 503 });

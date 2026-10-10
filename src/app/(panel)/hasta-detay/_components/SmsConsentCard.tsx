@@ -1,33 +1,38 @@
 "use client";
 
-import { useState, type ComponentType } from "react";
+import { useState } from "react";
 import { Send } from "lucide-react";
-import { Badge, type BadgeTone } from "@/components/ui/Badge";
+import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { formatDateText } from "@/components/ui/Money";
+import { SMS_CONSENT, type ConsentStatus } from "@/components/sms/communication-labels";
 import { showToastSafe } from "@/lib/toast-client";
 import { errorMessageOf, type SmsConsentTokenLite, type SmsPreference } from "./patient-file-shared";
-
-const STATUS_LABEL: Record<SmsPreference["status"], string> = {
-  PENDING: "Onay bekleniyor",
-  ENABLED: "Onay verdi",
-  DISABLED: "İstemiyor",
-  EXPIRED: "Bağlantının süresi doldu",
-};
-
-const STATUS_TONE: Record<SmsPreference["status"], BadgeTone> = {
-  PENDING: "warning",
-  ENABLED: "success",
-  DISABLED: "neutral",
-  EXPIRED: "critical",
-};
 
 const when = (value?: string | null) => (value ? formatDateText(value, "datetime") : "");
 
 /**
- * Hastanın bilgilendirme SMS'i iznini tek cümleyle anlatır. Önceden "Token
- * durumu", "Bağlantı: İlk SMS" gibi teknik satırlar gösteriliyordu; personelin
- * bilmesi gereken yalnız: hasta izin verdi mi, vermediyse ne yapılabilir.
+ * İletişim sayfası ve Hastalar listesiyle AYNI türetme kuralı (sunucuda
+ * api/sms/_lib/consent-status.ts#deriveSmsConsent; o modül veritabanına
+ * bağlı olduğu için burada istemci kopyası): izin SMS'i hiç gidemediyse
+ * SEND_FAILED, son bağlantı kullanılmadan süresi dolduysa EXPIRED. Önceden
+ * aynı hasta İletişim'de "İzin SMS'i gitmedi", burada "Gönderilemedi" /
+ * "Onay bekleniyor" görünüyordu (canlı test H2).
+ */
+function deriveConsent(preference: SmsPreference | null, latestToken: SmsConsentTokenLite | null, now: number): ConsentStatus {
+  if (!preference) return "NONE";
+  if (preference.status === "ENABLED" || preference.status === "DISABLED" || preference.status === "EXPIRED") return preference.status;
+  if (preference.status !== "PENDING") return "NONE";
+  if (!preference.lastRequestSentAt && preference.lastRequestError) return "SEND_FAILED";
+  if (latestToken && !latestToken.usedAt && new Date(latestToken.expiresAt).getTime() < now) return "EXPIRED";
+  return "PENDING";
+}
+
+/**
+ * Hastanın bilgilendirme SMS'i iznini tek cümleyle anlatır (Özet'teki "Hasta
+ * bilgileri" kartının İletişim bölümü). Personelin bilmesi gereken yalnız:
+ * hasta izin verdi mi, vermediyse ne yapılabilir. Durum adları İletişim'deki
+ * tek sözlükten (components/sms/communication-labels SMS_CONSENT).
  */
 export function SmsConsentCard({
   patientId,
@@ -35,33 +40,32 @@ export function SmsConsentCard({
   latestToken,
   canResend,
   onChanged,
-  icon: Icon,
 }: {
   patientId: string;
   preference: SmsPreference | null;
   latestToken: SmsConsentTokenLite | null;
   canResend: boolean;
   onChanged: () => void;
-  icon: ComponentType<{ className?: string }>;
 }) {
   const [sending, setSending] = useState(false);
-  const now = Date.now();
-  // EXPIRED veritabanında tutulmaz: hasta yanıt vermeden son bağlantının
-  // süresi dolduysa burada türetilir (bkz. docs/ILETISIM-MIMARISI-RAPORU.md §1.4).
-  const status: SmsPreference["status"] =
-    preference?.status === "PENDING" && latestToken && !latestToken.usedAt && new Date(latestToken.expiresAt).getTime() < now
-      ? "EXPIRED"
-      : preference?.status || "PENDING";
-  // Gönderilememiş bir onay SMS'i "hastaya ulaştı, cevap bekleniyor" gibi
-  // görünmesin — lastRequestError yalnız son deneme başarısızsa doludur.
-  const sendFailed = status === "PENDING" && Boolean(preference?.lastRequestError);
+  const status = deriveConsent(preference, latestToken, Date.now());
+  const view = SMS_CONSENT[status];
+  const sendFailed = status === "SEND_FAILED";
+  // Daha önce gitmiş bağlantının ardından yapılan yeniden gönderim başarısız
+  // olduysa durum "Onay bekliyor" kalır; hata cümlede ayrıca söylenir.
+  const lastAttemptFailed = status === "PENDING" && Boolean(preference?.lastRequestError);
 
   const sentence = (() => {
-    if (sendFailed) return `Onay SMS'i gönderilemedi${preference?.lastRequestAttemptAt ? ` (${when(preference.lastRequestAttemptAt)})` : ""}: ${preference?.lastRequestError}`;
+    if (sendFailed) return `İzin SMS'i gönderilemedi${preference?.lastRequestAttemptAt ? ` (${when(preference.lastRequestAttemptAt)})` : ""}: ${preference?.lastRequestError}`;
     if (status === "ENABLED") return `Hasta bilgilendirme SMS'i almayı onayladı${preference?.firstConsentAt ? ` (${when(preference.firstConsentAt)})` : ""}.`;
     if (status === "DISABLED") return `Hasta SMS almak istemediğini bildirdi${preference?.lastRejectionAt ? ` (${when(preference.lastRejectionAt)})` : ""}. Bilgilendirme SMS'i gönderilmez.`;
     if (status === "EXPIRED") return "Onay bağlantısının süresi doldu; hasta yanıtlamadı. Bilgilendirme SMS'i gönderilmez.";
-    if (preference?.lastRequestSentAt) return `Onay bağlantısı gönderildi (${when(preference.lastRequestSentAt)}); hasta henüz yanıtlamadı. Onay gelene kadar bilgilendirme SMS'i gönderilmez.`;
+    if (preference?.lastRequestSentAt) {
+      const failedNote = lastAttemptFailed
+        ? ` Son gönderim denemesi başarısız${preference.lastRequestAttemptAt ? ` (${when(preference.lastRequestAttemptAt)})` : ""}: ${preference.lastRequestError}`
+        : "";
+      return `Onay bağlantısı gönderildi (${when(preference.lastRequestSentAt)}); hasta henüz yanıtlamadı. Onay gelene kadar bilgilendirme SMS'i gönderilmez.${failedNote}`;
+    }
     return "Hastadan henüz SMS onayı istenmedi. Onay gelene kadar bilgilendirme SMS'i gönderilmez.";
   })();
 
@@ -81,20 +85,19 @@ export function SmsConsentCard({
   };
 
   return (
-    <section className="ui-surface p-4 sm:p-5" aria-label="SMS izni">
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <h2 className="flex items-center gap-2 text-base font-bold text-slate-900">
-          <Icon className="h-4 w-4 text-slate-400" aria-hidden="true" />
-          SMS izni
-        </h2>
-        <Badge tone={sendFailed ? "critical" : STATUS_TONE[status]}>{sendFailed ? "Gönderilemedi" : STATUS_LABEL[status]}</Badge>
+    <div className="space-y-2">
+      {/* "SMS izni" etiketi yalnız rozet adı konuyu söylemiyorsa yazılır
+          ("SMS izni · SMS izni var" tekrarı olmasın; "Onay bekliyor" bağlamsız kalmasın). */}
+      <div className="flex items-center justify-between gap-3">
+        {!/SMS/.test(view.label) && <span className="text-xs font-semibold text-slate-500">SMS izni</span>}
+        <Badge tone={view.tone}>{view.label}</Badge>
       </div>
-      <p className={`text-sm leading-6 ${sendFailed ? "text-red-700" : "text-slate-600"}`}>{sentence}</p>
+      <p className={`text-sm leading-6 ${sendFailed ? "text-red-700" : "text-slate-700"}`}>{sentence}</p>
       {canResend && status !== "ENABLED" && (
-        <Button variant="secondary" size="sm" icon={Send} className="mt-3" loading={sending} onClick={() => void resend()}>
+        <Button variant="secondary" size="sm" icon={Send} loading={sending} onClick={() => void resend()}>
           {preference?.lastRequestSentAt || latestToken ? "Onay bağlantısını tekrar gönder" : "Onay bağlantısı gönder"}
         </Button>
       )}
-    </section>
+    </div>
   );
 }

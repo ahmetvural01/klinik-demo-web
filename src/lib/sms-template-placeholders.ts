@@ -6,7 +6,8 @@ export type SmsPlaceholder = { token: string; label: string; sample: string };
 export const SMS_PLACEHOLDERS: SmsPlaceholder[] = [
   { token: "institutionName", label: "Klinik Adı", sample: "Beyaz Diş Kliniği" },
   { token: "patientName", label: "Hasta Adı", sample: "Ayşe Yılmaz" },
-  { token: "dateTime", label: "Randevu Tarihi/Saati", sample: "12.08.2026 14:30" },
+  // Örnek, gönderilen mesajlarla aynı biçimde (formatAppointmentDateTime).
+  { token: "dateTime", label: "Randevu Tarihi/Saati", sample: "12 Ağustos 2026 14:30" },
   { token: "doctorName", label: "Doktor Adı", sample: "Dr. Mehmet Demir" },
   { token: "dueDate", label: "Vade Tarihi", sample: "15.08.2026" },
   { token: "amount", label: "Tutar (TL)", sample: "1.250" },

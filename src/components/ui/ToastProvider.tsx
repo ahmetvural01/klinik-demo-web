@@ -32,7 +32,10 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const showToast = useCallback((t: Omit<Toast, 'id'>) => {
     const id = String(Date.now()) + Math.random().toString(36).slice(2, 8);
-    const toast: Toast = { id, duration: 3000, ...t };
+    // Hata bildirimi ne olduğunu ve ne yapılacağını söyler; 3 sn'de okunup
+    // anlaşılamıyordu (WCAG 2.2.1). Süre verilmemişse hata 8 sn kalır.
+    // Açıkça verilen süre (0 = kendiliğinden kapanmaz) aynen korunur.
+    const toast: Toast = { id, ...t, duration: t.duration ?? (t.type === "error" ? 8000 : 3000) };
     setToasts((s) => [...s, toast]);
     if (toast.duration && toast.duration > 0) {
       timersRef.current[id] = window.setTimeout(() => {
@@ -47,7 +50,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       try {
         const d = (e as CustomEvent<Omit<Toast, "id">>).detail;
         if (!d) return;
-        showToast({ title: d.title, message: d.message, type: d.type, duration: d.duration ?? 3000, icon: d.icon });
+        showToast({ title: d.title, message: d.message, type: d.type, duration: d.duration, icon: d.icon });
       } catch {}
     }
     window.addEventListener('klinik-show-toast', onEvent as EventListener);
@@ -64,7 +67,9 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, []);
 
   const toastList = (
-    <div aria-live="polite" aria-atomic="false" className="fixed right-3 top-[68px] z-[360] flex w-[calc(100vw-1.5rem)] max-w-sm flex-col gap-2 sm:right-4 sm:top-[72px] sm:w-auto">
+    // Canlı bölge yalnız öğelerde (role=status/alert); kapta ayrıca aria-live
+    // olunca bazı ekran okuyucular bildirimi iki kez okuyordu.
+    <div className="fixed right-3 top-[68px] z-[var(--z-toast)] flex w-[calc(100vw-1.5rem)] max-w-sm flex-col gap-2 sm:right-4 sm:top-[72px] sm:w-auto">
       {toasts.map((t) => {
         const bg = t.type === 'error' ? 'bg-red-50 border-red-200' : t.type === 'success' ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-slate-200';
         return (
@@ -88,8 +93,9 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 {t.title && <div className="text-sm font-semibold text-slate-800">{t.title}</div>}
                 <div className="text-sm leading-5 text-slate-700">{t.message}</div>
               </div>
-              <button aria-label="Bildirimi kapat" onClick={() => remove(t.id)} className="ml-2 rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700">
-                <X className="h-4 w-4" />
+              {/* ui-touch-target: görünüş 24px, dokunmatikte dokunma alanı 36px. */}
+              <button type="button" aria-label="Bildirimi kapat" onClick={() => remove(t.id)} className="ui-touch-target ml-2 rounded-lg p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700">
+                <X className="h-4 w-4" aria-hidden="true" />
               </button>
             </div>
           </div>

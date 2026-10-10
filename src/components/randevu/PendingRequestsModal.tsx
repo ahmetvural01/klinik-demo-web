@@ -1,17 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarPlus, PhoneCall, UserPlus, X } from "lucide-react";
+import { CalendarPlus, PhoneCall, PhoneOff, UserPlus, X } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
-import { Button, IconButton } from "@/components/ui/Button";
+import { FormModal } from "@/components/ui/FormModal";
+import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
+import { Callout } from "@/components/ui/Callout";
 import { Tabs } from "@/components/ui/Tabs";
+import { ChoiceCards } from "@/components/ui/ChoiceCards";
+import { ActionMenu, type ActionMenuItem } from "@/components/ui/ActionMenu";
 import { ListTable, EmptyValue, type ListTableColumn } from "@/components/ui/ListTable";
-import { FormErrorBanner, FormField } from "@/components/ui/FormField";
+import { FormField } from "@/components/ui/FormField";
 import { Input, Textarea } from "@/components/ui/Input";
 import { PatientPicker, type PickedPatient } from "@/components/patient/PatientPicker";
 import { DoctorSelect } from "@/components/staff/DoctorSelect";
-import { ActionMenu } from "@/components/randevu/ActionMenu";
 import { confirmDialog } from "@/lib/confirm-client";
 import { clientMutation } from "@/lib/client-mutation";
 import { showToastSafe } from "@/lib/toast-client";
@@ -48,34 +51,59 @@ type PendingRequestsModalProps = {
   onCountsChanged: () => void;
 };
 
-type ListState<T> = { items: T[]; loading: boolean; error: string | null };
+type OnlineStatus = "BEKLIYOR" | "ONAYLANDI" | "REDDEDILDI";
+type WaitlistFilter = "TUMU" | "BEKLIYOR" | "ARANDI";
+type ListState<T> = { items: T[]; loading: boolean; loaded: boolean; error: string | null };
 
-function useList<T>(url: string) {
-  const [state, setState] = useState<ListState<T>>({ items: [], loading: true, error: null });
+const APPROVE_REQUIRED = "Online talebe randevu vermek için “Randevu onaylama” yetkisi gerekir.";
+
+/**
+ * Liste yükleyici: gerçek zamanlı olayda (başka bir personel talebi işledi)
+ * 0,8 sn birleştirerek yeniler; sekme gizliyken yenilemez, görünür olunca bir
+ * kez yeniler. `url` null ise hiç istek atmaz (seçilmeyen durum sekmesi).
+ */
+function useList<T>(url: string | null) {
+  const [state, setState] = useState<ListState<T>>({ items: [], loading: Boolean(url), loaded: false, error: null });
   const load = useCallback(async () => {
+    if (!url) return;
     setState((prev) => ({ ...prev, loading: true, error: null }));
     try {
       const response = await fetch(url, { cache: "no-store" });
       const data = await response.json().catch(() => null);
       if (!response.ok || !Array.isArray(data)) throw new Error(data?.message || data?.error || "Liste yüklenemedi.");
-      setState({ items: data as T[], loading: false, error: null });
+      setState({ items: data as T[], loading: false, loaded: true, error: null });
     } catch (loadError) {
       setState((prev) => ({ ...prev, loading: false, error: loadError instanceof Error ? loadError.message : "Liste yüklenemedi." }));
     }
   }, [url]);
-  useEffect(() => { void load(); }, [load]);
+  // Adres değişince (ör. "Reddedilen" süzgecine geçiş) önceki listenin satırları görünmesin.
   useEffect(() => {
+    setState({ items: [], loading: Boolean(url), loaded: false, error: null });
+    void load();
+  }, [load, url]);
+  useEffect(() => {
+    if (!url) return;
     let timer: number | null = null;
+    let missed = false;
+    const run = () => {
+      if (document.hidden) { missed = true; return; }
+      void load();
+    };
     const onRealtime = () => {
       if (timer) window.clearTimeout(timer);
-      timer = window.setTimeout(() => void load(), 400);
+      timer = window.setTimeout(run, 800);
+    };
+    const onVisibility = () => {
+      if (!document.hidden && missed) { missed = false; void load(); }
     };
     window.addEventListener("ks:realtime-sync", onRealtime);
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       if (timer) window.clearTimeout(timer);
       window.removeEventListener("ks:realtime-sync", onRealtime);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [load]);
+  }, [load, url]);
   return { ...state, reload: load, setItems: (updater: (items: T[]) => T[]) => setState((prev) => ({ ...prev, items: updater(prev.items) })) };
 }
 
@@ -86,15 +114,31 @@ function preferredText(iso: string | null | undefined) {
   return { day, key, period: preferredPeriodLabel(preferredMinutesOf(iso)) };
 }
 
+/** Talebin ne zaman geldiği: "az önce", "45 dk önce", "3 sa önce", "2 gün önce" ya da tarih. */
+function sinceText(iso: string, now: Date) {
+  const diff = Math.max(0, now.getTime() - new Date(iso).getTime());
+  const minutes = Math.floor(diff / 60_000);
+  if (minutes < 1) return "az önce";
+  if (minutes < 60) return `${minutes} dk önce`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} sa önce`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days} gün önce`;
+  return formatDayShort(new Date(iso), now);
+}
+
 function stampNow() {
   const now = new Date();
   return `${now.getDate()}.${String(now.getMonth() + 1).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
 }
 
 /**
- * "Bekleyenler": internetten gelen randevu talepleri ve bekleme listesi tek
- * pencerede, sayaçlı sekmelerle. Önceden iki ayrı düğmeydi, sayaçları
- * pencere açılmadan boş görünüyordu ve liste yüklenirken "yok" yazıyordu.
+ * "Talepler": internetten gelen randevu talepleri ve bekleme listesi tek
+ * pencerede, sayaçlı sekmelerle. Online taleplerde durum süzgeci (bekleyen /
+ * onaylanan / reddedilen — hasta "talep ettim" dediğinde bakılır); satırda en
+ * sık eylem görünür, kalanı "…" menüsünde. Önceden sekme başlarında iki ayrı
+ * açıklama paragrafı aynı şeyi anlatıyordu ve "Arandı ▾" düğmesi durum mu
+ * eylem mi belli değildi.
  */
 export function PendingRequestsModal({
   initialTab,
@@ -107,18 +151,31 @@ export function PendingRequestsModal({
   onCountsChanged,
 }: PendingRequestsModalProps) {
   const [tab, setTab] = useState<PendingTab>(initialTab);
-  const online = useList<BookingRequestEntry>("/api/booking-requests");
+  const [onlineStatus, setOnlineStatus] = useState<OnlineStatus>("BEKLIYOR");
+  const [waitlistFilter, setWaitlistFilter] = useState<WaitlistFilter>("TUMU");
+  const pending = useList<BookingRequestEntry>("/api/booking-requests");
+  // Geçmiş talepler yalnız o süzgeç seçilince yüklenir.
+  const history = useList<BookingRequestEntry>(tab === "online" && onlineStatus !== "BEKLIYOR" ? `/api/booking-requests?status=${onlineStatus}` : null);
   const waitlist = useList<WaitlistEntry>("/api/waitlist");
   const [rejecting, setRejecting] = useState<BookingRequestEntry | null>(null);
   const [adding, setAdding] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const todayKey = toDateKey(new Date());
+  const [now] = useState(() => new Date());
+  const todayKey = toDateKey(now);
 
+  const online = onlineStatus === "BEKLIYOR" ? pending : history;
   const onlineRows = useMemo(
     () => [...online.items].sort((a, b) => String(preferredDateKeyOf(a.preferredFrom)).localeCompare(String(preferredDateKeyOf(b.preferredFrom)))),
     [online.items],
   );
   const activeWaitlist = useMemo(() => waitlist.items.filter((entry) => entry.status === "BEKLIYOR" || entry.status === "ARANDI"), [waitlist.items]);
+  const waitlistRows = useMemo(
+    () => (waitlistFilter === "TUMU" ? activeWaitlist : activeWaitlist.filter((entry) => entry.status === waitlistFilter)),
+    [activeWaitlist, waitlistFilter],
+  );
+  const toCall = activeWaitlist.filter((entry) => entry.status === "BEKLIYOR").length;
+  const called = activeWaitlist.length - toCall;
+  const canScheduleOnline = permissions.canCreate && permissions.canApprove;
 
   const closeUnlinked = async (request: BookingRequestEntry) => {
     const appointmentId = unlinkedRequests[request.id];
@@ -128,7 +185,7 @@ export function PendingRequestsModal({
     if (linked.ok) {
       setBusyId(null);
       onUnlinkedResolved(request.id);
-      online.setItems((items) => items.filter((item) => item.id !== request.id));
+      pending.setItems((items) => items.filter((item) => item.id !== request.id));
       onCountsChanged();
       showToastSafe({ message: `${request.fullName} talebi randevuyla kapatıldı.`, type: "success" });
       return;
@@ -147,7 +204,7 @@ export function PendingRequestsModal({
         body: JSON.stringify({ status: "IPTAL", reason: "Randevu verildi; talep randevuya bağlanamadı" }),
       }, "Talep kapatılamadı.");
       onUnlinkedResolved(request.id);
-      online.setItems((items) => items.filter((item) => item.id !== request.id));
+      pending.setItems((items) => items.filter((item) => item.id !== request.id));
       onCountsChanged();
     } catch (closeError) {
       showToastSafe({ message: closeError instanceof Error ? closeError.message : "Talep kapatılamadı.", type: "error" });
@@ -209,6 +266,43 @@ export function PendingRequestsModal({
     );
   };
 
+  function onlineActions(row: BookingRequestEntry) {
+    if (row.status !== "BEKLIYOR") {
+      return <Badge tone={row.status === "ONAYLANDI" ? "success" : "neutral"}>{row.status === "ONAYLANDI" ? "Randevu verildi" : row.status === "REDDEDILDI" ? "Reddedildi" : "Kapatıldı"}</Badge>;
+    }
+    if (unlinkedRequests[row.id]) {
+      return (
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Badge tone="info">Randevu verildi</Badge>
+          {permissions.canApprove && <Button size="sm" variant="secondary" loading={busyId === row.id} onClick={() => void closeUnlinked(row)}>Talebi kapat</Button>}
+        </div>
+      );
+    }
+    // Reddetme yalnız onay yetkisi ister (sunucu da öyle); randevu yazma
+    // yetkisi olmayan ama onaylayabilen rol talebi reddedebilmeye devam eder.
+    if (!permissions.canCreate && !permissions.canApprove) return null;
+    const menu: ActionMenuItem[] = permissions.canApprove
+      ? [{ key: "reddet", label: "Talebi reddet", icon: X, danger: true, onSelect: () => setRejecting(row) }]
+      : [];
+    return (
+      <div className="flex items-center justify-end gap-2">
+        {permissions.canCreate && (
+          <Button
+            size="sm"
+            variant="secondary"
+            icon={CalendarPlus}
+            disabled={!canScheduleOnline}
+            title={canScheduleOnline ? undefined : APPROVE_REQUIRED}
+            onClick={() => onSchedule({ type: "online", request: row })}
+          >
+            Randevu ver
+          </Button>
+        )}
+        <ActionMenu items={menu} label={`${row.fullName} için diğer işlemler`} />
+      </div>
+    );
+  }
+
   const onlineColumns: ListTableColumn<BookingRequestEntry>[] = [
     {
       key: "hasta",
@@ -216,7 +310,7 @@ export function PendingRequestsModal({
       render: (row) => (
         <div className="min-w-0">
           <p className="font-semibold text-slate-800">{row.fullName}</p>
-          {contact(row.phone, row.tcNo ? `TC ${row.tcNo}` : null)}
+          {contact(row.phone, row.tcNo && row.tcNo !== "***" ? `TC ${row.tcNo}` : null)}
         </div>
       ),
     },
@@ -228,46 +322,50 @@ export function PendingRequestsModal({
         if (!pref) return <EmptyValue />;
         return (
           <div>
-            <p className="text-sm text-slate-800">{formatDayShort(pref.day)}</p>
+            <p className="text-sm text-slate-800">{formatDayShort(pref.day, now)}</p>
             <p className="text-xs text-slate-500">{pref.period}{row.doctor?.fullName ? ` · ${row.doctor.fullName}` : ""}</p>
-            {pref.key < todayKey && <Badge tone="warning" className="mt-1">Tarihi geçti</Badge>}
+            {row.status === "BEKLIYOR" && pref.key < todayKey && <Badge tone="warning" className="mt-1">Tarihi geçti</Badge>}
           </div>
         );
       },
     },
     { key: "not", header: "Not", render: (row) => (row.note ? <span className="line-clamp-2 text-xs text-slate-600">{row.note}</span> : <EmptyValue />) },
-    {
-      key: "actions",
-      header: "",
-      align: "right",
-      render: (row) => onlineActions(row),
-    },
+    { key: "gelis", header: "Gönderildi", cellClassName: "whitespace-nowrap text-xs text-slate-500", render: (row) => sinceText(row.createdAt, now) },
+    { key: "actions", header: "", align: "right", render: (row) => onlineActions(row) },
   ];
 
-  function onlineActions(row: BookingRequestEntry) {
-    const unlinked = unlinkedRequests[row.id];
-    if (unlinked) {
-      return (
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <Badge tone="info">Randevu verildi</Badge>
-          {permissions.canApprove && <Button size="sm" variant="secondary" loading={busyId === row.id} onClick={() => void closeUnlinked(row)}>Talebi kapat</Button>}
-        </div>
-      );
-    }
+  function waitlistActions(row: WaitlistEntry) {
+    if (!permissions.canCreate) return null;
     return (
       <div className="flex items-center justify-end gap-2">
-        {permissions.canCreate && permissions.canApprove && (
-          <Button size="sm" variant="secondary" icon={CalendarPlus} onClick={() => onSchedule({ type: "online", request: row })}>Randevu ver</Button>
-        )}
-        {permissions.canApprove && <IconButton icon={X} tone="danger" size="sm" title="Talebi reddet" onClick={() => setRejecting(row)} />}
+        <Button size="sm" variant="secondary" icon={CalendarPlus} onClick={() => onSchedule({ type: "waitlist", entry: row })}>Randevu ver</Button>
+        <ActionMenu
+          label={`${row.patient.fullName} için diğer işlemler`}
+          items={[
+            { key: "ok", label: "Arandı: ulaşıldı", icon: PhoneCall, disabled: busyId === row.id, onSelect: () => void markCalled(row, "ulaşıldı") },
+            { key: "no", label: "Arandı: ulaşılamadı", icon: PhoneOff, disabled: busyId === row.id, onSelect: () => void markCalled(row, "ulaşılamadı") },
+            { key: "cikar", label: "Listeden çıkar", icon: X, danger: true, separatorBefore: true, disabled: busyId === row.id, onSelect: () => void removeEntry(row) },
+          ]}
+        />
       </div>
     );
   }
+
+  // Son arama kaydı "[10.10 14:02] Arandı: ulaşılamadı" biçiminde saklanır;
+  // rozet zaten "Arandı" dediği için satırda yalnız "10.10 14:02 · ulaşılamadı".
+  const lastCallLine = (note: string | null | undefined) => {
+    const lines = String(note || "").split("\n").filter((line) => line.startsWith("["));
+    if (lines.length === 0) return null;
+    const last = lines[lines.length - 1];
+    const match = /^\[([^\]]+)\]\s*(?:Arandı:\s*)?(.*)$/.exec(last);
+    return match ? [match[1], match[2]].filter(Boolean).join(" · ") : last;
+  };
 
   const waitlistColumns: ListTableColumn<WaitlistEntry>[] = [
     {
       key: "hasta",
       header: "Hasta",
+      cellClassName: "min-w-[11rem]",
       render: (row) => (
         <div className="min-w-0">
           <p className="font-semibold text-slate-800">{row.patient.fullName}</p>
@@ -281,46 +379,37 @@ export function PendingRequestsModal({
       render: (row) => {
         const from = preferredText(row.preferredFrom);
         const to = preferredText(row.preferredTo);
+        // "En geç" tarihi geçtiyse hasta artık o aralıkta beklemiyor olabilir.
+        const lastKey = to?.key || null;
         return (
           <div>
-            <p className="text-sm text-slate-800">{from ? formatDayShort(from.day) : "Tarih fark etmez"}{to ? ` – ${formatDayShort(to.day)}` : ""}</p>
+            <p className="text-sm text-slate-800">{from ? formatDayShort(from.day, now) : "Tarih fark etmez"}{to ? ` – ${formatDayShort(to.day, now)}` : ""}</p>
             <p className="text-xs text-slate-500">{row.doctor?.fullName || "Doktor fark etmez"}</p>
+            {lastKey && lastKey < todayKey && <Badge tone="warning" className="mt-1">Tarihi geçti</Badge>}
           </div>
         );
       },
     },
-    { key: "not", header: "Not", render: (row) => (row.note ? <span className="line-clamp-2 whitespace-pre-line text-xs text-slate-600">{row.note}</span> : <EmptyValue />) },
+    {
+      key: "not",
+      header: "Not",
+      render: (row) => {
+        const text = String(row.note || "").split("\n").filter((line) => !line.startsWith("[")).join(" ");
+        return text ? <span className="line-clamp-2 text-xs text-slate-600">{text}</span> : <EmptyValue />;
+      },
+    },
     {
       key: "durum",
       header: "Durum",
-      render: (row) => <Badge tone={row.status === "ARANDI" ? "info" : "warning"}>{row.status === "ARANDI" ? "Arandı" : "Aranacak"}</Badge>,
+      render: (row) => (
+        <div>
+          <Badge tone={row.status === "ARANDI" ? "info" : "warning"}>{row.status === "ARANDI" ? "Arandı" : "Aranacak"}</Badge>
+          {row.status === "ARANDI" && lastCallLine(row.note) && <p className="mt-1 text-xs text-slate-500">{lastCallLine(row.note)}</p>}
+        </div>
+      ),
     },
-    {
-      key: "actions",
-      header: "",
-      align: "right",
-      render: (row) => waitlistActions(row),
-    },
+    { key: "actions", header: "", align: "right", render: (row) => waitlistActions(row) },
   ];
-
-  function waitlistActions(row: WaitlistEntry) {
-    if (!permissions.canCreate) return null;
-    return (
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        <Button size="sm" variant="secondary" icon={CalendarPlus} onClick={() => onSchedule({ type: "waitlist", entry: row })}>Randevu ver</Button>
-        <ActionMenu
-          label="Arandı"
-          size="sm"
-          icon={PhoneCall}
-          items={[
-            { key: "ok", label: "Ulaşıldı", onSelect: () => void markCalled(row, "ulaşıldı") },
-            { key: "no", label: "Ulaşılamadı", onSelect: () => void markCalled(row, "ulaşılamadı") },
-          ]}
-        />
-        <IconButton icon={X} tone="danger" size="sm" title="Listeden çıkar" disabled={busyId === row.id} onClick={() => void removeEntry(row)} />
-      </div>
-    );
-  }
 
   const onlineCard = (row: BookingRequestEntry) => {
     const pref = preferredText(row.preferredFrom);
@@ -329,11 +418,14 @@ export function PendingRequestsModal({
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <p className="font-semibold text-slate-800">{row.fullName}</p>
-            {contact(row.phone, row.tcNo ? `TC ${row.tcNo}` : null)}
+            {contact(row.phone)}
           </div>
-          {pref && pref.key < todayKey && <Badge tone="warning">Tarihi geçti</Badge>}
+          {row.status === "BEKLIYOR" && pref && pref.key < todayKey && <Badge tone="warning">Tarihi geçti</Badge>}
         </div>
-        <p className="text-xs text-slate-600">{pref ? `${formatDayShort(pref.day)} · ${pref.period}` : "Tarih yok"}{row.doctor?.fullName ? ` · ${row.doctor.fullName}` : ""}</p>
+        <p className="text-xs text-slate-600">
+          {pref ? `${formatDayShort(pref.day, now)} · ${pref.period}` : "Tarih yok"}{row.doctor?.fullName ? ` · ${row.doctor.fullName}` : ""}
+          <span className="text-slate-400"> · {sinceText(row.createdAt, now)}</span>
+        </p>
         {row.note && <p className="text-xs text-slate-500">{row.note}</p>}
         {onlineActions(row)}
       </div>
@@ -342,6 +434,7 @@ export function PendingRequestsModal({
 
   const waitlistCard = (row: WaitlistEntry) => {
     const from = preferredText(row.preferredFrom);
+    const text = String(row.note || "").split("\n").filter((line) => !line.startsWith("[")).join(" ");
     return (
       <div className="space-y-2">
         <div className="flex items-start justify-between gap-2">
@@ -351,8 +444,9 @@ export function PendingRequestsModal({
           </div>
           <Badge tone={row.status === "ARANDI" ? "info" : "warning"}>{row.status === "ARANDI" ? "Arandı" : "Aranacak"}</Badge>
         </div>
-        <p className="text-xs text-slate-600">{from ? formatDayShort(from.day) : "Tarih fark etmez"} · {row.doctor?.fullName || "Doktor fark etmez"}</p>
-        {row.note && <p className="whitespace-pre-line text-xs text-slate-500">{row.note}</p>}
+        <p className="text-xs text-slate-600">{from ? formatDayShort(from.day, now) : "Tarih fark etmez"} · {row.doctor?.fullName || "Doktor fark etmez"}</p>
+        {text && <p className="text-xs text-slate-500">{text}</p>}
+        {row.status === "ARANDI" && lastCallLine(row.note) && <p className="text-xs text-slate-400">{lastCallLine(row.note)}</p>}
         {waitlistActions(row)}
       </div>
     );
@@ -360,52 +454,82 @@ export function PendingRequestsModal({
 
   return (
     <>
-      <Modal open module="calendar" size="xl" onClose={onClose} trackFormChanges={false} title="Bekleyenler" description="Randevu verilmeyi bekleyen hastalar: internetten gelen talepler ve bekleme listesi.">
+      <Modal open module="calendar" size="xl" onClose={onClose} trackFormChanges={false} title="Talepler">
         <div className="space-y-3">
           <Tabs
-            ariaLabel="Bekleyen hasta listeleri"
+            ariaLabel="Talep listeleri"
             size="sm"
             value={tab}
             onChange={setTab}
             items={[
-              { key: "online", label: "Online talepler", count: online.loading ? undefined : online.items.length, countTone: "warning" },
-              { key: "bekleme", label: "Bekleme listesi", count: waitlist.loading ? undefined : activeWaitlist.length, countTone: "neutral" },
+              { key: "online", label: "Online talepler", count: pending.loaded ? pending.items.length : undefined, countTone: "warning", countLabel: "bekleyen online talep" },
+              { key: "bekleme", label: "Bekleme listesi", count: waitlist.loaded ? activeWaitlist.length : undefined, countTone: "neutral", countLabel: "bekleme listesindeki hasta" },
             ]}
           />
 
+          {tab === "online" && permissions.canCreate && !permissions.canApprove && pending.items.length > 0 && (
+            // Varsayılan rollerde Banko talepleri görür ama işleyemez; önceden nedeni yazmıyordu (denetim G7).
+            <Callout tone="neutral" compact>{APPROVE_REQUIRED}</Callout>
+          )}
           {tab === "online" ? (
-            <>
-              <p className="text-xs text-slate-500">Hasta internetten tercih bildirdi; uygun saati bulup randevu verin. Reddetmek hastaya otomatik mesaj göndermez — gerekirse hastayı arayın.</p>
-              <ListTable
-                columns={onlineColumns}
-                rows={onlineRows}
-                rowKey={(row) => row.id}
-                loading={online.loading}
-                error={online.error}
-                onRetry={() => void online.reload()}
-                emptyText="Bekleyen online talep yok"
-                emptyDescription="Hastalar klinik bağlantınızdan talep gönderdiğinde burada görünür."
-                mobileCard={onlineCard}
-              />
-            </>
+            <ListTable
+              columns={onlineColumns}
+              rows={onlineRows}
+              rowKey={(row) => row.id}
+              header={(
+                <div className="border-b border-slate-100 px-4 py-2.5">
+                  <ChoiceCards
+                    label="Talep durumu"
+                    labelHidden
+                    variant="pills"
+                    value={onlineStatus}
+                    onChange={setOnlineStatus}
+                    options={[
+                      { value: "BEKLIYOR", label: "Bekleyen", count: pending.loaded ? pending.items.length : undefined, countTone: "warning" },
+                      { value: "ONAYLANDI", label: "Randevu verilen" },
+                      { value: "REDDEDILDI", label: "Reddedilen" },
+                    ]}
+                  />
+                </div>
+              )}
+              loading={online.loading && !online.loaded}
+              error={online.loaded ? null : online.error}
+              staleError={online.loaded ? online.error : null}
+              onRetry={() => void online.reload()}
+              emptyText={onlineStatus === "BEKLIYOR" ? "Bekleyen online talep yok" : onlineStatus === "ONAYLANDI" ? "Randevu verilmiş talep yok" : "Reddedilmiş talep yok"}
+              emptyDescription={onlineStatus === "BEKLIYOR" ? "Hastalar kliniğin online randevu bağlantısından talep gönderdiğinde burada görünür." : undefined}
+              mobileCard={onlineCard}
+            />
           ) : (
-            <>
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-xs text-slate-500">Boşalan bir saat için aranacak hastalar. İptal veya gelmeyen randevudan sonra buraya bakın.</p>
-                {permissions.canCreate && <Button size="sm" variant="secondary" icon={UserPlus} onClick={() => setAdding(true)}>Listeye hasta ekle</Button>}
-              </div>
-              <ListTable
-                columns={waitlistColumns}
-                rows={activeWaitlist}
-                rowKey={(row) => row.id}
-                loading={waitlist.loading}
-                error={waitlist.error}
-                onRetry={() => void waitlist.reload()}
-                emptyText="Bekleme listesi boş"
-                emptyDescription="Uygun saat bulunamayan hastaları ekleyin; bir randevu boşalınca buradan arayın."
-                mobileCard={waitlistCard}
-              />
-            </>
+            <ListTable
+              columns={waitlistColumns}
+              rows={waitlistRows}
+              rowKey={(row) => row.id}
+              header={(
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-2.5">
+                  <ChoiceCards
+                    label="Arama durumu"
+                    labelHidden
+                    variant="pills"
+                    value={waitlistFilter}
+                    onChange={setWaitlistFilter}
+                    options={[
+                      { value: "TUMU", label: "Tümü" },
+                      { value: "BEKLIYOR", label: "Aranacak", count: waitlist.loaded ? toCall : undefined, countTone: "warning" },
+                      { value: "ARANDI", label: "Arandı", count: waitlist.loaded ? called : undefined },
+                    ]}
+                  />
+                  {permissions.canCreate && <Button size="sm" variant="secondary" icon={UserPlus} onClick={() => setAdding(true)}>Listeye hasta ekle</Button>}
+                </div>
+              )}
+              loading={waitlist.loading && !waitlist.loaded}
+              error={waitlist.loaded ? null : waitlist.error}
+              staleError={waitlist.loaded ? waitlist.error : null}
+              onRetry={() => void waitlist.reload()}
+              emptyText={waitlistFilter === "TUMU" ? "Bekleme listesi boş" : "Bu durumda hasta yok"}
+              emptyDescription={waitlistFilter === "TUMU" ? "Uygun saat bulunamayan hastayı ekleyin; bir randevu boşalınca buradan arayın." : undefined}
+              mobileCard={waitlistCard}
+            />
           )}
         </div>
       </Modal>
@@ -416,7 +540,7 @@ export function PendingRequestsModal({
           canSeePhone={permissions.canSeePhone}
           onClose={() => setRejecting(null)}
           onDone={() => {
-            online.setItems((items) => items.filter((item) => item.id !== rejecting.id));
+            pending.setItems((items) => items.filter((item) => item.id !== rejecting.id));
             setRejecting(null);
             onCountsChanged();
           }}
@@ -463,31 +587,28 @@ function RejectRequestModal({ request, canSeePhone, onClose, onDone }: { request
   };
 
   return (
-    <Modal
+    <FormModal
       open
       size="sm"
       module="calendar"
       onClose={onClose}
       title="Online talebi reddet"
       description={request.fullName}
-      footer={(
-        <>
-          <Button variant="secondary" onClick={onClose}>Vazgeç</Button>
-          <Button variant="danger" loading={saving} onClick={() => void reject()}>Reddet</Button>
-        </>
-      )}
+      onSubmit={() => reject()}
+      submitting={saving}
+      submitLabel="Reddet"
+      submitVariant="danger"
+      error={error}
+      formClassName="space-y-3"
     >
-      <div className="space-y-3">
-        <FormErrorBanner message={error} />
-        <p className="text-sm text-slate-600">
-          Hastaya otomatik mesaj gitmez.
-          {canSeePhone && href ? <> Gerekirse <a href={href} className="font-semibold text-primary hover:underline">{formatPhoneDisplay(request.phone)}</a> numarasından arayıp bilgi verin.</> : " Gerekirse hastayı arayıp bilgi verin."}
-        </p>
-        <FormField label="Neden" htmlFor="reject-reason" hint="İsteğe bağlı — işlem kayıtlarına yazılır.">
-          <Textarea id="reject-reason" rows={2} value={reason} onChange={(event) => setReason(event.target.value)} maxLength={300} placeholder="Ör. istenen gün dolu, hasta başka güne razı değil" />
-        </FormField>
-      </div>
-    </Modal>
+      <p className="text-sm text-slate-600">
+        Hastaya otomatik mesaj gitmez.
+        {canSeePhone && href ? <> Gerekirse <a href={href} className="font-semibold text-primary hover:underline">{formatPhoneDisplay(request.phone)}</a> numarasından arayıp bilgi verin.</> : " Gerekirse hastayı arayıp bilgi verin."}
+      </p>
+      <FormField label="Neden" htmlFor="reject-reason" hint="İsteğe bağlı — işlem kayıtlarına yazılır.">
+        <Textarea id="reject-reason" rows={2} value={reason} onChange={(event) => setReason(event.target.value)} maxLength={300} placeholder="Ör. istenen gün dolu, hasta başka güne razı değil" />
+      </FormField>
+    </FormModal>
   );
 }
 
@@ -499,6 +620,7 @@ function WaitlistAddModal({ doctors, onClose, onAdded }: { doctors: CalendarDoct
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const todayKey = toDateKey(new Date());
 
   const save = async () => {
     setError(null);
@@ -530,39 +652,33 @@ function WaitlistAddModal({ doctors, onClose, onAdded }: { doctors: CalendarDoct
   };
 
   return (
-    <Modal
+    <FormModal
       open
       module="calendar"
       onClose={onClose}
       title="Bekleme listesine ekle"
-      description="Uygun saat bulunamayan hastayı ekleyin; bir randevu boşalınca listeden arayın."
-      footer={(
-        <>
-          <Button variant="secondary" onClick={onClose}>Vazgeç</Button>
-          <Button loading={saving} onClick={() => void save()}>Kaydet</Button>
-        </>
-      )}
+      onSubmit={() => save()}
+      submitting={saving}
+      error={error}
+      formClassName="space-y-3"
     >
-      <div className="space-y-3">
-        <FormErrorBanner message={error} />
-        <FormField label="Hasta" required htmlFor="wl-patient">
-          <PatientPicker id="wl-patient" value={patient} onChange={setPatient} />
+      <FormField label="Hasta" required as="div" htmlFor="wl-patient">
+        <PatientPicker id="wl-patient" required value={patient} onChange={setPatient} />
+      </FormField>
+      <FormField label="Doktor tercihi" htmlFor="wl-doctor">
+        <DoctorSelect id="wl-doctor" value={doctorId} doctors={doctors} emptyLabel="Fark etmez" onChange={(id) => setDoctorId(id)} />
+      </FormField>
+      <div className="grid grid-cols-2 gap-3">
+        <FormField label="En erken" htmlFor="wl-from">
+          <Input id="wl-from" type="date" value={from} min={todayKey} onChange={(event) => setFrom(event.target.value)} />
         </FormField>
-        <FormField label="Doktor tercihi" htmlFor="wl-doctor">
-          <DoctorSelect id="wl-doctor" value={doctorId} doctors={doctors} emptyLabel="Fark etmez" onChange={(id) => setDoctorId(id)} />
-        </FormField>
-        <div className="grid grid-cols-2 gap-3">
-          <FormField label="En erken" htmlFor="wl-from">
-            <Input id="wl-from" type="date" value={from} min={toDateKey(new Date())} onChange={(event) => setFrom(event.target.value)} />
-          </FormField>
-          <FormField label="En geç" htmlFor="wl-to">
-            <Input id="wl-to" type="date" value={to} min={from || toDateKey(new Date())} onChange={(event) => setTo(event.target.value)} />
-          </FormField>
-        </div>
-        <FormField label="Not" htmlFor="wl-note" hint="İsteğe bağlı">
-          <Input id="wl-note" value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ör. yalnız sabah saatleri uygun" maxLength={300} />
+        <FormField label="En geç" htmlFor="wl-to">
+          <Input id="wl-to" type="date" value={to} min={from || todayKey} onChange={(event) => setTo(event.target.value)} />
         </FormField>
       </div>
-    </Modal>
+      <FormField label="Not" htmlFor="wl-note">
+        <Textarea id="wl-note" rows={2} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ör. yalnız sabah saatleri uygun" maxLength={300} />
+      </FormField>
+    </FormModal>
   );
 }

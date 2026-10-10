@@ -63,14 +63,77 @@ function withPathnameHeader(request: NextRequest, pathname: string) {
   return NextResponse.next({ request: { headers } });
 }
 
+// Oturumu olmayan ya da biten klinik sayfa isteği giriş ekranına gider; açılmak
+// istenen adres `next` ile taşınır ki girişten sonra kaldığı yere dönülsün.
+// Next.js'in iç `_rsc` parametresi adrese yazılmaz. Giriş formu `next`'i yalnız
+// güvenli bir panel yoluysa kullanır (clinic-login-form.tsx).
+function clinicLoginRedirect(request: NextRequest) {
+  const target = new URL("/klinik/giris", request.url);
+  const params = new URLSearchParams(request.nextUrl.search);
+  params.delete("_rsc");
+  const query = params.toString();
+  target.searchParams.set("next", `${request.nextUrl.pathname}${query ? `?${query}` : ""}`);
+  target.searchParams.set("neden", "oturum");
+  return NextResponse.redirect(target);
+}
+
+// API hız sınırı. Önceden yalnız IP başına dakikada 400 istekti; oysa bir
+// klinikteki tüm bilgisayarlar genelde AYNI dış IP'yi paylaşır. Birkaç
+// personelin açık sekmeleri (yoklamalar, sayfa açılışları, gerçek zamanlı
+// yenilemeler) bu ortak kovayı doldurunca o dakikanın geri kalanında herkesin
+// ekranı 429 alıp boş/bozuk açılıyordu. Artık imzası doğrulanmış oturumda
+// sınır KULLANICI başınadır; IP için yalnız yüksek bir taşkın tavanı kalır.
+// Oturumsuz istekler (giriş, herkese açık uçlar) eskisi gibi IP başına sınırlı.
+const API_LIMIT_WINDOW_MS = 60_000;
+const ANON_API_LIMIT_PER_IP = 400;
+const USER_API_LIMIT = 600;
+const IP_API_CEILING = 4000;
+
+// Ghost (süperadmin gizli klinik girişi) ayrı bir çerezde taşınır ve
+// yalnızca KLİNİK yüzeyinde (süperadmin rotaları HARİÇ) önceliklidir —
+// böylece süperadmin'in kendi /superadmin sekmesi, başka bir sekmede
+// açılan ghost oturumundan etkilenmez (bkz. src/lib/auth.ts notu).
+function readSessionToken(request: NextRequest, pathname: string) {
+  return !isSuperadminSurfacePath(pathname)
+    ? (request.cookies.get(GHOST_TOKEN_NAME)?.value || request.cookies.get(TOKEN_NAME)?.value)
+    : request.cookies.get(TOKEN_NAME)?.value;
+}
+
+type VerifiedSession = { userId: string | null; ghost: boolean } | null;
+
+async function verifySessionToken(token: string): Promise<VerifiedSession> {
+  try {
+    const secret = process.env.JWT_SECRET;
+    if (!secret) throw new Error("JWT_SECRET tanımlı değil");
+    const { payload } = await jwtVerify(token, new TextEncoder().encode(secret), { algorithms: ["HS256"] });
+    return {
+      userId: typeof payload.userId === "string" ? payload.userId : null,
+      ghost: payload.ghost === true,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function middleware(request: NextRequest) {
   metricIncrement("api_requests_total");
   const { pathname } = request.nextUrl;
   const ip = getClientIpFromHeaders(request.headers);
+  const token = readSessionToken(request, pathname);
+  // JWT her istekte en fazla bir kez doğrulanır (hız sınırı + oturum kontrolü ortak).
+  let verified: VerifiedSession | undefined;
+  const verifyOnce = async () => {
+    if (verified === undefined) verified = token ? await verifySessionToken(token) : null;
+    return verified;
+  };
 
   if (pathname.startsWith("/api/")) {
-    const limit = checkLocalRateLimit(`mw:${ip}`, 400, 60_000);
-    if (!limit.ok) {
+    const session = await verifyOnce();
+    const allowed = session?.userId
+      ? checkLocalRateLimit(`mw:u:${session.userId}${session.ghost ? ":g" : ""}`, USER_API_LIMIT, API_LIMIT_WINDOW_MS).ok
+        && checkLocalRateLimit(`mw:ipmax:${ip}`, IP_API_CEILING, API_LIMIT_WINDOW_MS).ok
+      : checkLocalRateLimit(`mw:${ip}`, ANON_API_LIMIT_PER_IP, API_LIMIT_WINDOW_MS).ok;
+    if (!allowed) {
       metricIncrement("rate_limit_hits_total");
       return NextResponse.json({ message: "Çok fazla istek gönderildi. Lütfen kısa bir süre sonra tekrar deneyin." }, { status: 429 });
     }
@@ -89,14 +152,6 @@ export async function middleware(request: NextRequest) {
     return withPathnameHeader(request, pathname);
   }
 
-  // Ghost (süperadmin gizli klinik girişi) ayrı bir çerezde taşınır ve
-  // yalnızca KLİNİK yüzeyinde (süperadmin rotaları HARİÇ) önceliklidir —
-  // böylece süperadmin'in kendi /superadmin sekmesi, başka bir sekmede
-  // açılan ghost oturumundan etkilenmez (bkz. src/lib/auth.ts notu).
-  const token = !isSuperadminSurfacePath(pathname)
-    ? (request.cookies.get(GHOST_TOKEN_NAME)?.value || request.cookies.get(TOKEN_NAME)?.value)
-    : request.cookies.get(TOKEN_NAME)?.value;
-
   if (!token) {
     metricIncrement("auth_failures_total");
     if (pathname.startsWith("/api/")) {
@@ -105,26 +160,25 @@ export async function middleware(request: NextRequest) {
     if (pathname.startsWith("/superadmin")) {
       return NextResponse.redirect(new URL("/superadmin", request.url));
     }
-    return NextResponse.redirect(new URL("/klinik/giris", request.url));
+    return clinicLoginRedirect(request);
   }
 
   // Sayfa yetkilendirmesi yalnızca imzası doğrulanmış JWT ile yapılır.
-  try {
-    const secret = process.env.JWT_SECRET;
-    if (!secret) throw new Error("JWT_SECRET tanımlı değil");
-    await jwtVerify(token, new TextEncoder().encode(secret), { algorithms: ["HS256"] });
-    // Rol bazlı sayfa/API yetkilendirmesi artık BURADA yapılmaz — her API
-    // route'u kendi requireAuth(permission) çağrısıyla DB tabanlı yetki
-    // matrisine göre karar verir (bkz. yukarıdaki not). Sayfa linki zaten
-    // yalnızca yetkili roller için menüde görünür; doğrudan URL ile girilirse
-    // sayfanın kendi veri çağrıları aynı requireAuth() kontrolünden 403 alır.
-
-  } catch {
+  // Rol bazlı sayfa/API yetkilendirmesi artık BURADA yapılmaz — her API
+  // route'u kendi requireAuth(permission) çağrısıyla DB tabanlı yetki
+  // matrisine göre karar verir (bkz. yukarıdaki not). Sayfa linki zaten
+  // yalnızca yetkili roller için menüde görünür; doğrudan URL ile girilirse
+  // sayfanın kendi veri çağrıları aynı requireAuth() kontrolünden 403 alır.
+  const session = await verifyOnce();
+  if (!session) {
     metricIncrement("auth_failures_total");
     if (pathname.startsWith("/api/")) {
       return NextResponse.json({ message: "Oturum geçersiz" }, { status: 401 });
     }
-    const response = NextResponse.redirect(new URL("/klinik/giris", request.url));
+    // /superadmin altındaki bozuk oturum eskisi gibi düz giriş ekranına gider.
+    const response = pathname.startsWith("/superadmin")
+      ? NextResponse.redirect(new URL("/klinik/giris", request.url))
+      : clinicLoginRedirect(request);
     response.cookies.delete(TOKEN_NAME);
     response.cookies.delete(GHOST_TOKEN_NAME);
     return response;

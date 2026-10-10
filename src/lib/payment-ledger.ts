@@ -1,5 +1,5 @@
 import type { PaymentMethod, Prisma } from "@prisma/client";
-import { applyTaksitIntegration, reverseTaksitIntegrationForPayment } from "@/lib/taksit-integration";
+import { applyTaksitIntegration, refitCancelledPlanLinks, reverseTaksitIntegrationForPayment } from "@/lib/taksit-integration";
 
 type CreatePaymentInput = {
   tx: Prisma.TransactionClient;
@@ -158,15 +158,24 @@ export async function updateIntegratedPayment({
   let taksitReverseInfo = { reversed: 0, updatedCount: 0 };
   let taksitInfo = null;
 
-  if (shouldReapply) {
-    taksitReverseInfo = await reverseTaksitIntegrationForPayment(tx, paymentId);
-  }
-
   const nextAmount = amount !== undefined ? amount : Number(existing.amount);
   const nextMethod = method ?? existing.method;
   const nextPosId = posId !== undefined ? posId : existing.posId;
   const nextCreatedAt = createdAt !== undefined ? (createdAt ? new Date(createdAt) : existing.createdAt) : existing.createdAt;
   const nextDoctorId = doctorId !== undefined ? (doctorId || null) : existing.doctorId;
+
+  // Doktor aynı kalırken iptal edilmiş plana bağlı ödeme kayıtları yerinde
+  // kalır (yeni tutara sığdırılır); yalnız artan kısım açık planlara dağıtılır.
+  // Doktor değişince tahsilat o plandan da çıkar (eski davranış).
+  let reapplyAmount = nextAmount;
+  if (shouldReapply) {
+    const sameDoctor = nextDoctorId === existing.doctorId;
+    if (sameDoctor) {
+      const refit = await refitCancelledPlanLinks(tx, paymentId, { amount: nextAmount, method: nextMethod, posId: nextPosId || null, tarih: nextCreatedAt });
+      reapplyAmount = refit.rest;
+    }
+    taksitReverseInfo = await reverseTaksitIntegrationForPayment(tx, paymentId, { keepCancelledPlans: sameDoctor });
+  }
 
   const payment = await tx.payment.update({
     where: { id: paymentId },
@@ -194,7 +203,7 @@ export async function updateIntegratedPayment({
   });
 
   if (shouldReapply && existing.patientId) {
-    taksitInfo = await applyTaksitIntegration(tx, existing.patientId, nextAmount, nextMethod, nextPosId || null, nextCreatedAt, payment.id, nextDoctorId, existing.branchId);
+    taksitInfo = await applyTaksitIntegration(tx, existing.patientId, reapplyAmount, nextMethod, nextPosId || null, nextCreatedAt, payment.id, nextDoctorId, existing.branchId);
   }
 
   return { payment, taksitReverseInfo, taksitInfo };

@@ -62,7 +62,7 @@ Klinik operasyonlarının ana modüllerini tek üründe birleştiren modern, ço
 ## Gozlemlenebilirlik
 
 - Saglik kontrolu: `/api/system/health`
-- Yonetici metrikleri: `/api/system/metrics`
+- Platform metrikleri ve alarmlar: `/api/system/metrics`, `/api/system/alerts` — yalnız süperadmin okur (klinik yöneticisine kapalı, 403). Süperadmin › Sistem Ayarları › Teknik ölçümler ikisini `/api/superadmin/system-settings/metrics` ucundan birlikte gösterir.
 
 ## Kalite Kapisi
 

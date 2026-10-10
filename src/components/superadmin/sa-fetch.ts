@@ -56,6 +56,31 @@ export async function saSend<T = unknown>(url: string, method: "POST" | "PUT" | 
   return data as T;
 }
 
+/**
+ * Menüdeki iş kuyruğu sayaçlarını (gecikmiş fatura, yanıt bekleyen destek)
+ * hemen tazeletir — fatura tahsil edilince/iptal edilince ya da talep
+ * yanıtlanınca çağrılır. Menü sayaçları başka zaman en çok dakikada bir okur.
+ */
+export function notifyCountsChanged() {
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("superadmin-counts-changed"));
+}
+
+/** Dosya yükleme (FormData) — saSend ile aynı hata ve oturum davranışı. */
+export async function saUpload<T = unknown>(url: string, form: FormData, fallback: string): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(url, { method: "POST", body: form });
+  } catch {
+    throw new SaRequestError("Sunucuya ulaşılamadı. İnternet bağlantınızı kontrol edip tekrar deneyin.", 0);
+  }
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    handleAuth(response.status);
+    throw new SaRequestError((data && typeof data.message === "string" && data.message) || fallback, response.status);
+  }
+  return data as T;
+}
+
 export function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
 }

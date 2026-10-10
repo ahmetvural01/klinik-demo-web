@@ -1,5 +1,4 @@
-import JsBarcode from "jsbarcode";
-import { shortDate } from "@/components/stock/stock-shared";
+import { shortDate, stockLabelCode } from "@/components/stock/stock-shared";
 
 const escapeHtml = (value: string) =>
   value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
@@ -13,22 +12,32 @@ export type BarcodeLabelItem = {
   expiry?: string | null;
 };
 
+export type BarcodePrintResult = "ok" | "popup-blocked" | "invalid-code" | "load-failed";
+
 /**
- * Ürün için barkod etiketi yazdırır. Önceki sürüm pencereyi "noopener" ile
- * açtığı için tarayıcı pencere nesnesini null döndürüyor ve etiket hiç
- * yazılmıyordu; randevu çıktısındaki çalışan desen kullanılır.
- * Sonuç: "ok" | "popup-blocked" | "invalid-code"
+ * Ürün için barkod etiketi yazdırır. Barkod kütüphanesi (jsbarcode) yalnız
+ * yazdırırken yüklenir; önceden Stok sayfası her açılışta indiriyordu.
+ * Pencere tıklamayla AYNI anda açılır (sonra açılırsa tarayıcı açılır
+ * pencereyi engeller); kod CODE128'e uymuyorsa pencere hiç açılmaz.
  */
-export function printBarcodeLabel(item: BarcodeLabelItem): "ok" | "popup-blocked" | "invalid-code" {
-  const code = (item.barcode || item.id.slice(-10).toUpperCase()).trim();
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  try {
-    JsBarcode(svg, code, { format: "CODE128", width: 2, height: 56, displayValue: true, fontSize: 13, margin: 8 });
-  } catch {
-    return "invalid-code";
-  }
+export async function printBarcodeLabel(item: BarcodeLabelItem): Promise<BarcodePrintResult> {
+  const code = stockLabelCode(item);
+  // CODE128 yalnız ASCII basılabilir karakterleri kodlar (Türkçe harf yok).
+  if (!code || !/^[\x20-\x7E]+$/.test(code)) return "invalid-code";
   const printWindow = window.open("", "_blank", "width=420,height=520");
   if (!printWindow) return "popup-blocked";
+
+  let svg: SVGSVGElement;
+  try {
+    const { default: JsBarcode } = await import("jsbarcode");
+    svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    JsBarcode(svg, code, { format: "CODE128", width: 2, height: 56, displayValue: true, fontSize: 13, margin: 8 });
+  } catch (error) {
+    printWindow.close();
+    // Kütüphane yüklenemediyse (bağlantı) kod hatası gibi gösterme.
+    return error instanceof Error && /chunk|import|fetch|load/i.test(error.message) ? "load-failed" : "invalid-code";
+  }
+
   const meta = [
     item.storageLocation ? `Raf: ${escapeHtml(item.storageLocation)}` : "",
     item.expiry ? `SKT: ${escapeHtml(shortDate(item.expiry))}` : "",

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { requireActiveBranch } from "@/lib/branch-context";
+import { ibanError } from "@/components/firma/firma-shared";
 
 const FIRMA_KATEGORILERI = ["TEDARICI", "HIZMET_SAGLAYICI", "LAB", "KONTRAKTOR", "BANK", "DIGER"] as const;
 
@@ -77,6 +78,8 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     if (kategori !== undefined && kategori !== null && kategori !== "" && !FIRMA_KATEGORILERI.includes(kategori)) {
       return NextResponse.json({ error: "Firma türü geçersiz" }, { status: 400 });
     }
+    const ibanProblem = typeof iban === "string" ? ibanError(iban) : null;
+    if (ibanProblem) return NextResponse.json({ error: ibanProblem }, { status: 400 });
     // Body'den yalnızca izin verilen alanlar alınır — önceden `...rest` ile
     // gövdenin TAMAMI Prisma update'ine geçiyordu; bir kullanıcı body'ye
     // `institutionId` ekleyerek kendi kurumuna ait bir firma kaydını başka

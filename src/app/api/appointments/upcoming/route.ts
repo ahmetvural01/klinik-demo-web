@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/api";
-import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
+import { shouldHidePatientPhoneForUser } from "@/lib/patient-visibility-server";
 import { requireActiveBranch } from "@/lib/branch-context";
 
 export async function GET(request: NextRequest) {
@@ -48,7 +48,7 @@ export async function GET(request: NextRequest) {
     take,
   });
 
-  const hidePhone = await shouldHidePatientPhoneForRole(auth.user.role);
+  const hidePhone = await shouldHidePatientPhoneForUser(auth.user);
   const result = hidePhone
     ? appointments.map((a) => ({
         ...a,

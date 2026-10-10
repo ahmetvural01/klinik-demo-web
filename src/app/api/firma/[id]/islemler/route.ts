@@ -100,7 +100,13 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       return NextResponse.json({ error: "İşlem anahtarı geçersiz" }, { status: 400 });
     }
 
-    const parsed = firmaIslemCreateSchema.safeParse(await req.json());
+    const rawBody = await req.json().catch(() => null);
+    const parsed = firmaIslemCreateSchema.safeParse(rawBody);
+    // İsteğe bağlı: ödeme önce bu satın almanın borcuna düşsün (satın alma
+    // ayrıntısındaki "Ödeme yap"). Verilmezse eski davranış: en eski açık borç.
+    const preferredPurchaseId = rawBody && typeof rawBody === "object" && typeof (rawBody as { purchaseId?: unknown }).purchaseId === "string"
+      ? (rawBody as { purchaseId: string }).purchaseId.trim().slice(0, 80)
+      : "";
     if (!parsed.success) {
       return NextResponse.json({ error: "Cari işlem bilgileri geçersiz", errors: formatZodError(parsed.error) }, { status: 400 });
     }
@@ -205,7 +211,25 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
         stockItemId: stockItemId || null,
         stockQuantity,
       });
-      const allocation = await rebuildFirmaPaymentAllocations(tx, firma.id, branch.branchId);
+      const preferredDebt = preferredPurchaseId
+        ? await tx.purchase.findFirst({
+            where: {
+              id: preferredPurchaseId,
+              firmaId: firma.id,
+              branchId: branch.branchId,
+              ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+              status: "AKTIF",
+              receiptStatus: "TESLIM_ALINDI",
+            },
+            select: { firmaIslemId: true },
+          })
+        : null;
+      const allocation = await rebuildFirmaPaymentAllocations(
+        tx,
+        firma.id,
+        branch.branchId,
+        preferredDebt?.firmaIslemId ? { preferredDebtByPayment: new Map([[created.id, [preferredDebt.firmaIslemId]]]) } : {},
+      );
       if (allocation.allocatedTotal > 0) {
         integrationSummary.notes.push("ödeme açık firma borçlarına otomatik mahsup edildi");
       }

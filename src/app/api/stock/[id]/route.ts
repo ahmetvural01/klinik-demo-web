@@ -6,6 +6,7 @@ import { formatZodError, stockItemUpdateSchema, stockMovementSchema } from "@/li
 import { requireActiveBranch } from "@/lib/branch-context";
 import { publicErrorResponse } from "@/lib/public-error";
 import { normalizeCategory } from "@/lib/stock-category";
+import { BUSY_MESSAGE, isTransientDbError } from "@/app/api/purchases/transaction-errors";
 
 export const dynamic = "force-dynamic";
 
@@ -145,7 +146,8 @@ export async function PUT(req: NextRequest, props: { params: Promise<{ id: strin
     throw error;
   }
 
-  await writeAudit(auth.user.id, "STOCK_ITEM_UPDATE", `Stok kalemi güncellendi (${params.id})`);
+  // Ham kayıt kimliği yerine ürün adı (işlem kayıtları ekranında okunur).
+  await writeAudit(auth.user.id, "STOCK_ITEM_UPDATE", `"${updated.name}" stok kartı güncellendi`);
   return NextResponse.json({ ...updated, category: normalizeCategory(updated.category) });
 }
 
@@ -219,10 +221,11 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
         unitPrice,
         requestKey,
       });
-    });
+      // Yük altında varsayılan 5 sn işlem süresi dolup hareket 500 veriyordu.
+    }, { maxWait: 10_000, timeout: 15_000 });
 
     if (!result.duplicate) {
-      await writeAudit(auth.user.id, "STOCK_MOVEMENT", `${type === "GIRIS" ? "Stok girişi" : "Stok çıkışı"}: ${quantity} adet (${params.id})`);
+      await writeAudit(auth.user.id, "STOCK_MOVEMENT", `${type === "GIRIS" ? "Stok girişi" : "Stok çıkışı"}: "${result.item?.name || "Ürün"}" ${quantity} ${result.item?.unit || "adet"}`);
     }
     return NextResponse.json({
       ...result.item,
@@ -242,6 +245,8 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
         return NextResponse.json({ ...item, category: normalizeCategory(item.category), isCritical: Number(item.quantity) < Number(item.minQuantity), duplicateRequest: true });
       }
     }
+    // İşlem geri alındı; aynı istek anahtarıyla yeniden "Kaydet" hareketi ikinci kez yazmaz.
+    if (isTransientDbError(error)) return NextResponse.json({ error: BUSY_MESSAGE }, { status: 503 });
     const publicError = publicErrorResponse(error, "Stok hareketi kaydedilemedi. Lütfen tekrar deneyin.");
     return NextResponse.json({ error: publicError.message }, { status: publicError.status });
   }
@@ -277,6 +282,6 @@ export async function DELETE(_req: NextRequest, props: { params: Promise<{ id: s
     data:  { isActive: false },
   });
 
-  await writeAudit(auth.user.id, "STOCK_ITEM_DELETE", `"${existing.name}" stok kartı arşivlendi (${params.id})`);
+  await writeAudit(auth.user.id, "STOCK_ITEM_DELETE", `"${existing.name}" stok kartı arşivlendi`);
   return NextResponse.json({ ok: true });
 }

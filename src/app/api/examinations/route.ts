@@ -53,6 +53,12 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ message: "Geçersiz muayene verisi", errors: parsed.error.errors }, { status: 400 });
   }
+  // Doktor tedavi kaydını yalnız kendi adına açar (görünmez destek oturumu
+  // hariç): başka hekim adına kayıt o hekimin hakedişini ve hastanın borcunu
+  // değiştiriyordu. Yönetici, asistan ve banko hekim seçerek kaydeder.
+  if (auth.user.role === "DOKTOR" && !auth.user.ghost && parsed.data.doctorId !== auth.user.id) {
+    return NextResponse.json({ message: "Yalnız kendi adınıza tedavi kaydı açabilirsiniz." }, { status: 403 });
+  }
 
   const [patientInfo, doctorInfo] = await Promise.all([
     prisma.patient.findFirst({

@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, Check, ChevronDown, MapPin } from "lucide-react";
+import { Check, ChevronDown, MapPin } from "lucide-react";
 import { clearBranchSensitiveClientCaches } from "@/lib/client-cache";
 import { showToastSafe } from "@/lib/toast-client";
+import { ShellPopover } from "@/components/layout/shell-popover";
 
-type Branch = {
+export type BranchOption = {
   id: string;
   name: string;
   code: string | null;
@@ -13,63 +14,47 @@ type Branch = {
   isHeadquarters: boolean;
 };
 
-type BranchContextResponse = {
+export type BranchSwitcherData = {
   activeBranchId: string | null;
-  activeBranch: Branch | null;
-  branches: Branch[];
+  branches: BranchOption[];
 };
 
-export function BranchSwitcher() {
-  const [context, setContext] = useState<BranchContextResponse | null>(null);
+/**
+ * Aktif şube seçimi. Şube listesi sayfa açılırken sunucuda zaten hesaplanıyor
+ * (layout → `data`); önceden her tam açılışta ayrıca /api/branches isteniyordu
+ * ve seçici geç gelip arama kutusunu itiyordu. `data` verilmezse eski yoldan
+ * yüklenir. Tek şubeli klinikte gösterilmez (üst barın en değerli alanı arama).
+ *
+ * - variant "bar": üst bar (≥640px) — kısa düğme + açılır liste.
+ * - variant "drawer": telefon/tablet menü çekmecesinin üstü — önceden telefonda
+ *   şube hiç görünmüyor ve değiştirilemiyordu.
+ */
+export function BranchSwitcher({ data, variant = "bar" }: { data?: BranchSwitcherData | null; variant?: "bar" | "drawer" }) {
+  const [fetched, setFetched] = useState<BranchSwitcherData | null>(null);
   const [open, setOpen] = useState(false);
   const [switching, setSwitching] = useState(false);
-  const [loadError, setLoadError] = useState(false);
-  const [reloadKey, setReloadKey] = useState(0);
-  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const context = data ?? fetched;
 
   useEffect(() => {
+    if (data !== undefined) return;
     let cancelled = false;
-    setLoadError(false);
     void fetch("/api/branches", { cache: "no-store" })
-      .then(async (response) => {
-        const data = await response.json().catch(() => null);
-        if (!response.ok) throw new Error(data?.message || "Şubeler yüklenemedi.");
-        return data;
+      .then((response) => (response.ok ? response.json() : null))
+      .then((body: { activeBranchId?: string | null; branches?: BranchOption[] } | null) => {
+        if (cancelled || !body || !Array.isArray(body.branches)) return;
+        setFetched({ activeBranchId: body.activeBranchId ?? null, branches: body.branches });
       })
-      .then((data) => { if (!cancelled) setContext(data); })
-      .catch(() => { if (!cancelled) setLoadError(true); });
+      .catch(() => {});
     return () => { cancelled = true; };
-  }, [reloadKey]);
+  }, [data]);
 
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener("pointerdown", onPointerDown);
-    return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [open]);
-
-  if (loadError) {
-    return (
-      <button
-        type="button"
-        onClick={() => setReloadKey((value) => value + 1)}
-        title="Şube listesini yeniden yükle"
-        className="hidden h-10 items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 text-xs font-bold text-amber-800 sm:flex"
-      >
-        <AlertTriangle className="h-4 w-4" />
-        Şube yüklenemedi
-      </button>
-    );
-  }
-  // Tek şubeli klinikte seçici işe yaramaz ve üst barın en değerli alanını
-  // (hasta aramayı) daraltıyordu; yalnız 2+ şubede gösterilir.
   if (!context || context.branches.length < 2) return null;
 
-  const currentLabel = context.activeBranch?.name || "Şube seçin";
+  const active = context.branches.find((branch) => branch.id === context.activeBranchId) || null;
   const choose = async (branchId: string) => {
-    if (switching || branchId === context.activeBranchId) {
+    if (switching) return;
+    if (branchId === context.activeBranchId) {
       setOpen(false);
       return;
     }
@@ -80,8 +65,8 @@ export function BranchSwitcher() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ branchId }),
       });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data?.message || "Şube değiştirilemedi.");
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body?.message || "Şube değiştirilemedi.");
       clearBranchSensitiveClientCaches();
       window.location.reload();
     } catch (error) {
@@ -90,43 +75,61 @@ export function BranchSwitcher() {
     }
   };
 
+  const options = (
+    <ul role="listbox" aria-label="Aktif şube" className="p-1.5">
+      {context.branches.map((branch) => {
+        const selected = branch.id === context.activeBranchId;
+        return (
+          <li key={branch.id}>
+            <button
+              type="button"
+              role="option"
+              aria-selected={selected}
+              disabled={switching}
+              onClick={() => void choose(branch.id)}
+              className={`flex w-full items-center gap-3 rounded-md px-2.5 py-2.5 text-left transition-colors hover:bg-slate-50 focus-visible:bg-slate-50 focus-visible:outline-none disabled:opacity-60 ${selected ? "bg-primary/[0.06]" : ""}`}
+            >
+              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: branch.colorCode }} aria-hidden="true" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-semibold text-slate-800">{branch.name}</span>
+                {(branch.isHeadquarters || branch.code) && <span className="block text-xs text-slate-500">{branch.isHeadquarters ? "Merkez şube" : branch.code}</span>}
+              </span>
+              {selected && <Check className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />}
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+
+  if (variant === "drawer") {
+    return (
+      <div className="border-b border-slate-100 px-2 pb-2 pt-1">
+        <p className="px-3 pb-1 pt-1 text-xs font-semibold text-slate-500">Şube</p>
+        {options}
+      </div>
+    );
+  }
+
   return (
-    <div ref={rootRef} className="relative hidden shrink-0 sm:block">
+    <div className="hidden shrink-0 sm:block">
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen((value) => !value)}
-        aria-haspopup="listbox"
+        aria-haspopup="dialog"
         aria-expanded={open}
-        className="group flex h-10 max-w-[190px] items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 text-left shadow-[0_1px_2px_rgb(15_23_42/0.04)] transition hover:border-primary/30 hover:bg-primary/[0.025]"
+        aria-label={`Aktif şube: ${active?.name || "seçilmedi"}`}
+        className="flex h-10 max-w-[180px] items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 text-left shadow-[0_1px_2px_rgb(15_23_42/0.04)] transition hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35"
       >
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary transition group-hover:bg-primary group-hover:text-white">
-          <MapPin className="h-3.5 w-3.5" />
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="block text-[9px] font-bold uppercase text-slate-400">Aktif şube</span>
-          <span className="block truncate text-xs font-extrabold text-slate-800">{currentLabel}</span>
-        </span>
-        <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-400 transition ${open ? "rotate-180" : ""}`} />
+        <MapPin className="h-4 w-4 shrink-0" style={{ color: active?.colorCode || undefined }} aria-hidden="true" />
+        <span className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-800">{active?.name || "Şube seçin"}</span>
+        <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-400 transition ${open ? "rotate-180" : ""}`} aria-hidden="true" />
       </button>
-
-      {open && (
-        <div className="ui-popover absolute left-0 top-full z-[240] mt-2 w-72 overflow-hidden p-1.5" role="listbox" aria-label="Aktif şube">
-          <div className="px-2.5 pb-2 pt-1.5">
-            <p className="text-xs font-extrabold text-slate-900">Çalışma konumu</p>
-            <p className="mt-0.5 text-[11px] leading-4 text-slate-500">Ekranlar ve yeni kayıtlar seçili şubeye göre çalışır.</p>
-          </div>
-          {context.branches.map((branch) => {
-            const selected = branch.id === context.activeBranchId;
-            return (
-              <button key={branch.id} type="button" role="option" aria-selected={selected} onClick={() => void choose(branch.id)} className="flex w-full items-center gap-3 rounded-md px-2.5 py-2.5 text-left hover:bg-slate-50">
-                <span className="flex h-8 w-8 items-center justify-center rounded-md" style={{ backgroundColor: `${branch.colorCode}18`, color: branch.colorCode }}><MapPin className="h-4 w-4" /></span>
-                <span className="min-w-0 flex-1"><span className="block truncate text-xs font-bold text-slate-800">{branch.name}</span><span className="block text-[10px] text-slate-500">{branch.isHeadquarters ? "Merkez şube" : branch.code || "Şube"}</span></span>
-                {selected && <Check className="h-4 w-4 text-primary" />}
-              </button>
-            );
-          })}
-        </div>
-      )}
+      <ShellPopover open={open} onClose={() => setOpen(false)} anchorRef={triggerRef} title="Aktif şube" width={300} align="start">
+        <p className="px-4 pt-3 text-xs text-slate-500">Ekranlar ve yeni kayıtlar seçili şubeye göre çalışır.</p>
+        {options}
+      </ShellPopover>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import type { BadgeTone } from "@/components/ui/Badge";
 import { getAuditActionLabel } from "@/lib/audit-labels";
+import { roleLabel } from "@/lib/staff-roles";
 import { SUBSCRIPTION_PLANS, type BillingCycleId, type SubscriptionPlanId } from "@/lib/subscription-plans";
 import type { InvoiceViewStatus } from "./invoice-status";
 
@@ -172,6 +173,45 @@ const PLATFORM_ACTION_LABELS: Record<string, string> = {
   CELEBRATION_DAY_DELETE: "Kutlama günü silindi",
   CELEBRATION_DAY_TOGGLE: "Kutlama günü açıldı/kapatıldı",
 };
+
+/**
+ * Kontrol Paneli › Son işlemler'de gösterilen platform olayları (SUPERADMIN_
+ * önekli kodlara ek olarak). Kliniklerin günlük işlemleri burada değil,
+ * Denetim Günlüğü'nde.
+ */
+export const PLATFORM_EVENT_ACTIONS = [
+  "IMPERSONATE_START",
+  "IMPERSONATE_END",
+  "PLATFORM_THEME_UPDATE",
+  "PLATFORM_SMS_PURCHASE",
+  "SMS_PACKAGE_SALE",
+  "SMS_CREDIT_ADJUST",
+  "CELEBRATION_DAY_CREATE",
+  "CELEBRATION_DAY_UPDATE",
+  "CELEBRATION_DAY_DELETE",
+  "CELEBRATION_DAY_TOGGLE",
+] as const;
+
+/** Klinik SMS bakiyesinin "azaldı" sayıldığı eşik — Kontrol Paneli, Klinikler ve klinik dosyası aynı sayıyı kullanır. */
+export const LOW_SMS_THRESHOLD = 50;
+
+export type AuditPerson = { fullName: string; role: string } | null | undefined;
+
+/**
+ * Kaydın "kim" satırı. Gizli girişte gerçek kişi (platform yöneticisi) ve
+ * hangi klinik hesabıyla girdiği AYRI yazılır: "Ahmet Gülden (Platform
+ * yöneticisi) · Ayşe Demir hesabıyla". Önceden klinik kullanıcısının adı
+ * gerçek kişinin rolüyle birleşip "Ayşe Demir (Platform yöneticisi)"
+ * görünüyordu.
+ */
+export function auditWho(log: { user: AuditPerson; actor?: AuditPerson; isGhost?: boolean }): string {
+  if (log.actor) {
+    return `${log.actor.fullName} (${roleLabel(log.actor.role)})${log.user ? ` · ${log.user.fullName} hesabıyla` : ""}`;
+  }
+  if (!log.user) return "Sistem";
+  if (log.isGhost) return `Platform yöneticisi · ${log.user.fullName} hesabıyla`;
+  return `${log.user.fullName} · ${roleLabel(log.user.role)}`;
+}
 
 export function auditActionLabel(action: string, detail?: string | null): string {
   if (PLATFORM_ACTION_LABELS[action]) return PLATFORM_ACTION_LABELS[action];

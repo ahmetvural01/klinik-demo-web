@@ -215,10 +215,12 @@ function scanSourceContracts() {
     "result.failedRecipients.filter((item) => item.retryable)",
   ]);
   requireSource("src/app/api/webhooks/whatsapp/route.ts", ["allowedPreviousStatuses", "providerMessageId", "institutionId"]);
-  requireSource("src/app/api/sms/bulk/route.ts", ["requestId", "packageId: requestId"]);
+  // Toplu gönderim paketi istemcinin requestId'sinden türetilir (TOPLU-<requestId>); aynı istek ikinci paket açmaz.
+  requireSource("src/app/api/sms/bulk/route.ts", ["requestId", "const packageId = `TOPLU-${requestId}`"]);
   requireSource("src/components/layout/panel-cache-reset.tsx", ["PanelCacheReset", "clinic-unread-messages:", "klinikcep-active-price-list:"]);
   for (const file of [
-    "src/app/(panel)/hasta-takip/page.tsx",
+    "src/app/(panel)/yapilacaklar/_components/FollowUpsTab.tsx",
+    "src/app/(panel)/yapilacaklar/_components/TasksTab.tsx",
     "src/app/(panel)/log/page.tsx",
     "src/app/(panel)/rapor/page.tsx",
     "src/app/(panel)/hasta-detay/hasta-detay-content.tsx",

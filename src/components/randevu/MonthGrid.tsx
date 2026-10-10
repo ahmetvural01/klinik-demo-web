@@ -1,6 +1,7 @@
 "use client";
 
 import { Plus } from "lucide-react";
+import { Badge } from "@/components/ui/Badge";
 import {
   STATUS_CARD_CLASS,
   TR_DAYS_SHORT,
@@ -44,8 +45,9 @@ export function monthGridRange(date: Date): { start: Date; end: Date } {
 /**
  * Ay görünümü: her günde randevu sayısı (iptaller hariç) ve ilk üç randevu,
  * küçük durum işaretiyle. Güne tıklamak Gün görünümünü açar. "+" yalnız
- * bugünden sonraki çalışma günlerinde, fareyle üzerine gelince görünür;
- * kapalı günlerde "Kapalı" yazar.
+ * bugünden sonraki çalışma günlerinde, fareyle üzerine gelince görünür
+ * (dokunmatik ekranda yok — güne dokunmak zaten günü açar); kapalı günlerde
+ * "Kapalı" yazar.
  */
 export function MonthGrid({ date, days, settings, loading, canCreate, onOpenDay, onCreate }: MonthGridProps) {
   const { start, end } = monthGridRange(date);
@@ -79,7 +81,7 @@ export function MonthGrid({ date, days, settings, loading, canCreate, onOpenDay,
                 <span className="flex items-center gap-1.5">
                   <span className={`text-xs font-extrabold ${isToday ? "text-primary" : inMonth ? "text-slate-800" : "text-slate-400"}`}>{day.getDate()}</span>
                   {closed && <span className="text-[10px] font-semibold text-slate-400">Kapalı</span>}
-                  {total > 0 && <span className="ml-auto rounded-full bg-slate-100 px-1.5 text-[10px] font-bold tabular-nums text-slate-700">{total}</span>}
+                  {total > 0 && <Badge tone="neutral" className="ml-auto tabular-nums">{total}</Badge>}
                 </span>
                 {summary?.items.map((item) => (
                   <span key={item.id} className={`flex min-w-0 items-center gap-1 truncate rounded border border-l-[3px] px-1 text-[11px] leading-4 ${STATUS_CARD_CLASS[displayStatus(item.status)]}`} title={`${formatClock(item.startAt)} ${item.patientName} · ${statusLabel(item.status)}${item.doctorName ? ` · ${item.doctorName}` : ""}`}>
@@ -97,7 +99,7 @@ export function MonthGrid({ date, days, settings, loading, canCreate, onOpenDay,
                   onClick={() => onCreate(day)}
                   aria-label={`${day.getDate()} için yeni randevu`}
                   title="Bu güne yeni randevu"
-                  className="absolute bottom-1 right-1 flex h-6 w-6 items-center justify-center rounded-full border border-primary/30 bg-white text-primary opacity-0 shadow-sm transition-opacity hover:bg-primary/10 focus:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 group-hover:opacity-100"
+                  className="absolute bottom-1 right-1 flex h-6 w-6 items-center justify-center rounded-full border border-primary/30 bg-white text-primary opacity-0 shadow-sm transition-opacity !min-h-0 hover:bg-primary/10 focus:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 group-hover:opacity-100 [@media(hover:none)]:hidden"
                 >
                   <Plus className="h-3.5 w-3.5" aria-hidden="true" />
                 </button>

@@ -1,18 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Check, Crown, MapPin, Pencil, Plus, Power } from "lucide-react";
+import { Crown, MapPin, Pencil, Plus, Power } from "lucide-react";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
-import { FormErrorBanner, FormField } from "@/components/ui/FormField";
+import { Checkbox } from "@/components/ui/Checkbox";
+import { FormField } from "@/components/ui/FormField";
 import { Input } from "@/components/ui/Input";
-import { Modal } from "@/components/ui/Modal";
+import { FormModal } from "@/components/ui/FormModal";
 import { SearchInput } from "@/components/ui/SearchInput";
-import { EmptyValue, ListTable, type ListTableColumn } from "@/components/ui/ListTable";
-import { clientMutation } from "@/lib/client-mutation";
+import { Toolbar } from "@/components/ui/Toolbar";
+import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
 import { roleLabel } from "@/lib/staff-roles";
+import { errorMessage, saGet, saSend } from "./sa-fetch";
 
 type Manager = { id: string; fullName: string; role: string };
 type Branch = {
@@ -57,13 +59,12 @@ export function BranchesPanel({ institutionId, onChanged }: { institutionId: str
     setLoading(true);
     setLoadError(null);
     try {
-      const response = await fetch(`/api/superadmin/institutions/${institutionId}/branches`, { cache: "no-store" });
-      const data = await response.json().catch(() => null);
-      if (!response.ok || !Array.isArray(data?.branches)) throw new Error(data?.message || "Şubeler yüklenemedi.");
+      const data = await saGet<{ branches?: Branch[]; managers?: Manager[] }>(`/api/superadmin/institutions/${institutionId}/branches`, "Şubeler yüklenemedi.");
+      if (!Array.isArray(data?.branches)) throw new Error("Şubeler yüklenemedi.");
       setBranches(data.branches);
       setManagers(Array.isArray(data.managers) ? data.managers : []);
     } catch (error) {
-      setLoadError(error instanceof Error ? error.message : "Şubeler yüklenemedi.");
+      setLoadError(errorMessage(error, "Şubeler yüklenemedi."));
     } finally {
       setLoading(false);
     }
@@ -102,17 +103,13 @@ export function BranchesPanel({ institutionId, onChanged }: { institutionId: str
     setSaving(true);
     setFormError(null);
     try {
-      await clientMutation(
-        `/api/superadmin/institutions/${institutionId}/branches`,
-        { method: editing ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(editing ? { id: editing.id, ...form } : form) },
-        "Şube kaydedilemedi.",
-      );
+      await saSend(`/api/superadmin/institutions/${institutionId}/branches`, editing ? "PATCH" : "POST", editing ? { id: editing.id, ...form } : form, "Şube kaydedilemedi.");
       showToastSafe({ type: "success", message: editing ? `${form.name} güncellendi.` : `${form.name} şubesi açıldı.`, icon: "institutions" });
       setOpen(false);
       await load();
       onChanged?.();
     } catch (error) {
-      setFormError(error instanceof Error ? error.message : "Şube kaydedilemedi.");
+      setFormError(errorMessage(error, "Şube kaydedilemedi."));
     } finally {
       setSaving(false);
     }
@@ -131,16 +128,12 @@ export function BranchesPanel({ institutionId, onChanged }: { institutionId: str
     }
     setTogglingId(branch.id);
     try {
-      await clientMutation(
-        `/api/superadmin/institutions/${institutionId}/branches`,
-        { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: branch.id, isActive: !branch.isActive }) },
-        "Şube durumu değiştirilemedi.",
-      );
+      await saSend(`/api/superadmin/institutions/${institutionId}/branches`, "PATCH", { id: branch.id, isActive: !branch.isActive }, "Şube durumu değiştirilemedi.");
       showToastSafe({ type: "success", message: branch.isActive ? `${branch.name} pasife alındı.` : `${branch.name} yeniden aktif.`, icon: "institutions" });
       await load();
       onChanged?.();
     } catch (error) {
-      showToastSafe({ type: "error", message: error instanceof Error ? error.message : "Şube durumu değiştirilemedi." });
+      showToastSafe({ type: "error", message: errorMessage(error, "Şube durumu değiştirilemedi.") });
     } finally {
       setTogglingId(null);
     }
@@ -197,21 +190,22 @@ export function BranchesPanel({ institutionId, onChanged }: { institutionId: str
   ];
 
   return (
-    <section className="space-y-3">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="text-base font-bold text-slate-900">Şubeler</h2>
-          <p className="text-sm text-slate-500">Kliniğin şubeleri ve her şubenin yöneticileri.</p>
-        </div>
-        <Button icon={Plus} onClick={showCreate}>Yeni şube</Button>
-      </div>
-
+    <>
+      {/* Sekme adı ("Şubeler") içeride ikinci kez başlık olarak yazılmaz;
+          "Yeni şube" ikincil düğme (sayfanın birincil eylemi başlıktaki Düzenle). */}
       <ListTable
+        header={(
+          <Toolbar actions={<Button size="sm" variant="secondary" icon={Plus} onClick={showCreate}>Yeni şube</Button>}>
+            <p className="text-sm text-slate-600">Kliniğin şubeleri ve her şubenin yöneticileri.</p>
+          </Toolbar>
+        )}
         columns={columns}
         rows={branches}
         rowKey={(branch) => branch.id}
         loading={loading}
-        error={loadError}
+        // Veri varken yenileme hatası listeyi silmez; üstte şerit olarak görünür.
+        error={branches.length > 0 ? null : loadError}
+        staleError={branches.length > 0 ? loadError : null}
         onRetry={() => void load()}
         emptyText="Henüz şube yok"
         rowClassName={(branch) => (branch.isActive ? "" : "opacity-60")}
@@ -230,105 +224,91 @@ export function BranchesPanel({ institutionId, onChanged }: { institutionId: str
         )}
       />
 
-      <Modal
+      <FormModal
         open={open}
         onClose={() => setOpen(false)}
         isDirty={open && JSON.stringify(form) !== snapshot.current}
         title={editing ? "Şubeyi düzenle" : "Yeni şube"}
         description="Şubenin adresini ve bu şubeyi yönetecek kişileri seçin."
         size="lg"
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => setOpen(false)}>Vazgeç</Button>
-            <Button loading={saving} onClick={() => void save()}>Kaydet</Button>
-          </>
-        }
+        onSubmit={() => save()}
+        submitting={saving}
+        error={formError}
       >
-        <div className="space-y-4">
-          <FormErrorBanner message={formError} />
-          <div className="grid gap-3 md:grid-cols-2">
-            <FormField label="Şube adı" htmlFor="branch-name" required>
-              <Input id="branch-name" value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} />
+        <div className="grid gap-3 md:grid-cols-2">
+          <FormField label="Şube adı" htmlFor="branch-name" required>
+            <Input id="branch-name" autoFocus value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} />
+          </FormField>
+          <FormField label="Kısa kod" htmlFor="branch-code" hint="Ör. KDK (listelerde kısaltma)">
+            <Input id="branch-code" className="uppercase" maxLength={12} value={form.code} onChange={(event) => setForm((current) => ({ ...current, code: event.target.value }))} />
+          </FormField>
+          <FormField label="Telefon" htmlFor="branch-phone">
+            <Input id="branch-phone" type="tel" inputMode="tel" value={form.phone} onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))} />
+          </FormField>
+          <FormField label="E-posta" htmlFor="branch-email">
+            <Input id="branch-email" type="email" value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} />
+          </FormField>
+          <FormField label="İl" htmlFor="branch-city">
+            <Input id="branch-city" value={form.city} onChange={(event) => setForm((current) => ({ ...current, city: event.target.value }))} />
+          </FormField>
+          <FormField label="İlçe" htmlFor="branch-district">
+            <Input id="branch-district" value={form.district} onChange={(event) => setForm((current) => ({ ...current, district: event.target.value }))} />
+          </FormField>
+          <div className="md:col-span-2">
+            <FormField label="Adres" htmlFor="branch-address">
+              <Input id="branch-address" value={form.address} onChange={(event) => setForm((current) => ({ ...current, address: event.target.value }))} />
             </FormField>
-            <FormField label="Kısa kod" htmlFor="branch-code" hint="Ör. KDK (listelerde kısaltma)">
-              <Input id="branch-code" className="uppercase" maxLength={12} value={form.code} onChange={(event) => setForm((current) => ({ ...current, code: event.target.value }))} />
-            </FormField>
-            <FormField label="Telefon" htmlFor="branch-phone">
-              <Input id="branch-phone" type="tel" inputMode="tel" value={form.phone} onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))} />
-            </FormField>
-            <FormField label="E-posta" htmlFor="branch-email">
-              <Input id="branch-email" type="email" value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} />
-            </FormField>
-            <FormField label="İl" htmlFor="branch-city">
-              <Input id="branch-city" value={form.city} onChange={(event) => setForm((current) => ({ ...current, city: event.target.value }))} />
-            </FormField>
-            <FormField label="İlçe" htmlFor="branch-district">
-              <Input id="branch-district" value={form.district} onChange={(event) => setForm((current) => ({ ...current, district: event.target.value }))} />
-            </FormField>
-            <div className="md:col-span-2">
-              <FormField label="Adres" htmlFor="branch-address">
-                <Input id="branch-address" value={form.address} onChange={(event) => setForm((current) => ({ ...current, address: event.target.value }))} />
-              </FormField>
-            </div>
           </div>
-
-          <fieldset>
-            <legend className="mb-1.5 text-xs font-bold text-slate-800">Şube rengi (takvimde ayırt etmek için)</legend>
-            <div className="flex flex-wrap gap-2">
-              {COLORS.map((color) => (
-                <button
-                  type="button"
-                  key={color.value}
-                  aria-label={color.label}
-                  aria-pressed={form.colorCode === color.value}
-                  onClick={() => setForm((current) => ({ ...current, colorCode: color.value }))}
-                  className={`h-8 w-8 rounded-md border-2 ${form.colorCode === color.value ? "border-slate-900 ring-2 ring-slate-300 ring-offset-2" : "border-white"}`}
-                  style={{ backgroundColor: color.value }}
-                />
-              ))}
-            </div>
-          </fieldset>
-
-          <fieldset className="border-t border-slate-100 pt-4">
-            <legend className="sr-only">Şube yöneticileri</legend>
-            <div className="flex flex-wrap items-end justify-between gap-2">
-              <div>
-                <p className="text-xs font-bold text-slate-800">Şube yöneticileri</p>
-                <p className="text-xs text-slate-500">Seçilen kişiler bu şubenin personel erişimini yönetir.</p>
-              </div>
-              {managers.length > 6 && (
-                <SearchInput value={managerQuery} onChange={setManagerQuery} placeholder="Yönetici ara" size="sm" wrapperClassName="w-full sm:w-56" />
-              )}
-            </div>
-            {managers.length === 0 ? (
-              <p className="mt-2 text-xs text-slate-500">Klinikte aktif yönetici yok. Önce Personel sekmesinden yönetici ekleyin.</p>
-            ) : (
-              <div className="mt-2 grid max-h-52 gap-2 overflow-y-auto md:grid-cols-2">
-                {visibleManagers.map((manager) => {
-                  const selected = form.managerIds.includes(manager.id);
-                  return (
-                    <button
-                      key={manager.id}
-                      type="button"
-                      aria-pressed={selected}
-                      onClick={() => setForm((current) => ({ ...current, managerIds: selected ? current.managerIds.filter((id) => id !== manager.id) : [...current.managerIds, manager.id] }))}
-                      className={`flex items-center justify-between rounded-md border px-3 py-2 text-left ${selected ? "border-primary/30 bg-primary/5" : "border-slate-200 hover:bg-slate-50"}`}
-                    >
-                      <span>
-                        <span className="block text-sm font-semibold text-slate-800">{manager.fullName}</span>
-                        <span className="text-xs text-slate-500">{roleLabel(manager.role) || <EmptyValue />}</span>
-                      </span>
-                      <span className={`flex h-5 w-5 items-center justify-center rounded border ${selected ? "border-primary bg-primary text-white" : "border-slate-300 text-transparent"}`}>
-                        <Check className="h-3.5 w-3.5" aria-hidden="true" />
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </fieldset>
         </div>
-      </Modal>
-    </section>
+
+        <fieldset>
+          <legend className="mb-1.5 text-xs font-bold text-slate-800">Şube rengi (takvimde ayırt etmek için)</legend>
+          <div className="flex flex-wrap gap-2">
+            {COLORS.map((color) => (
+              <button
+                type="button"
+                key={color.value}
+                aria-label={color.label}
+                aria-pressed={form.colorCode === color.value}
+                onClick={() => setForm((current) => ({ ...current, colorCode: color.value }))}
+                className={`h-8 w-8 rounded-md border-2 ${form.colorCode === color.value ? "border-slate-900 ring-2 ring-slate-300 ring-offset-2" : "border-white"}`}
+                style={{ backgroundColor: color.value }}
+              />
+            ))}
+          </div>
+        </fieldset>
+
+        <fieldset className="border-t border-slate-100 pt-4">
+          <legend className="sr-only">Şube yöneticileri</legend>
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <div>
+              <p className="text-xs font-bold text-slate-800">Şube yöneticileri</p>
+              <p className="text-xs text-slate-500">Seçilen kişiler bu şubenin personel erişimini yönetir.</p>
+            </div>
+            {managers.length > 6 && (
+              <SearchInput value={managerQuery} onChange={setManagerQuery} placeholder="Yönetici ara" size="sm" wrapperClassName="w-full sm:w-56" />
+            )}
+          </div>
+          {managers.length === 0 ? (
+            <p className="mt-2 text-xs text-slate-500">Klinikte aktif yönetici yok. Önce Personel sekmesinden “Yeni kullanıcı” ile klinik yöneticisi ekleyin.</p>
+          ) : (
+            <div className="mt-2 grid max-h-52 gap-x-4 gap-y-2 overflow-y-auto md:grid-cols-2">
+              {visibleManagers.map((manager) => {
+                const selected = form.managerIds.includes(manager.id);
+                return (
+                  <Checkbox
+                    key={manager.id}
+                    checked={selected}
+                    onChange={(checked) => setForm((current) => ({ ...current, managerIds: checked ? [...current.managerIds, manager.id] : current.managerIds.filter((id) => id !== manager.id) }))}
+                    label={manager.fullName}
+                    description={roleLabel(manager.role) || undefined}
+                  />
+                );
+              })}
+            </div>
+          )}
+        </fieldset>
+      </FormModal>
+    </>
   );
 }

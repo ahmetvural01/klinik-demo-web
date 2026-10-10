@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { computeDoctorMonthlyHakedis, computeDoctorMonthlyOdenen, monthRangeUtc } from "@/lib/hakedis";
@@ -12,6 +13,14 @@ import { requireActiveBranch } from "@/lib/branch-context";
 const LINKED_FIRMA_MESSAGE = "Bu gider bir firma ödemesinden otomatik oluştu. Değiştirmek veya iptal etmek için firmanın ekstresinden ödemeyi iptal edin.";
 function isLinkedFirmaExpense(expense: { sourceType?: string | null; description?: string | null }) {
   return expense.sourceType === "FIRMA_ISLEM" || /\[SISTEM:FIRMA_ISLEM:/.test(expense.description || "");
+}
+
+// gider/route.ts POST ile aynı kural: içinde bulunulan (ve ileri) ayın
+// hakedişi ay kapanınca ödenir.
+const OPEN_PERIOD_MESSAGE = "İçinde bulunulan ayın hakedişi ay kapanınca ödenir.";
+function isOpenPayoutPeriod(year: number, month: number, now = new Date()) {
+  const current = turkeyYearMonth(now);
+  return year * 12 + month >= current.year * 12 + current.month;
 }
 
 export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
@@ -57,9 +66,13 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
       },
       // institutionId/branchId seçilmezse aşağıdaki bileşik anahtarlı update tanımsız alanla
       // çağrılıyor ve HER düzenleme 500 ile düşüyordu.
-      select: { id: true, institutionId: true, branchId: true, doctorId: true, tarih: true, tutar: true, categoryId: true, category: true, periodYear: true, periodMonth: true, sourceType: true, description: true },
+      select: { id: true, institutionId: true, branchId: true, doctorId: true, tarih: true, tutar: true, status: true, categoryId: true, category: true, periodYear: true, periodMonth: true, sourceType: true, description: true },
     });
     if (!existing) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
+    // İptal edilmiş gider "İptal edilenler" görünümünde iz olarak kalır; düzenlenemez.
+    if (existing.status === "IPTAL") {
+      return NextResponse.json({ error: "İptal edilmiş gider düzenlenemez." }, { status: 409 });
+    }
     if (isLinkedFirmaExpense(existing)) {
       return NextResponse.json({ error: LINKED_FIRMA_MESSAGE }, { status: 409 });
     }
@@ -132,16 +145,28 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     // önceden bu sadece formda (istemci tarafında) kontrol ediliyordu, doğrudan
     // API çağrısıyla trivially bypass edilebiliyordu (bkz. denetim raporu Tema 5).
     if (existing.doctorId && body.tutar !== undefined) {
-      const newTutar = Number(body.tutar);
+      const newTutar = new Prisma.Decimal(Number(body.tutar));
       const existingDatePeriod = turkeyYearMonth(new Date(existing.tarih));
       const year = body.periodYear ?? existing.periodYear ?? existingDatePeriod.year;
       const month = body.periodMonth ?? existing.periodMonth ?? existingDatePeriod.month;
+      // Ay sürerken hakediş ödemesi artırılamaz (azaltmak ve açıklama düzeltmek serbest).
+      if (newTutar.gt(existing.tutar) && Number.isInteger(year) && Number.isInteger(month) && isOpenPayoutPeriod(year, month)) {
+        return NextResponse.json({ error: OPEN_PERIOD_MESSAGE }, { status: 400 });
+      }
       const doctor = await prisma.user.findUnique({
         where: { id: existing.doctorId },
         select: { kkYuzde: true, genelYuzde: true, maasYuzde: true, branchMemberships: { where: { branchId: branch.branchId }, select: { kkYuzde: true, genelYuzde: true, maasYuzde: true }, take: 1 } },
       });
       if (doctor && Number.isInteger(year) && Number.isInteger(month)) {
         const { start, end } = monthRangeUtc(year, month);
+        // Hakediş ay kapandıktan sonra ödenir: bu kayıt ve o aya etiketli
+        // diğer ödemeler sonraki aylarda kaydedilir. Ödenen yalnız dönem ayının
+        // tarihleriyle okununca görülmüyor, sınır ödeme başına uygulanıyordu
+        // (hakedis/detay ile aynı: bugüne kadar okunur). Aralık bu kaydın
+        // tarihini de kapsar; aşağıda kendi tutarı toplamdan düşülür.
+        const existingTarih = new Date(existing.tarih);
+        const paidFrom = new Date(Math.min(start.getTime(), existingTarih.getTime()));
+        const paidUntil = new Date(Math.max(end.getTime(), Date.now(), existingTarih.getTime()));
         const branchRates = doctor.branchMemberships[0];
         const rates = {
           kkYuzde: Number(branchRates?.kkYuzde ?? doctor.kkYuzde ?? 0),
@@ -150,15 +175,16 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
         };
         const [hakedisRows, odenenMap] = await Promise.all([
           computeDoctorMonthlyHakedis({ doctorId: existing.doctorId, institutionId: auth.user.institutionId!, branchId: branch.branchId, rates, rangeStart: start, rangeEnd: end }),
-          computeDoctorMonthlyOdenen({ doctorId: existing.doctorId, institutionId: auth.user.institutionId, branchId: branch.branchId, rangeStart: start, rangeEnd: end }),
+          computeDoctorMonthlyOdenen({ doctorId: existing.doctorId, institutionId: auth.user.institutionId, branchId: branch.branchId, rangeStart: paidFrom, rangeEnd: paidUntil }),
         ]);
-        const hakedilen = hakedisRows.find((r) => r.year === year && r.month === month)?.hakedilen ?? 0;
+        const hakedilen = new Prisma.Decimal(hakedisRows.find((r) => r.year === year && r.month === month)?.hakedilen ?? 0);
         const odenenKey = `${year}-${String(month).padStart(2, "0")}`;
-        const odenenToplam = odenenMap.get(odenenKey) || 0;
-        const odenenHaricBu = odenenToplam - Number(existing.tutar);
-        if (odenenHaricBu + newTutar > hakedilen + 0.01) {
+        const odenenToplam = new Prisma.Decimal(odenenMap.get(odenenKey) || 0);
+        // İptal edilmiş kayıt ödenen toplamına girmez; yalnız aktif kaydın kendi tutarı düşülür.
+        const odenenHaricBu = existing.status === "AKTIF" ? odenenToplam.minus(existing.tutar) : odenenToplam;
+        if (odenenHaricBu.plus(newTutar).gt(hakedilen.plus("0.01"))) {
           return NextResponse.json({
-            error: `Bu tutar doktorun ${month}/${year} dönemi hakedişini aşıyor. Kalan: ${Math.max(0, hakedilen - odenenHaricBu).toFixed(2)} TL`,
+            error: `Bu tutar doktorun ${month}/${year} dönemi hakedişini aşıyor. Kalan: ${Prisma.Decimal.max(0, hakedilen.minus(odenenHaricBu)).toFixed(2)} TL`,
           }, { status: 400 });
         }
       }
@@ -219,9 +245,11 @@ export async function DELETE(req: NextRequest, props: { params: Promise<{ id: st
         ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
         branchId: branch.branchId,
       },
-      select: { id: true, institutionId: true, branchId: true, sourceType: true, description: true },
+      select: { id: true, institutionId: true, branchId: true, sourceType: true, description: true, status: true },
     });
     if (!existing) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
+    // Zaten iptal edilmiş: ikinci işlem kaydı yazılmaz (iz değişmez).
+    if (existing.status === "IPTAL") return NextResponse.json({ ok: true });
     if (isLinkedFirmaExpense(existing)) {
       return NextResponse.json({ error: LINKED_FIRMA_MESSAGE }, { status: 409 });
     }

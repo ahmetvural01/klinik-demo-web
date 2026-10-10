@@ -4,9 +4,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pencil, Plus } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
-import { Modal } from "@/components/ui/Modal";
+import { FormModal } from "@/components/ui/FormModal";
 import { Input, Select } from "@/components/ui/Input";
-import { FormErrorBanner, FormField } from "@/components/ui/FormField";
+import { FormField } from "@/components/ui/FormField";
 import { Switch } from "@/components/ui/Switch";
 import { Toolbar } from "@/components/ui/Toolbar";
 import { SearchInput } from "@/components/ui/SearchInput";
@@ -14,7 +14,6 @@ import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { SmsMessageEditor } from "@/components/sms/SmsMessageEditor";
 import { showToastSafe } from "@/lib/toast-client";
 import { SMS_PLACEHOLDERS, renderSmsPreview, toReadableText, toStoredText } from "@/lib/sms-template-placeholders";
-import { TabIntro } from "@/components/superadmin/TabIntro";
 import { codeFromTitle } from "@/components/superadmin/sa-labels";
 import { errorMessage, isAbort, saGet, saSend } from "@/components/superadmin/sa-fetch";
 
@@ -70,6 +69,8 @@ export default function TemplatesTab() {
   const [editing, setEditing] = useState<Template | null>(null);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<FormState>(EMPTY);
+  // Pencere açılırkenki değerler: kirli formda kapatırken onay sorulur.
+  const [initialForm, setInitialForm] = useState<FormState>(EMPTY);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -101,6 +102,7 @@ export default function TemplatesTab() {
   const openCreate = () => {
     setEditing(null);
     setForm(EMPTY);
+    setInitialForm(EMPTY);
     setFormError(null);
     setOpen(true);
   };
@@ -108,7 +110,7 @@ export default function TemplatesTab() {
   const openEdit = (item: Template) => {
     const same = !item.whatsappContent || sameText(item.whatsappContent, item.content);
     setEditing(item);
-    setForm({
+    const next: FormState = {
       title: item.title,
       description: item.description || "",
       category: item.category,
@@ -118,7 +120,9 @@ export default function TemplatesTab() {
       whatsappTemplateName: item.whatsappTemplateName || "",
       whatsappTemplateLanguage: item.whatsappTemplateLanguage || "tr",
       isActive: item.isActive,
-    });
+    };
+    setForm(next);
+    setInitialForm(next);
     setFormError(null);
     setOpen(true);
   };
@@ -182,13 +186,9 @@ export default function TemplatesTab() {
 
   return (
     <section className="space-y-3">
-      <TabIntro
-        text="Tüm kliniklerin varsayılan mesajları. Klinikler kendi metinlerini İletişim ekranından değiştirebilir."
-        actions={<Button icon={Plus} onClick={openCreate}>Yeni şablon</Button>}
-      />
       <ListTable<Template>
         header={
-          <Toolbar>
+          <Toolbar actions={<Button size="sm" variant="secondary" icon={Plus} onClick={openCreate}>Yeni şablon</Button>}>
             <SearchInput value={query} onChange={setQuery} placeholder="Şablon adı veya metin" wrapperClassName="flex-1 min-w-[220px]" />
             <Select aria-label="Kategori" value={category} onChange={(event) => setCategory(event.target.value)} className="sm:w-48">
               <option value="">Tüm kategoriler</option>
@@ -200,7 +200,9 @@ export default function TemplatesTab() {
         rows={filtered}
         rowKey={(item) => item.id}
         loading={loading}
-        error={loadError}
+        // Veri varken yenileme hatası listeyi silmez; üstte şerit olarak görünür.
+        error={templates.length > 0 ? null : loadError}
+        staleError={templates.length > 0 ? loadError : null}
         onRetry={reload}
         onRowClick={openEdit}
         getRowAriaLabel={(item) => `${item.title} şablonunu düzenle`}
@@ -218,40 +220,35 @@ export default function TemplatesTab() {
         )}
       />
 
-      <Modal
+      <FormModal
         open={open}
         onClose={() => setOpen(false)}
         title={editing ? "Şablonu düzenle" : "Yeni şablon"}
         description={editing ? `Sistem kodu: ${editing.code}` : "Sistem kodu başlıktan otomatik oluşturulur."}
         size="lg"
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => setOpen(false)}>Vazgeç</Button>
-            <Button loading={saving} onClick={() => void save()}>Kaydet</Button>
-          </>
-        }
+        onSubmit={() => save()}
+        submitting={saving}
+        error={formError}
+        isDirty={JSON.stringify(form) !== JSON.stringify(initialForm)}
       >
-        <div className="space-y-4">
-          <FormErrorBanner message={formError} />
-          <div className="grid gap-3 sm:grid-cols-2">
-            <FormField label="Başlık" htmlFor="template-title" required hint="Ör. Randevu hatırlatması">
-              <Input id="template-title" value={form.title} onChange={(event) => set("title", event.target.value)} />
+        <div className="grid gap-3 sm:grid-cols-2">
+          <FormField label="Başlık" htmlFor="template-title" required hint="Ör. Randevu hatırlatması">
+            <Input id="template-title" value={form.title} onChange={(event) => set("title", event.target.value)} />
+          </FormField>
+          <FormField label="Kategori" htmlFor="template-category">
+            <Select id="template-category" value={form.category} onChange={(event) => set("category", event.target.value)}>
+              {Object.entries(CATEGORIES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </Select>
+          </FormField>
+          <div className="sm:col-span-2">
+            <FormField label="Ne zaman kullanılır?" htmlFor="template-description" hint="Kliniklere gösterilen kısa açıklama">
+              <Input id="template-description" value={form.description} onChange={(event) => set("description", event.target.value)} />
             </FormField>
-            <FormField label="Kategori" htmlFor="template-category">
-              <Select id="template-category" value={form.category} onChange={(event) => set("category", event.target.value)}>
-                {Object.entries(CATEGORIES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-              </Select>
-            </FormField>
-            <div className="sm:col-span-2">
-              <FormField label="Ne zaman kullanılır?" htmlFor="template-description" hint="Kliniklere gösterilen kısa açıklama">
-                <Input id="template-description" value={form.description} onChange={(event) => set("description", event.target.value)} />
-              </FormField>
-            </div>
           </div>
-          <SmsMessageEditor value={form.content} onChange={(content) => set("content", content)} placeholders={SMS_PLACEHOLDERS} label="Mesaj metni" hint="Aynı metin WhatsApp bağlı kliniklerde WhatsApp'tan, diğerlerinde SMS ile gider." />
-          <Switch checked={form.isActive} onChange={(checked) => set("isActive", checked)} label="Şablon aktif" description="Kapalı şablon kliniklerin listesinde pasif olarak görünür." />
         </div>
-      </Modal>
+        <SmsMessageEditor value={form.content} onChange={(content) => set("content", content)} placeholders={SMS_PLACEHOLDERS} label="Mesaj metni" hint="Aynı metin WhatsApp bağlı kliniklerde WhatsApp'tan, diğerlerinde SMS ile gider." />
+        <Switch checked={form.isActive} onChange={(checked) => set("isActive", checked)} label="Kliniklerde kullanılabilsin" description="Tüm kliniklerin varsayılan mesajıdır; klinikler kendi metnini İletişim ekranından değiştirebilir. Kapalı şablon kliniklerin listesinde pasif görünür." />
+      </FormModal>
     </section>
   );
 }

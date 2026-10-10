@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
-import { turkeyDateKey, turkeyMonthRangeUtc } from "@/lib/tz";
+import { isValidDateKey, turkeyDateKey, turkeyDayRangeUtc, turkeyMonthRangeUtc } from "@/lib/tz";
 import { summarizeInvoices } from "@/components/superadmin/invoice-status";
 
 export const dynamic = "force-dynamic";
@@ -30,11 +30,58 @@ function ranges(period: Period) {
   return { current: turkeyMonthRangeUtc(target.year, target.month), previous: turkeyMonthRangeUtc(prev.year, prev.month) };
 }
 
+function lastDayOfMonth(year: number, month: number) {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+function dateKey(year: number, month: number, day: number) {
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function shiftDays(key: string, days: number) {
+  const date = new Date(`${key}T12:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+/**
+ * Seçilen gün aralığının karşılaştırma dönemi. Ayın 1'inden başlayan
+ * dönemde aynı günler aylar kadar (yıl başından başlıyorsa bir yıl) geri
+ * alınır: "1–10 Eki" ↔ "1–10 Eyl", "Eylül" ↔ "Ağustos", "Bu yıl" ↔ geçen
+ * yılın aynı günleri. Diğer aralıklarda hemen önceki eşit uzunlukta dönem.
+ */
+function previousKeys(from: string, to: string): { from: string; to: string } {
+  const [fy, fm] = from.split("-").map(Number);
+  const [ty, tm, td] = to.split("-").map(Number);
+  if (from.endsWith("-01")) {
+    const spanMonths = (ty - fy) * 12 + (tm - fm) + 1;
+    // Yıl başından başlayıp birden çok aya yayılan dönem ("Bu yıl") geçen
+    // yılla karşılaştırılır. Tek aylık dönem (ör. şubatta "Geçen ay" = ocak)
+    // bir önceki ayla: önceden ocak geçen yılın ocağıyla karşılaştırılıyordu.
+    const months = from.endsWith("-01-01") && spanMonths > 1 ? 12 : spanMonths;
+    const back = (year: number, month: number, day: number, toMonthEnd: boolean) => {
+      const first = new Date(Date.UTC(year, month - 1 - months, 1));
+      const y = first.getUTCFullYear();
+      const m = first.getUTCMonth() + 1;
+      const last = lastDayOfMonth(y, m);
+      return dateKey(y, m, toMonthEnd ? last : Math.min(day, last));
+    };
+    return { from: back(fy, fm, 1, false), to: back(ty, tm, td, td === lastDayOfMonth(ty, tm)) };
+  }
+  const days = Math.round((Date.parse(`${to}T12:00:00Z`) - Date.parse(`${from}T12:00:00Z`)) / 86_400_000) + 1;
+  const prevTo = shiftDays(from, -1);
+  return { from: shiftDays(prevTo, -(days - 1)), to: prevTo };
+}
+
 /**
  * Raporlar — seçilen dönemde tahsilat, kesilen fatura, satılan ve gönderilen
  * SMS. Önceden "Bu ay SMS kullanımı" satılan PAKET adedini gösteriyordu
  * (3 paket = "3"), gönderilen SMS (SmsDispatch) hiç okunmuyordu ve önceki ay
  * 0 iken büyüme "+0%" yazıyordu.
+ *
+ * Dönem `from`/`to` (YYYY-MM-DD, Türkiye takvimi, iki uç dahil) ile verilir —
+ * ekran ortak dönem seçicisini kullanır. Eski `donem` anahtarları (bu-ay,
+ * gecen-ay, son-12-ay) çalışmaya devam eder.
  */
 export async function GET(request: NextRequest) {
   const auth = await requireAuth("superadmin");
@@ -43,9 +90,25 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ message: "Yetki yok" }, { status: 403 });
   }
 
-  const raw = new URL(request.url).searchParams.get("donem");
-  const period: Period = raw === "gecen-ay" || raw === "son-12-ay" ? raw : "bu-ay";
-  const { current, previous } = ranges(period);
+  const searchParams = new URL(request.url).searchParams;
+  const fromKey = searchParams.get("from") || "";
+  const toKey = searchParams.get("to") || "";
+  let period: Period | "ozel";
+  let current: { start: Date; end: Date };
+  let previous: { start: Date; end: Date };
+  if (fromKey || toKey) {
+    if (!isValidDateKey(fromKey) || !isValidDateKey(toKey) || fromKey > toKey) {
+      return NextResponse.json({ message: "Geçerli bir tarih aralığı seçin." }, { status: 400 });
+    }
+    const prev = previousKeys(fromKey, toKey);
+    period = "ozel";
+    current = { start: turkeyDayRangeUtc(fromKey).start, end: turkeyDayRangeUtc(toKey).end };
+    previous = { start: turkeyDayRangeUtc(prev.from).start, end: turkeyDayRangeUtc(prev.to).end };
+  } else {
+    const raw = searchParams.get("donem");
+    period = raw === "gecen-ay" || raw === "son-12-ay" ? raw : "bu-ay";
+    ({ current, previous } = ranges(period));
+  }
   const inCurrent = { gte: current.start, lte: current.end };
 
   const [paid, previousPaid, issued, allInvoices, smsSales, dispatches, institutions, planGroups] = await Promise.all([
@@ -114,6 +177,7 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     period,
     range: { start: current.start.toISOString(), end: current.end.toISOString() },
+    previousRange: { start: previous.start.toISOString(), end: previous.end.toISOString() },
     collected,
     collectedGrowth: previousCollected > 0 ? Math.round(((collected - previousCollected) / previousCollected) * 100) : null,
     issuedAmount: Number(issued._sum.amount || 0),

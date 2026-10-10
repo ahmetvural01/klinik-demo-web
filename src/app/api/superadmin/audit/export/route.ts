@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import { buildPlatformAuditWhere } from "../audit-filters";
+import { attachAuditActors } from "../audit-actors";
 import { auditActionLabel } from "@/components/superadmin/sa-labels";
 import { roleLabel } from "@/lib/staff-roles";
 
@@ -23,11 +24,13 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const where = await buildPlatformAuditWhere(searchParams);
 
-  const logs = await prisma.auditLog.findMany({
+  const rawLogs = await prisma.auditLog.findMany({
     where,
     orderBy: { createdAt: "desc" },
     take: MAX_ROWS,
     select: {
+      userId: true,
+      actorId: true,
       createdAt: true,
       action: true,
       detail: true,
@@ -38,12 +41,16 @@ export async function GET(request: NextRequest) {
     },
   });
 
-  const header = ["Tarih", "Kullanıcı", "Klinik", "Rol", "İşlem", "İşlem kodu", "Detay", "IP", "Gizli giriş"];
+  // Gizli girişte kayıt kliniğin kullanıcısı adına yazılır; "İşlemi yapan"
+  // sütunu gerçek kişiyi (platform yöneticisi) gösterir.
+  const logs = await attachAuditActors(rawLogs);
+  const header = ["Tarih", "Kullanıcı", "Klinik", "Rol", "İşlemi yapan", "İşlem", "İşlem kodu", "Detay", "IP", "Gizli giriş"];
   const rows = logs.map((l) => [
     l.createdAt.toLocaleString("tr-TR", { timeZone: "Europe/Istanbul" }),
     l.user?.fullName ?? "",
     l.user?.institution?.name ?? "",
     roleLabel(l.actorRole ?? l.user?.role ?? ""),
+    l.actor ? `${l.actor.fullName} (${roleLabel(l.actor.role)})` : l.user?.fullName ?? "",
     auditActionLabel(l.action, l.detail),
     l.action,
     l.detail ?? "",

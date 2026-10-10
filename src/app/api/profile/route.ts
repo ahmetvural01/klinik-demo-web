@@ -29,18 +29,21 @@ export async function GET() {
         createdAt: true,
         updatedAt: true,
         institutionId: true,
-        genelYuzde: true,
-        kkYuzde: true,
-        maasYuzde: true,
         twoFactorEnabled: true,
         // Profil ekranı ilk şifresini (TC kimlik no) henüz değiştirmemiş
         // kullanıcıya yalnız şifre formunu gösterir.
         mustChangePassword: true,
-        profile: true,
+        // Ekranın kullanmadığı hakediş oranları ve eğitim modu gönderilmez
+        // (veri azaltma); PUT bu alanları korur.
+        profile: { select: { id: true, userId: true, photoUrl: true, workStart: true, workEnd: true, hideAsDoctor: true, createdAt: true, updatedAt: true } },
       },
     });
 
-    return NextResponse.json(profile);
+    // Süperadmin'in kliniğe görünmez girişinde hesap değişiklikleri (şifre,
+    // iki aşamalı doğrulama, oturumlar, fotoğraf) sunucuda reddedilir; ekran
+    // bunları baştan pasif gösterebilsin diye bildirilir (canlı K-10: form
+    // doldurulduktan sonra 403 alınıyordu).
+    return NextResponse.json(profile ? { ...profile, ghostSession: Boolean(auth.user.ghostSession) } : profile);
   } catch (error) {
     console.error("[profile GET] fallback:", error);
     return NextResponse.json(null);

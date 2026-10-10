@@ -41,6 +41,23 @@ export function searchKey(value: string | null | undefined): string {
     .trim();
 }
 
+/** Eski kayıtlarda kalan, bugünkü listede karşılığı olmayan kategori kodları (arama anahtarıyla). */
+const LEGACY_CATEGORY_LABELS: Record<string, (typeof STOCK_CATEGORIES)[number]> = {
+  medikal: "Sarf",
+};
+
+/**
+ * Kategorinin ekranda ve süzgeçte görünen etiketi: eski büyük harfli kodlar
+ * ("SARF", "IMPLANT", "MEDIKAL") bugünkü etikete eşlenir; kayıt değişmez.
+ * Önceden süzgeçte "MEDIKAL" ve "Sarf" yan yana ayrı seçenekti.
+ */
+export function stockCategoryLabel(value: string | null | undefined): string {
+  const raw = (value || "").trim();
+  if (!raw) return "";
+  const key = searchKey(raw);
+  return STOCK_CATEGORIES.find((option) => searchKey(option) === key) || LEGACY_CATEGORY_LABELS[key] || raw;
+}
+
 /** Sorgu boşsa ya da alanlardan biri sorguyu içeriyorsa true. */
 export function matchesSearch(query: string, ...fields: Array<string | null | undefined>): boolean {
   const q = searchKey(query);
@@ -123,6 +140,55 @@ export function itemExpiry(item: Pick<StockItem, "expiresAt" | "nearestExpiry">)
 
 export function isLowStock(item: Pick<StockItem, "quantity" | "minQuantity">): boolean {
   return Number(item.quantity) < Number(item.minQuantity);
+}
+
+/**
+ * KRİTİK STOK — TEK KURAL (stok listesi, ürün detayı, menü rozeti ve ana
+ * sayfa aynı fonksiyonu kullanmalı): miktar minimumun ALTINDA ve siparişi
+ * verilmemiş. Son kullanma tarihinden bağımsızdır (SKT'si geçmiş ve azalan
+ * ürün de sipariş ister). Minimumu 0 olan ürün hiç kritik olmaz ("uyarı
+ * istemiyorsanız 0 yazın"). Önceden menü "≤" ve siparişteki ürünleri de
+ * sayıyor, Stok sayfası "<" sayıyordu; aynı anda 2 ve 1 görünüyordu.
+ */
+export function isCriticalStock(item: Pick<StockItem, "quantity" | "minQuantity" | "onOrderQuantity">): boolean {
+  return isLowStock(item) && !((item.onOrderQuantity || 0) > 0);
+}
+
+export function countCriticalStock(items: ReadonlyArray<Pick<StockItem, "quantity" | "minQuantity" | "onOrderQuantity">>): number {
+  return items.reduce((count, item) => count + (isCriticalStock(item) ? 1 : 0), 0);
+}
+
+export type StockBadgeKey = "critical" | "onorder" | "expired" | "soon";
+
+export type StockBadge = { key: StockBadgeKey; label: string; tone: "critical" | "warning" | "info" };
+
+/**
+ * Satırın durum rozetleri (en çok iki): stok seviyesi (Kritik / Siparişte N)
+ * ve son kullanma (SKT geçti / SKT yakın). Önceden tek rozet gösteriliyordu;
+ * hem azalan hem SKT'si geçen ürün "Kritik" sekmesinde görünmüyor, "Sipariş
+ * ver" düğmesi çıkmıyordu.
+ */
+export function stockBadges(
+  item: Pick<StockItem, "quantity" | "minQuantity" | "onOrderQuantity" | "expiresAt" | "nearestExpiry" | "unit">,
+  now: Date = new Date(),
+): StockBadge[] {
+  const badges: StockBadge[] = [];
+  const onOrder = Number(item.onOrderQuantity || 0);
+  if (onOrder > 0) badges.push({ key: "onorder", label: `Siparişte ${formatQuantity(onOrder, item.unit)}`, tone: "info" });
+  else if (isLowStock(item)) badges.push({ key: "critical", label: "Kritik", tone: "critical" });
+  const expiry = expiryState(itemExpiry(item), now);
+  if (expiry === "expired") badges.push({ key: "expired", label: "SKT geçti", tone: "critical" });
+  else if (expiry === "soon") badges.push({ key: "soon", label: "SKT yakın", tone: "warning" });
+  return badges;
+}
+
+/**
+ * Etikete basılan kod: barkod yoksa sistem kodu (kart kimliğinin son 10
+ * hanesi). Arama da bu kodu bulur — önceden basılan etiket okutulunca
+ * "ürün yok" çıkıyordu.
+ */
+export function stockLabelCode(item: Pick<StockItem, "id" | "barcode">): string {
+  return (item.barcode || item.id.slice(-10).toUpperCase()).trim();
 }
 
 /**

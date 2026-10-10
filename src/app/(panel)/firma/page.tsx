@@ -2,30 +2,30 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Download, FlaskConical, Plus, ShoppingCart, Wallet } from "lucide-react";
-import { downloadCsv } from "@/lib/csv-export";
+import { FlaskConical, Plus, ShoppingCart } from "lucide-react";
 import { showToastSafe } from "@/lib/toast-client";
-import { clientMutation } from "@/lib/client-mutation";
 import { formatCurrency, formatPhoneNumber } from "@/lib/format";
-import { Button, IconButton } from "@/components/ui/Button";
+import { DATE_PRESET_LABELS } from "@/lib/date-presets";
+import { useDateRangeParam } from "@/lib/use-date-range-param";
+import { Button } from "@/components/ui/Button";
+import { ActionMenu, type ActionMenuItem } from "@/components/ui/ActionMenu";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Tabs, useTabParam } from "@/components/ui/Tabs";
 import { Toolbar, ActiveFilters } from "@/components/ui/Toolbar";
 import { SearchInput } from "@/components/ui/SearchInput";
-import { Modal } from "@/components/ui/Modal";
+import { ExportMenu } from "@/components/ui/ExportMenu";
+import { DateRangeFilter } from "@/components/ui/DateRangeFilter";
 import { Badge } from "@/components/ui/Badge";
-import { FormErrorBanner, FormField } from "@/components/ui/FormField";
-import { Input, Select, Textarea } from "@/components/ui/Input";
+import { Select } from "@/components/ui/Input";
 import { ListTable, EmptyValue, type ListSort, type ListTableColumn } from "@/components/ui/ListTable";
 import { DateText, Money } from "@/components/ui/Money";
 import { createSceneIllustration } from "@/components/ui/SceneIllustration";
 import { usePermissions } from "@/components/auth/PermissionProvider";
 import { matchesSearch } from "@/components/stock/stock-shared";
 import { FIRMA_KATEGORILERI, telHref } from "@/components/firma/firma-shared";
-import {
-  usePurchaseModals, summarizeLines,
-  type Purchase, type StockItem,
-} from "./purchase-shared";
+import { FirmaFormModal } from "@/components/firma/FirmaFormModal";
+import { usePurchaseModals } from "@/components/firma/usePurchaseModals";
+import { RECEIPT_STATUS_META, summarizeLines, type Purchase } from "@/components/firma/purchase-model";
 
 const FirmaEmptyIcon = createSceneIllustration("firma");
 
@@ -41,11 +41,17 @@ type Firma = {
   primaryKontakt?: FirmaKontakt | null; toplamKontakt: number;
 };
 
-const VIEW_KEYS = ["firmalar", "siparisler"] as const;
+const VIEW_KEYS = ["firmalar", "satinalmalar", "siparisler"] as const;
 type FirmaView = typeof VIEW_KEYS[number];
 type DurumFilter = "aktif" | "pasif" | "tumu";
+const PURCHASE_PRESETS = ["ay", "gecen-ay", "3ay", "yil", "ozel"] as const;
+const DAY_MS = 86_400_000;
 
-const EMPTY_FIRMA_FORM = { name: "", phone: "", iban: "", ibanName: "", notes: "", kategori: "TEDARICI" };
+/** Siparişin kaç gündür beklediği (yalnız istemcide, veri gelince hesaplanır). */
+function waitingDays(tarih: string) {
+  const days = Math.floor((Date.now() - new Date(tarih).getTime()) / DAY_MS);
+  return days > 0 ? days : 0;
+}
 
 function FirmaContent() {
   const router = useRouter();
@@ -58,27 +64,27 @@ function FirmaContent() {
   const canPurchase = canWriteFinance && can("stock:write");
 
   const [view, setView] = useTabParam<FirmaView>(VIEW_KEYS, "firmalar");
+  const period = useDateRangeParam(PURCHASE_PRESETS, "ay");
   const [firmas, setFirmas] = useState<Firma[]>([]);
   const [orders, setOrders] = useState<Purchase[]>([]);
-  const [stockItems, setStockItems] = useState<StockItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [ordersLoading, setOrdersLoading] = useState(true);
+  const [ordersLoaded, setOrdersLoaded] = useState(false);
   const [ordersError, setOrdersError] = useState<string | null>(null);
+  // Sonuç hangi dönem için okunduysa onunla saklanır: dönem değişince eski
+  // dönemin satırları ya da "Geçen ay satın alma yok" yazısı yeni dönemmiş gibi görünmez.
+  const [purchaseResult, setPurchaseResult] = useState<{ key: string; rows: Purchase[] } | null>(null);
+  const [purchasesLoading, setPurchasesLoading] = useState(false);
+  const [purchasesError, setPurchasesError] = useState<string | null>(null);
   const firmaLoadSequenceRef = useRef(0);
+  const purchaseLoadSequenceRef = useRef(0);
 
   const [search, setSearch] = useState("");
   const [durum, setDurum] = useState<DurumFilter>("aktif");
   const [kategori, setKategori] = useState("");
   const [sort, setSort] = useState<ListSort>({ key: "bakiye", dir: "desc" });
-
   const [showAddFirma, setShowAddFirma] = useState(false);
-  const [firmaForm, setFirmaForm] = useState(EMPTY_FIRMA_FORM);
-  const [firmaErrors, setFirmaErrors] = useState<{ name?: string }>({});
-  const [firmaFormError, setFirmaFormError] = useState<string | null>(null);
-  const [isSubmittingFirma, setIsSubmittingFirma] = useState(false);
-  const firmaSubmittingRef = useRef(false);
 
   const loadFirmas = useCallback(async () => {
     const sequence = ++firmaLoadSequenceRef.current;
@@ -101,37 +107,55 @@ function FirmaContent() {
   }, []);
 
   const loadOrders = useCallback(async () => {
-    setOrdersLoading(true);
     setOrdersError(null);
     try {
       const response = await fetch("/api/purchases?receiptStatus=SIPARIS_VERILDI", { cache: "no-store" });
       const body = await response.json().catch(() => null);
       if (!response.ok) throw new Error(body?.message || "Bekleyen siparişler yüklenemedi.");
       setOrders(Array.isArray(body) ? body.filter((row: Purchase) => row.receiptStatus === "SIPARIS_VERILDI") : []);
+      setOrdersLoaded(true);
     } catch (error) {
       setOrdersError(error instanceof Error ? error.message : "Bekleyen siparişler yüklenemedi.");
-    } finally {
-      setOrdersLoading(false);
     }
   }, []);
 
-  const loadStockItems = useCallback(async () => {
+  const periodRange = period.range;
+  const periodError = period.error;
+  const periodKey = periodRange ? `${periodRange.from}|${periodRange.to}` : "tum";
+  const purchases = purchaseResult && purchaseResult.key === periodKey ? purchaseResult.rows : null;
+  // Satın almalar listesi yalnız sekme açılınca ve seçili dönem için okunur.
+  const loadPurchases = useCallback(async () => {
+    if (periodError) return;
+    const sequence = ++purchaseLoadSequenceRef.current;
+    const key = periodRange ? `${periodRange.from}|${periodRange.to}` : "tum";
+    setPurchasesLoading(true);
+    setPurchasesError(null);
     try {
-      const response = await fetch("/api/stock", { cache: "no-store" });
+      const params = new URLSearchParams();
+      if (periodRange) { params.set("from", periodRange.from); params.set("to", periodRange.to); }
+      const response = await fetch(`/api/purchases${params.toString() ? `?${params.toString()}` : ""}`, { cache: "no-store" });
       const body = await response.json().catch(() => null);
-      if (response.ok && Array.isArray(body)) setStockItems(body);
-    } catch {
-      // Ürün listesi yalnız satın alma formundaki öneriler için; yüklenemezse yeni ürün olarak yazılabilir.
+      if (!response.ok) throw new Error(body?.message || "Satın almalar yüklenemedi.");
+      if (sequence !== purchaseLoadSequenceRef.current) return;
+      setPurchaseResult({ key, rows: Array.isArray(body) ? body : [] });
+    } catch (error) {
+      if (sequence === purchaseLoadSequenceRef.current) setPurchasesError(error instanceof Error ? error.message : "Satın almalar yüklenemedi.");
+    } finally {
+      if (sequence === purchaseLoadSequenceRef.current) setPurchasesLoading(false);
     }
-  }, []);
+  }, [periodRange, periodError]);
 
+  useEffect(() => { void loadFirmas(); void loadOrders(); }, [loadFirmas, loadOrders]);
+  useEffect(() => { if (view === "satinalmalar") void loadPurchases(); }, [view, loadPurchases]);
+
+  const viewRef = useRef(view);
+  useEffect(() => { viewRef.current = view; });
   const refreshAll = useCallback(() => {
     void loadFirmas();
     void loadOrders();
-    void loadStockItems();
-  }, [loadFirmas, loadOrders, loadStockItems]);
-
-  useEffect(() => { refreshAll(); }, [refreshAll]);
+    if (viewRef.current === "satinalmalar") void loadPurchases();
+    else setPurchaseResult(null);
+  }, [loadFirmas, loadOrders, loadPurchases]);
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -156,8 +180,8 @@ function FirmaContent() {
     [firmas],
   );
   const purchaseManager = usePurchaseModals({
-    stockItems,
-    firmas: activeMaterialFirmas,
+    firmas: loaded ? activeMaterialFirmas : undefined,
+    onFirmasChanged: () => void loadFirmas(),
     onChanged: async () => { refreshAll(); },
     canWrite: canPurchase,
   });
@@ -171,8 +195,9 @@ function FirmaContent() {
     const params = new URLSearchParams(searchParams.toString());
     params.delete("yeni");
     params.delete("firmaId");
-    router.replace(params.toString() ? `${pathname}?${params.toString()}` : pathname, { scroll: false });
-  }, [searchParams, canPurchase, loaded, pathname, router]);
+    // history.replaceState: adres temizlenirken sunucuya tur atılmaz.
+    window.history.replaceState(null, "", params.toString() ? `${pathname}?${params.toString()}` : pathname);
+  }, [searchParams, canPurchase, loaded, pathname]);
 
   const totalDebt = useMemo(() => firmas.reduce((sum, firma) => sum + Math.max(0, firma.bakiye || 0), 0), [firmas]);
 
@@ -195,8 +220,13 @@ function FirmaContent() {
     () => orders.filter((order) => matchesSearch(search, order.firma?.name, order.faturaNo, summarizeLines(order.lines, 10))),
     [orders, search],
   );
+  const filteredPurchases = useMemo(
+    () => (purchases || []).filter((row) => matchesSearch(search, row.firma?.name, row.faturaNo, summarizeLines(row.lines, 10))),
+    [purchases, search],
+  );
 
-  const exportFirmasCsv = () => {
+  const exportFirmasCsv = async () => {
+    const { downloadCsv } = await import("@/lib/csv-export");
     downloadCsv(`tedarikciler-${new Date().toISOString().slice(0, 10)}.csv`, filteredFirmas.map((firma) => ({
       Firma: firma.name,
       Tür: FIRMA_KATEGORILERI[firma.kategori] || firma.kategori,
@@ -213,72 +243,37 @@ function FirmaContent() {
     showToastSafe({ title: "Dosya indirildi", message: `${filteredFirmas.length} tedarikçi Excel'de açılabilir CSV olarak indirildi.`, type: "success" });
   };
 
-  const openAddFirma = () => {
-    setFirmaForm(EMPTY_FIRMA_FORM);
-    setFirmaErrors({});
-    setFirmaFormError(null);
-    setShowAddFirma(true);
+  const firmaActions = (firma: Firma) => {
+    const menu: ActionMenuItem[] = [
+      ...(firma.isActive && firma.kategori !== "LAB" && canPurchase
+        ? [{ key: "satinalma", label: "Satın alma ekle", icon: ShoppingCart, onSelect: () => purchaseManager.openAddPurchase(firma.id) }]
+        : []),
+      ...(firma.isActive && firma.kategori === "LAB" && canWriteLab
+        ? [{ key: "lab", label: "Laboratuvar işi ekle", icon: FlaskConical, href: `/lab?yeni=1&labName=${encodeURIComponent(firma.name)}` }]
+        : []),
+    ];
+    return (
+      <div className="flex justify-end gap-1.5">
+        {canWriteFinance && firma.isActive && firma.bakiye > 0 && (
+          <Button size="sm" variant="secondary" onClick={() => void purchaseManager.openFirmaPayment(firma.id)} aria-label={`${firma.name} için ödeme yap`}>Ödeme yap</Button>
+        )}
+        {menu.length > 0 && <ActionMenu items={menu} label={`${firma.name} işlemleri`} />}
+      </div>
+    );
   };
 
-  function requestCloseAddFirma() {
-    if (firmaSubmittingRef.current) return;
-    setShowAddFirma(false);
-  }
-
-  const handleAddFirma = async () => {
-    if (firmaSubmittingRef.current) return;
-    if (firmaForm.name.trim().length < 2) {
-      setFirmaErrors({ name: "Firma adını yazın (en az 2 harf)." });
-      return;
-    }
-    firmaSubmittingRef.current = true;
-    setIsSubmittingFirma(true);
-    setFirmaFormError(null);
-    try {
-      await clientMutation("/api/firma", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...firmaForm,
-          name: firmaForm.name.trim(),
-          phone: firmaForm.phone.trim() || null,
-          iban: firmaForm.iban.replace(/\s+/g, " ").trim() || null,
-          ibanName: firmaForm.ibanName.trim() || null,
-          notes: firmaForm.notes.trim() || null,
-        }),
-      }, "Firma eklenemedi. Bilgileri kontrol edip tekrar deneyin.");
-      const name = firmaForm.name.trim();
-      firmaSubmittingRef.current = false;
-      setShowAddFirma(false);
-      showToastSafe({ title: "Firma eklendi", message: `${name} listede. Alış için “Yeni Satın Alma”yı kullanın.`, type: "success", icon: "firma" });
-      await loadFirmas();
-    } catch (error) {
-      // Hata form içinde kalır; girilen bilgiler korunur.
-      setFirmaFormError(error instanceof Error ? error.message : "Firma eklenemedi.");
-    } finally {
-      firmaSubmittingRef.current = false;
-      setIsSubmittingFirma(false);
-    }
-  };
-
-  const firmaActions = (firma: Firma) => (
-    <div className="flex justify-end gap-1.5">
-      {canWriteFinance && firma.isActive && firma.bakiye > 0 && (
-        <IconButton icon={Wallet} title={`${firma.name} için ödeme yap`} size="sm" onClick={() => void purchaseManager.openFirmaPayment(firma.id)} />
-      )}
-      {firma.isActive && firma.kategori === "LAB" && canWriteLab && (
-        <IconButton icon={FlaskConical} title={`${firma.name} için lab işi`} size="sm" href={`/lab?yeni=1&labName=${encodeURIComponent(firma.name)}`} />
-      )}
-      {firma.isActive && firma.kategori !== "LAB" && canPurchase && (
-        <IconButton icon={ShoppingCart} title={`${firma.name} için satın alma ekle`} size="sm" onClick={() => purchaseManager.openAddPurchase(firma.id)} />
-      )}
-    </div>
-  );
+  const balanceCell = (firma: Firma) => firma.bakiye > 0
+    ? <Money value={firma.bakiye} className="font-bold text-slate-900" />
+    : firma.bakiye < 0
+      // Fazla ödeme: önceden "—" ile gizleniyordu.
+      ? <span className="whitespace-nowrap text-xs font-semibold text-primary">Alacak <Money value={-firma.bakiye} /></span>
+      // Borcu olmayan tedarikçide "—" eksik bilgi gibi okunuyordu.
+      : <span className="whitespace-nowrap text-xs text-slate-500">Borç yok</span>;
 
   const firmaColumns: ListTableColumn<Firma>[] = [
     {
       key: "name",
-      header: "Firma",
+      header: "Tedarikçi",
       sortKey: "name",
       cellClassName: "max-w-[300px]",
       render: (firma) => (
@@ -301,27 +296,33 @@ function FirmaContent() {
         ? <a href={telHref(firma.phone)} className="whitespace-nowrap text-slate-700 hover:text-primary">{formatPhoneNumber(firma.phone)}</a>
         : <EmptyValue />,
     },
-    {
-      key: "bakiye",
-      header: "Kalan borç",
-      align: "right",
-      sortKey: "bakiye",
-      render: (firma) => firma.bakiye > 0
-        ? <Money value={firma.bakiye} className="font-bold text-slate-900" />
-        : <EmptyValue />,
-    },
+    { key: "bakiye", header: "Kalan borç", align: "right", sortKey: "bakiye", render: balanceCell },
     {
       key: "son",
       header: "Son işlem",
       sortKey: "son",
-      render: (firma) => <DateText value={firma.sonIslemTarihi || null} className="text-slate-600" />,
+      render: (firma) => firma.sonIslemTarihi
+        ? <DateText value={firma.sonIslemTarihi} className="text-slate-600" />
+        : <span className="whitespace-nowrap text-xs text-slate-500">İşlem yok</span>,
     },
     { key: "actions", header: "", align: "right", render: firmaActions },
   ];
 
   const orderColumns: ListTableColumn<Purchase>[] = [
-    { key: "tarih", header: "Sipariş tarihi", render: (order) => <DateText value={order.tarih} className="whitespace-nowrap" /> },
-    { key: "firma", header: "Firma", render: (order) => <span className="font-semibold text-slate-900">{order.firma?.name || "—"}</span> },
+    {
+      key: "tarih",
+      header: "Sipariş tarihi",
+      render: (order) => {
+        const days = waitingDays(order.tarih);
+        return (
+          <div className="whitespace-nowrap">
+            <DateText value={order.tarih} />
+            {days > 0 && <p className={`text-xs ${days > 7 ? "font-semibold text-amber-700" : "text-slate-500"}`}>{days} gündür bekliyor</p>}
+          </div>
+        );
+      },
+    },
+    { key: "firma", header: "Tedarikçi", render: (order) => <span className="font-semibold text-slate-900">{order.firma?.name || "—"}</span> },
     {
       key: "urunler",
       header: "Ürünler",
@@ -339,28 +340,61 @@ function FirmaContent() {
     },
   ];
 
-  const firmaFilters = [
-    ...(search.trim() ? [{ key: "search", label: `Arama: ${search.trim()}`, onRemove: () => setSearch("") }] : []),
-    ...(view === "firmalar" && durum !== "aktif" ? [{ key: "durum", label: durum === "pasif" ? "Yalnız pasif firmalar" : "Aktif + pasif", onRemove: () => setDurum("aktif") }] : []),
-    ...(view === "firmalar" && kategori ? [{ key: "kategori", label: `Tür: ${FIRMA_KATEGORILERI[kategori]}`, onRemove: () => setKategori("") }] : []),
+  const purchaseColumns: ListTableColumn<Purchase>[] = [
+    { key: "tarih", header: "Tarih", render: (row) => <DateText value={row.tarih} className="whitespace-nowrap" /> },
+    { key: "firma", header: "Tedarikçi", render: (row) => <span className="font-semibold text-slate-900">{row.firma?.name || "—"}</span> },
+    { key: "fatura", header: "Fatura no", render: (row) => row.faturaNo ? <span className="text-slate-700">{row.faturaNo}</span> : <EmptyValue /> },
+    {
+      key: "urunler",
+      header: "Ürünler",
+      cellClassName: "max-w-[280px]",
+      render: (row) => <span className="block truncate text-slate-700">{summarizeLines(row.lines) || `${row._count?.items ?? 0} kalem`}</span>,
+    },
+    { key: "tutar", header: "Tutar", align: "right", render: (row) => <Money value={row.total ?? null} className="font-semibold text-slate-900" /> },
+    { key: "durum", header: "Durum", render: (row) => <Badge tone={RECEIPT_STATUS_META[row.receiptStatus].tone}>{RECEIPT_STATUS_META[row.receiptStatus].label}</Badge> },
   ];
+
+  const firmaFilters = [
+    ...(view === "firmalar" && durum !== "aktif" ? [{ key: "durum", label: durum === "pasif" ? "Yalnız pasif tedarikçiler" : "Aktif + pasif", onRemove: () => setDurum("aktif") }] : []),
+    ...(view === "firmalar" && kategori ? [{ key: "kategori", label: `Tür: ${FIRMA_KATEGORILERI[kategori]}`, onRemove: () => setKategori("") }] : []),
+    ...(view === "satinalmalar" && period.activeFilter ? [period.activeFilter] : []),
+  ];
+  const searchActive = Boolean(search.trim());
+
+  const toolbarFilters = view === "firmalar" ? (
+    <>
+      <div className="sm:w-44">
+        <Select aria-label="Tedarikçi türü" value={kategori} onChange={(event) => setKategori(event.target.value)}>
+          <option value="">Tüm türler</option>
+          {Object.entries(FIRMA_KATEGORILERI).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+        </Select>
+      </div>
+      <div className="sm:w-44">
+        <Select aria-label="Tedarikçi durumu" value={durum} onChange={(event) => setDurum(event.target.value as DurumFilter)}>
+          <option value="aktif">Aktif tedarikçiler</option>
+          <option value="pasif">Pasif tedarikçiler</option>
+          <option value="tumu">Tümü</option>
+        </Select>
+      </div>
+    </>
+  ) : view === "satinalmalar" ? <DateRangeFilter {...period.filterProps} /> : undefined;
+
+  const toolbarActions = view === "firmalar" ? (
+    <>
+      {canWriteFinance && <Button size="sm" variant="secondary" icon={Plus} onClick={() => setShowAddFirma(true)}>Yeni tedarikçi</Button>}
+      <ExportMenu onExcel={exportFirmasCsv} disabled={filteredFirmas.length === 0} disabledReason="Dışa aktarılacak tedarikçi yok" />
+    </>
+  ) : undefined;
 
   return (
     <div className="space-y-3">
       <PageHeader
         icon="firma"
-        title="Satın Alma"
-        description="Tedarikçiler, alışlar, bekleyen siparişler ve firmalara ödemeler."
+        title="Satın alma"
         stats={loaded ? [
-          { label: "Firmalara kalan borç", value: formatCurrency(totalDebt), color: totalDebt > 0 ? "text-red-700" : undefined },
-          { label: "Bekleyen sipariş", value: ordersLoading ? "…" : orders.length },
+          { label: "Tedarikçilere kalan borç", value: formatCurrency(totalDebt), color: totalDebt > 0 ? "text-red-700" : undefined },
         ] : undefined}
-        actions={(
-          <>
-            {canWriteFinance && <Button variant="secondary" icon={Plus} onClick={openAddFirma}>Yeni Firma</Button>}
-            {canPurchase && <Button icon={ShoppingCart} onClick={() => purchaseManager.openAddPurchase()}>Yeni Satın Alma</Button>}
-          </>
-        )}
+        actions={canPurchase ? <Button icon={ShoppingCart} onClick={() => purchaseManager.openAddPurchase()}>Yeni satın alma</Button> : undefined}
       />
 
       <Tabs<FirmaView>
@@ -369,57 +403,42 @@ function FirmaContent() {
         onChange={setView}
         items={[
           { key: "firmalar", label: "Tedarikçiler" },
-          { key: "siparisler", label: "Bekleyen siparişler", count: orders.length, countTone: "warning" },
+          { key: "satinalmalar", label: "Satın almalar" },
+          { key: "siparisler", label: "Bekleyen siparişler", count: orders.length, countTone: "warning", countLabel: "bekleyen sipariş" },
         ]}
       />
 
       <Toolbar
-        actions={view === "firmalar" ? (
-          <Button size="sm" variant="secondary" icon={Download} onClick={exportFirmasCsv} disabled={filteredFirmas.length === 0}>CSV indir</Button>
-        ) : undefined}
+        filters={toolbarFilters}
+        filterCount={firmaFilters.length}
+        actions={toolbarActions}
       >
         <SearchInput
           value={search}
           onChange={setSearch}
-          placeholder={view === "firmalar" ? "Firma, telefon, IBAN veya yetkili ara" : "Firma, ürün veya fatura no ara"}
+          placeholder={view === "firmalar" ? "Tedarikçi, telefon, IBAN veya yetkili ara" : "Tedarikçi, ürün veya fatura no ara"}
           slashShortcut
           wrapperClassName="flex-1 min-w-[220px]"
         />
-        {view === "firmalar" && (
-          <>
-            <div className="sm:w-44">
-              <Select aria-label="Firma türü" value={kategori} onChange={(event) => setKategori(event.target.value)}>
-                <option value="">Tüm türler</option>
-                {Object.entries(FIRMA_KATEGORILERI).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-              </Select>
-            </div>
-            <div className="sm:w-44">
-              <Select aria-label="Firma durumu" value={durum} onChange={(event) => setDurum(event.target.value as DurumFilter)}>
-                <option value="aktif">Aktif firmalar</option>
-                <option value="pasif">Pasif firmalar</option>
-                <option value="tumu">Tümü</option>
-              </Select>
-            </div>
-          </>
-        )}
       </Toolbar>
-      <ActiveFilters filters={firmaFilters} onClearAll={() => { setSearch(""); setDurum("aktif"); setKategori(""); }} />
+      <ActiveFilters filters={firmaFilters} onClearAll={() => { setDurum("aktif"); setKategori(""); period.reset(); }} />
 
-      {view === "firmalar" ? (
+      {view === "firmalar" && (
         <ListTable<Firma>
           columns={firmaColumns}
           rows={filteredFirmas}
           rowKey={(firma) => firma.id}
           loading={loading && !loaded}
-          error={loadError}
+          error={!loaded ? loadError : null}
+          staleError={loaded ? loadError : null}
           onRetry={() => void loadFirmas()}
-          emptyText={firmaFilters.length > 0 ? "Bu filtreye uyan firma yok" : "Henüz firma eklenmemiş"}
-          emptyDescription={firmaFilters.length > 0 ? undefined : "Malzeme aldığınız tedarikçiyi “Yeni Firma” ile ekleyin; sonra faturayı “Yeni Satın Alma” ile girin."}
-          emptyAction={firmaFilters.length === 0 && canWriteFinance ? <Button size="sm" icon={Plus} onClick={openAddFirma}>Yeni Firma</Button> : undefined}
+          emptyText={firmaFilters.length > 0 || searchActive ? "Bu filtreye uyan tedarikçi yok" : "Henüz tedarikçi eklenmemiş"}
+          emptyDescription={firmaFilters.length > 0 || searchActive ? undefined : "Faturayı “Yeni satın alma” ile girerken tedarikçiyi de ekleyebilirsiniz."}
+          emptyAction={firmaFilters.length === 0 && !searchActive && canWriteFinance ? <Button size="sm" icon={Plus} onClick={() => setShowAddFirma(true)}>Yeni tedarikçi</Button> : undefined}
           emptyIcon={FirmaEmptyIcon}
           emptyIllustrative
           onRowClick={(firma) => router.push(`/firma-detay?id=${firma.id}`)}
-          getRowAriaLabel={(firma) => `${firma.name} firma sayfasını aç`}
+          getRowAriaLabel={(firma) => `${firma.name} tedarikçi sayfasını aç`}
           sort={sort}
           onSortChange={(key) => setSort((current) => ({ key, dir: current.key === key && current.dir === "desc" ? "asc" : "desc" }))}
           mobileCard={(firma) => (
@@ -433,23 +452,52 @@ function FirmaContent() {
                 </p>
               </div>
               <div className="shrink-0 text-right">
-                {firma.bakiye > 0 ? <Money value={firma.bakiye} className="font-bold text-slate-900" /> : <span className="text-xs text-slate-400">Borç yok</span>}
+                {balanceCell(firma)}
               </div>
             </div>
           )}
         />
-      ) : (
+      )}
+
+      {view === "satinalmalar" && (
+        <ListTable<Purchase>
+          columns={purchaseColumns}
+          rows={filteredPurchases}
+          rowKey={(row) => row.id}
+          loading={purchasesLoading && purchases === null}
+          error={purchases === null ? purchasesError : null}
+          staleError={purchases !== null ? purchasesError : null}
+          onRetry={() => void loadPurchases()}
+          emptyText={searchActive ? "Bu aramaya uyan satın alma yok" : `${period.value.preset === "ozel" ? "Seçilen dönemde" : DATE_PRESET_LABELS[period.value.preset]} satın alma yok`}
+          emptyDescription={searchActive ? undefined : "Faturayı “Yeni satın alma” ile girin; teslim alınan ve bekleyen kayıtlar burada listelenir."}
+          onRowClick={(row) => void purchaseManager.openPurchaseDetail(row.id)}
+          getRowAriaLabel={(row) => `${row.firma?.name || "Tedarikçi"} ${row.faturaNo ? `fatura ${row.faturaNo}` : "satın alması"} ayrıntısını aç`}
+          mobileCard={(row) => (
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate font-semibold text-slate-900">{row.firma?.name}</p>
+                <p className="truncate text-xs text-slate-500"><DateText value={row.tarih} />{row.faturaNo ? ` · ${row.faturaNo}` : ""} · {summarizeLines(row.lines) || `${row._count?.items ?? 0} kalem`}</p>
+                <Badge tone={RECEIPT_STATUS_META[row.receiptStatus].tone} className="mt-1">{RECEIPT_STATUS_META[row.receiptStatus].label}</Badge>
+              </div>
+              <Money value={row.total ?? null} className="shrink-0 font-semibold text-slate-900" />
+            </div>
+          )}
+        />
+      )}
+
+      {view === "siparisler" && (
         <ListTable<Purchase>
           columns={orderColumns}
           rows={filteredOrders}
           rowKey={(order) => order.id}
-          loading={ordersLoading && orders.length === 0}
-          error={ordersError}
+          loading={!ordersLoaded && !ordersError}
+          error={!ordersLoaded ? ordersError : null}
+          staleError={ordersLoaded ? ordersError : null}
           onRetry={() => void loadOrders()}
-          emptyText={search.trim() ? "Bu aramaya uyan sipariş yok" : "Teslimat bekleyen sipariş yok"}
-          emptyDescription={search.trim() ? undefined : "“Yeni Satın Alma”da “Yalnız sipariş verildi” seçilen kayıtlar ürünler gelene kadar burada bekler."}
+          emptyText={searchActive ? "Bu aramaya uyan sipariş yok" : "Teslimat bekleyen sipariş yok"}
+          emptyDescription={searchActive ? undefined : "“Yeni satın alma”da durum “Sipariş verildi” seçilen kayıtlar ürünler gelene kadar burada bekler."}
           onRowClick={(order) => void purchaseManager.openPurchaseDetail(order.id)}
-          getRowAriaLabel={(order) => `${order.firma?.name || "Firma"} siparişini aç`}
+          getRowAriaLabel={(order) => `${order.firma?.name || "Tedarikçi"} siparişini aç`}
           mobileCard={(order) => (
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -463,50 +511,11 @@ function FirmaContent() {
         />
       )}
 
-      <Modal
-        module="firma"
+      <FirmaFormModal
         open={showAddFirma}
-        onClose={requestCloseAddFirma}
-        title="Yeni Firma"
-        description="Malzeme aldığınız tedarikçi, hizmet aldığınız firma veya laboratuvar."
-        footer={(
-          <>
-            <Button variant="secondary" disabled={isSubmittingFirma} onClick={requestCloseAddFirma}>Vazgeç</Button>
-            <Button onClick={() => void handleAddFirma()} loading={isSubmittingFirma}>Kaydet</Button>
-          </>
-        )}
-      >
-        <div className="space-y-4">
-          <FormErrorBanner message={firmaFormError} />
-          <FormField label="Firma Adı" htmlFor="firma-name" required error={firmaErrors.name}>
-            <Input
-              id="firma-name"
-              value={firmaForm.name}
-              onChange={(event) => { setFirmaForm((form) => ({ ...form, name: event.target.value })); setFirmaErrors({}); }}
-              data-autofocus
-            />
-          </FormField>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <FormField label="Firma türü" htmlFor="firma-kategori" required>
-              <Select id="firma-kategori" value={firmaForm.kategori} onChange={(event) => setFirmaForm((form) => ({ ...form, kategori: event.target.value }))}>
-                {Object.entries(FIRMA_KATEGORILERI).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-              </Select>
-            </FormField>
-            <FormField label="Telefon" htmlFor="firma-phone">
-              <Input id="firma-phone" type="tel" inputMode="tel" value={firmaForm.phone} onChange={(event) => setFirmaForm((form) => ({ ...form, phone: event.target.value }))} placeholder="0 (5xx) xxx xx xx" />
-            </FormField>
-            <FormField label="IBAN" htmlFor="firma-iban" hint="Ödeme yaparken kopyalamak için.">
-              <Input id="firma-iban" value={firmaForm.iban} onChange={(event) => setFirmaForm((form) => ({ ...form, iban: event.target.value.toUpperCase() }))} placeholder="TR00 0000 ..." className="font-mono" />
-            </FormField>
-            <FormField label="IBAN hesap sahibi" htmlFor="firma-iban-name">
-              <Input id="firma-iban-name" value={firmaForm.ibanName} onChange={(event) => setFirmaForm((form) => ({ ...form, ibanName: event.target.value }))} />
-            </FormField>
-          </div>
-          <FormField label="Notlar" htmlFor="firma-notes">
-            <Textarea id="firma-notes" value={firmaForm.notes} onChange={(event) => setFirmaForm((form) => ({ ...form, notes: event.target.value }))} rows={2} />
-          </FormField>
-        </div>
-      </Modal>
+        onClose={() => setShowAddFirma(false)}
+        onSaved={async () => { await loadFirmas(); }}
+      />
 
       {purchaseManager.modals}
     </div>

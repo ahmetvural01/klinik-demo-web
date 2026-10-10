@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { bumpRealtimeInstitution, requireAuth, writeAudit } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 import { requireActiveBranch } from "@/lib/branch-context";
+import { turkeyDateKey, turkeyLocalDateTimeToUtc } from "@/lib/tz";
 import { LAB_ORDER_INCLUDE, toPublicLabOrder } from "@/app/api/lab-orders/lab-order-api";
 
 export const dynamic = "force-dynamic";
@@ -32,6 +33,7 @@ export async function PATCH(
       labOrderId: true,
       order: true,
       description: true,
+      sentAt: true,
       labOrder: {
         select: {
           id: true,
@@ -100,6 +102,18 @@ export async function PATCH(
     data.receivedNote = null;
   }
 
+  // Yeni gönderimdeki kuralın aynısı: beklenen dönüş ve geliş günü gönderim
+  // gününden önce olamaz. Önceden adım düzeltmesinde bu kontrol yoktu; ters
+  // tarih "Gecikiyor" hesabını bozuyordu.
+  const effectiveSentAt: Date = data.sentAt instanceof Date ? data.sentAt : new Date(existing.sentAt);
+  const sentDayStart = new Date(effectiveSentAt.toISOString().slice(0, 10)).getTime();
+  if (data.expectedAt instanceof Date && data.expectedAt.getTime() < sentDayStart) {
+    return NextResponse.json({ error: "Beklenen dönüş tarihi gönderimden önce olamaz" }, { status: 400 });
+  }
+  if (data.receivedAt instanceof Date && data.receivedAt.getTime() < sentDayStart) {
+    return NextResponse.json({ error: "Geliş tarihi gönderimden önce olamaz" }, { status: 400 });
+  }
+
   // Hastaya takılmış işin eski adımı düzeltilirken yeni "prova randevusu"
   // araması açılmasın (iş zaten bitti).
   const shouldCreateProvaFollowUp =
@@ -145,7 +159,13 @@ export async function PATCH(
           });
 
           const receivedDate = data.receivedAt instanceof Date ? data.receivedAt : new Date();
-          const actionDate = Number.isNaN(receivedDate.getTime()) ? new Date() : receivedDate;
+          // Yalnız tarih ("YYYY-MM-DD") gelen gelişte arama o günün 10:00'ına
+          // (Türkiye) kurulur; gün bugünse hemen. Önceden tarih UTC gece yarısı
+          // sayılıyor, arama listede "Bugün 03:00" görünüyordu.
+          const receivedDateKey = typeof body.receivedAt === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.receivedAt.trim()) ? body.receivedAt.trim() : "";
+          const actionDate = receivedDateKey
+            ? receivedDateKey === turkeyDateKey() ? new Date() : turkeyLocalDateTimeToUtc(receivedDateKey, "10:00")
+            : Number.isNaN(receivedDate.getTime()) ? new Date() : receivedDate;
           const receivedStep = String(existing.description || "").includes(" → ")
             ? String(existing.description || "").split(" → ")[1]
             : String(existing.description || "");
@@ -196,6 +216,5 @@ export async function PATCH(
   });
 
   await writeAudit(auth.user.id, "LAB_TRIP_UPDATE", `Laboratuvar gidiş adımı güncellendi (${params.tripId})`);
-  await bumpRealtimeInstitution(auth.user.institutionId || null);
-  return NextResponse.json(await toPublicLabOrder(updatedOrder, auth.user.role));
+  return NextResponse.json(await toPublicLabOrder(updatedOrder, auth.user));
 }

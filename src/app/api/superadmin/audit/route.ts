@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import { buildPlatformAuditWhere } from "./audit-filters";
+import { attachAuditActors } from "./audit-actors";
 
 export async function GET(request: NextRequest) {
   const auth = await requireAuth("superadmin");
@@ -23,6 +24,7 @@ export async function GET(request: NextRequest) {
       take: limit,
       select: {
         id: true,
+        userId: true,
         action: true,
         detail: true,
         createdAt: true,
@@ -35,5 +37,5 @@ export async function GET(request: NextRequest) {
     }),
   ]);
 
-  return NextResponse.json({ logs, total, page, totalPages: Math.ceil(total / limit) });
+  return NextResponse.json({ logs: await attachAuditActors(logs), total, page, totalPages: Math.ceil(total / limit) });
 }

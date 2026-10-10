@@ -1,407 +1,571 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarClock, Cake, PartyPopper, PenSquare, ShieldCheck, Undo2, Wallet } from "lucide-react";
+import { useEffect, useMemo, useState, type ComponentType } from "react";
+import { AlarmClock, BellRing, Cake, CalendarCheck, CalendarClock, CalendarX, Eye, Hourglass, PartyPopper, PenSquare, ShieldCheck, SlidersHorizontal, Wallet } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
-import { FormField, FormSection } from "@/components/ui/FormField";
-import { Input } from "@/components/ui/Input";
-import { Switch } from "@/components/ui/Switch";
-import { SaveBar } from "@/components/ui/SaveBar";
+import { ChoiceCards } from "@/components/ui/ChoiceCards";
+import { ListRowSkeleton } from "@/components/ui/ListSkeleton";
 import { LoadErrorState } from "@/components/ui/LoadErrorState";
+import { Modal } from "@/components/ui/Modal";
+import { Section } from "@/components/ui/Section";
+import { SettingsGroup, SettingsList, SettingsRow } from "@/components/ui/SettingsList";
+import { Switch } from "@/components/ui/Switch";
+import { ToggleChips } from "@/components/ui/ToggleChips";
 import { MessageTextModal } from "@/components/sms/MessageTextModal";
-import { useMessageTemplates, type CommunicationStatus, type MessageTemplate } from "@/components/sms/communication-status";
-import { EVENT_MESSAGES, type EventMessage, type MessageGroup } from "@/components/sms/message-catalog";
-import { CelebrationList } from "./CelebrationList";
+import type {
+  AutomationState,
+  CelebrationDay,
+  CommunicationStatus,
+  MessageTemplate,
+  MessageTemplatesState,
+  PaymentSchedule,
+} from "@/components/sms/communication-status";
+import { EVENT_MESSAGES, type EventMessage } from "@/components/sms/message-catalog";
+import { dayAndMonth } from "@/components/sms/communication-labels";
+import { CelebrationManageModal } from "./CelebrationList";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
-import { renderSmsPreview } from "@/lib/sms-template-placeholders";
 import { SMS_CONSENT_MESSAGE_TEMPLATE } from "@/lib/sms-consent-copy";
 
-type AutomationSettings = {
-  paymentReminderSmsEnabled: boolean;
-  paymentReminderDaysBefore: number[];
-  paymentReminderOnDueDate: boolean;
-  paymentReminderOverdueEnabled: boolean;
-  paymentReminderOverdueEveryDays: number;
-  birthdaySmsEnabled: boolean;
-  appointmentChangeNotifyEnabled: boolean;
-  appointmentCancelNotifyEnabled: boolean;
+const DAY_CHOICES = [1, 2, 3, 5, 7, 14];
+const OVERDUE_CHOICES = [1, 3, 7, 14, 30];
+const NO_TIMING_MESSAGE = "En az bir zaman açık kalmalı. Hatırlatmaları tamamen kapatmak için “Ödeme hatırlatmaları” anahtarını kapatın.";
+
+const EVENT_ICONS: Record<string, ComponentType<{ className?: string }>> = {
+  BILGI: CalendarCheck,
+  HATIRLATMA: BellRing,
+  RANDEVU_DEGISIKLIK: CalendarClock,
+  RANDEVU_IPTAL: CalendarX,
+  ODEME_YAKLASIYOR: Hourglass,
+  ODEME_VADE_GUNU: Wallet,
+  ODEME_GECIKTI: AlarmClock,
+  DOGUM_GUNU: Cake,
 };
 
-const DAY_CHOICES = [1, 2, 3, 5, 7, 14];
+const eventOf = (code: string) => EVENT_MESSAGES.find((item) => item.code === code) as EventMessage;
 
-function parseAutomationSettings(data: Record<string, unknown>): AutomationSettings {
-  const windowDays = Number(data.paymentReminderWindowDays) || 3;
-  return {
-    paymentReminderSmsEnabled: Boolean(data.paymentReminderSmsEnabled),
-    paymentReminderDaysBefore: Array.isArray(data.paymentReminderDaysBefore)
-      ? data.paymentReminderDaysBefore.map(Number).filter((day) => day >= 1 && day <= 30).sort((a, b) => a - b)
-      : [windowDays],
-    paymentReminderOnDueDate: data.paymentReminderOnDueDate !== false,
-    paymentReminderOverdueEnabled: data.paymentReminderOverdueEnabled !== false,
-    paymentReminderOverdueEveryDays: Number(data.paymentReminderOverdueEveryDays) || 3,
-    birthdaySmsEnabled: Boolean(data.birthdaySmsEnabled),
-    appointmentChangeNotifyEnabled: data.appointmentChangeNotifyEnabled !== false,
-    appointmentCancelNotifyEnabled: data.appointmentCancelNotifyEnabled !== false,
-  };
+function messageOf(data: unknown, fallback: string) {
+  const message = data && typeof data === "object" ? (data as { message?: unknown }).message : undefined;
+  return typeof message === "string" && message.trim() ? message : fallback;
 }
+
+/** "7 ve 3 gün önce", "3, 2 ve 1 gün önce". */
+function daysText(days: number[]) {
+  const sorted = [...days].sort((a, b) => b - a);
+  if (sorted.length === 0) return "";
+  const head = sorted.slice(0, -1).join(", ");
+  return `${head ? `${head} ve ` : ""}${sorted[sorted.length - 1]} gün önce`;
+}
+
+function sameDays(a: number[], b: number[]) {
+  return [...a].sort((x, y) => x - y).join(",") === [...b].sort((x, y) => x - y).join(",");
+}
+
+function hasAnyTiming(schedule: PaymentSchedule) {
+  return schedule.daysBefore.length > 0 || schedule.onDueDate || schedule.overdueEnabled;
+}
+
+type CelebrationsState = {
+  days: CelebrationDay[];
+  loading: boolean;
+  error: string;
+  setDayEnabled: (code: string, enabled: boolean) => void;
+};
 
 type AutomationsTabProps = {
   status: CommunicationStatus | null;
-  /** Ödeme/doğum günü anahtarları: SMS yazma + ayar okuma/yazma yetkisi. */
+  /** Sayfa düzeyinde bir kez yüklenen mesaj metinleri (Mesaj gönder ile ortak). */
+  templates: MessageTemplatesState;
+  /** Özel gün kataloğu (sayısız, hafif okuma) — özet satırı için. */
+  celebrations: CelebrationsState;
+  /** Anahtarlar ve zamanlama: SMS yazma + ayar okuma/yazma yetkisi. */
   canManageAutomations: boolean;
   canWriteSms: boolean;
-  /** WhatsApp modülü açık + okuma/yazma yetkisi. */
-  canReadWhatsapp: boolean;
   canWriteWhatsapp: boolean;
   /** "Hazır metne dön": SMS ve (WhatsApp açıksa) WhatsApp düzenleme yetkisi. */
   canResetTexts: boolean;
   /** Özel günleri açıp kapatmak toplu gönderim yetkisi ister (sms:bulk). */
   canToggleCelebrations: boolean;
-  onSettingsSaved: () => void;
+  /** Kaydedilen otomasyon ayarı — sayfa durumu sunucuya yeniden sorulmadan güncellenir. */
+  onAutomationsChange: (next: AutomationState) => void;
 };
 
+type OpenModal =
+  | { kind: "text"; code: string }
+  | { kind: "days" }
+  | { kind: "overdue" }
+  | { kind: "celebrations" }
+  | { kind: "consent" }
+  | null;
+
 /**
- * Otomatik Mesajlar — hastaya kendiliğinden giden her mesaj tek ekranda:
- * ne zaman gittiği (ya da şu an GİTMEDİĞİ), açık/kapalı anahtarı ve metni.
- * Önceden aynı iş Otomasyonlar, Şablonlar ve Kutlama Günleri sekmelerine
- * dağılmıştı. Her kontrol kendi yetkisine bakar.
+ * Otomatik mesajlar — hastaya kendiliğinden giden her mesaj TEK kompakt
+ * listede (Randevu · Ödeme · Kutlama · İzin). Satırda yalnız ad, ne zaman
+ * gittiği ve anahtar; metin ve zamanlama satırdan açılan pencerede. Satır
+ * anahtarı ANINDA kaydeder (hata olursa geri alınır); önceden aynı ekranda
+ * üç ayrı kaydetme biçimi (SaveBar, anında, pencere) vardı ve sayfa ~2.700 px
+ * uzunluğundaydı. Ayar okuma yetkisi olmayan roller gerçek değeri salt okunur
+ * görür (api/sms/status → automations).
  */
 export default function AutomationsTab({
   status,
+  templates,
+  celebrations,
   canManageAutomations,
   canWriteSms,
-  canReadWhatsapp,
   canWriteWhatsapp,
   canResetTexts,
   canToggleCelebrations,
-  onSettingsSaved,
+  onAutomationsChange,
 }: AutomationsTabProps) {
+  const remote = status?.automations ?? null;
+  const [values, setValues] = useState<AutomationState | null>(remote);
+  const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [modal, setModal] = useState<OpenModal>(null);
+  const [draftDays, setDraftDays] = useState<number[]>([]);
+  const [draftOverdue, setDraftOverdue] = useState(3);
+
+  // Sunucudaki (ya da sayfanın güncellediği) değer gelince yerel kopya eşitlenir.
+  useEffect(() => { if (remote) setValues(remote); }, [remote]);
+
   const whatsappConnected = Boolean(status?.whatsapp?.connected);
-  const { templates, loading: templatesLoading, error: templatesError, reload: reloadTemplates } = useMessageTemplates();
-  const [settings, setSettings] = useState<AutomationSettings | null>(null);
-  const [savedSettings, setSavedSettings] = useState<AutomationSettings | null>(null);
-  const [settingsError, setSettingsError] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [editing, setEditing] = useState<{ event: EventMessage; template: MessageTemplate } | null>(null);
-  const [resettingCode, setResettingCode] = useState<string | null>(null);
-
-  const loadSettings = useCallback(async () => {
-    if (!canManageAutomations) return;
-    setSettingsError("");
-    try {
-      const response = await fetch("/api/settings", { cache: "no-store" });
-      const data = await response.json().catch(() => null);
-      if (!response.ok || !data || typeof data !== "object" || Array.isArray(data)) throw new Error(data?.message || "Otomatik mesaj ayarları yüklenemedi.");
-      const parsed = parseAutomationSettings(data as Record<string, unknown>);
-      setSettings(parsed);
-      setSavedSettings(parsed);
-    } catch (error) {
-      setSettings(null);
-      setSavedSettings(null);
-      setSettingsError(error instanceof Error ? error.message : "Otomatik mesaj ayarları yüklenemedi.");
-    }
-  }, [canManageAutomations]);
-
-  useEffect(() => { void loadSettings(); }, [loadSettings]);
-
-  const dirty = Boolean(settings && savedSettings && JSON.stringify(settings) !== JSON.stringify(savedSettings));
-
-  useEffect(() => {
-    if (!dirty) return;
-    const onBeforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); };
-    window.addEventListener("beforeunload", onBeforeUnload);
-    return () => window.removeEventListener("beforeunload", onBeforeUnload);
-  }, [dirty]);
-
-  const paymentOn = settings ? settings.paymentReminderSmsEnabled : Boolean(status?.automations.paymentReminders);
-  const birthdayOn = settings ? settings.birthdaySmsEnabled : Boolean(status?.automations.birthday);
-  const paymentScheduleEmpty = Boolean(settings?.paymentReminderSmsEnabled
-    && settings.paymentReminderDaysBefore.length === 0
-    && !settings.paymentReminderOnDueDate
-    && !settings.paymentReminderOverdueEnabled);
-
-  const save = async () => {
-    if (!settings) return;
-    if (paymentScheduleEmpty) {
-      showToastSafe({ title: "Kaydedilemedi", message: "Ödeme hatırlatması için en az bir zaman seçin (vadeden önce, vade günü ya da gecikmede).", type: "error" });
-      return;
-    }
-    setSaving(true);
-    try {
-      // Yalnız bu ekrandaki alanlar gönderilir; klinik adı gibi başka ayarlar ezilmez.
-      const response = await fetch("/api/settings", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(settings),
-      });
-      const data = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(data?.message || "Ayarlar kaydedilemedi.");
-      setSavedSettings(settings);
-      showToastSafe({ message: "Otomatik mesaj ayarları kaydedildi.", type: "success" });
-      onSettingsSaved();
-    } catch (error) {
-      showToastSafe({ title: "Kaydedilemedi", message: error instanceof Error ? error.message : "Ayarlar kaydedilemedi.", type: "error" });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const templateByCode = useMemo(() => new Map(templates.map((item) => [item.code, item])), [templates]);
+  const templateByCode = useMemo(() => new Map(templates.templates.map((item) => [item.code, item])), [templates.templates]);
+  const existingCodes = useMemo(() => new Set(templates.templates.map((item) => item.code)), [templates.templates]);
   const previewContext = useMemo(() => ({
     institutionName: status?.clinic.displayName || undefined,
     institutionPhone: status?.clinic.displayPhone || undefined,
-    surveyLink: status?.clinic.reviewLink || undefined,
   }), [status]);
-  const canEditTexts = canWriteSms || (canWriteWhatsapp && whatsappConnected);
 
-  const resetText = async (template: MessageTemplate, event: EventMessage) => {
-    const ok = await confirmDialog({
-      title: "Hazır metne dönülsün mü?",
-      message: `“${event.title}” için kliniğinize özel yazdığınız metin silinir; sistemin hazır metni kullanılır.`,
-      confirmText: "Hazır metne dön",
-      cancelText: "Vazgeç",
+  const putSettings = async (body: Record<string, unknown>) => {
+    // Yalnız değişen alan gönderilir; klinik adı gibi başka ayarlar ezilmez
+    // (api/settings PUT kısmi gövdeyi kabul eder ve denetim kaydı yazar).
+    const response = await fetch("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
     });
-    if (!ok) return;
-    setResettingCode(template.code);
+    const data = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(messageOf(data, "Ayar kaydedilemedi."));
+  };
+
+  /** Satır anahtarı: iyimser güncelle, kaydet; hata olursa eski değere dön. */
+  const persist = async (key: string, next: AutomationState, body: Record<string, unknown>, successMessage: string) => {
+    if (!values) return;
+    const previous = values;
+    setValues(next);
+    setSavingKey(key);
     try {
-      const response = await fetch(`/api/sms/templates?code=${encodeURIComponent(template.code)}`, { method: "DELETE" });
-      const data = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(data?.message || "Hazır metne dönülemedi.");
-      showToastSafe({ message: "Hazır metne dönüldü.", type: "success" });
-      void reloadTemplates();
+      await putSettings(body);
+      onAutomationsChange(next);
+      showToastSafe({ message: successMessage, type: "success" });
     } catch (error) {
-      showToastSafe({ message: error instanceof Error ? error.message : "Hazır metne dönülemedi.", type: "error" });
+      setValues(previous);
+      showToastSafe({ title: "Kaydedilemedi", message: error instanceof Error ? error.message : "Ayar kaydedilemedi.", type: "error" });
     } finally {
-      setResettingCode(null);
+      setSavingKey(null);
     }
   };
 
-  const sendState = (event: EventMessage): { label: string; tone: "success" | "neutral" | "info" } => {
-    if (event.rule === "not-sent") return { label: "Gönderilmiyor", tone: "neutral" };
-    if (event.rule === "appointment-flag") return { label: "Randevuda işaretlenirse", tone: "info" };
-    if (event.rule === "birthday") return birthdayOn ? { label: "Gönderiliyor", tone: "success" } : { label: "Kapalı", tone: "neutral" };
-    if (event.rule === "appointment-change") return !settings || settings.appointmentChangeNotifyEnabled ? { label: "Gönderiliyor", tone: "success" } : { label: "Kapalı", tone: "neutral" };
-    if (event.rule === "appointment-cancel") return !settings || settings.appointmentCancelNotifyEnabled ? { label: "Gönderiliyor", tone: "success" } : { label: "Kapalı", tone: "neutral" };
-    if (!paymentOn) return { label: "Kapalı", tone: "neutral" };
-    if (event.code === "ODEME_VADE_GUNU" && settings && !settings.paymentReminderOnDueDate) return { label: "Kapalı", tone: "neutral" };
-    if (event.code === "ODEME_GECIKTI" && settings && !settings.paymentReminderOverdueEnabled) return { label: "Kapalı", tone: "neutral" };
-    if (event.code === "ODEME_YAKLASIYOR" && settings && settings.paymentReminderDaysBefore.length === 0) return { label: "Kapalı", tone: "neutral" };
-    return { label: "Gönderiliyor", tone: "success" };
+  const setSchedule = (key: string, patch: Partial<PaymentSchedule>, body: Record<string, unknown>, successMessage: string) => {
+    if (!values) return;
+    const schedule = { ...values.paymentSchedule, ...patch };
+    if (values.paymentReminders && !hasAnyTiming(schedule)) {
+      showToastSafe({ title: "Kaydedilmedi", message: NO_TIMING_MESSAGE, type: "error", duration: 6000 });
+      return;
+    }
+    void persist(key, { ...values, paymentSchedule: schedule }, body, successMessage);
   };
 
-  const renderRows = (group: MessageGroup) => (
-    <div className="divide-y divide-slate-100">
-      {EVENT_MESSAGES.filter((event) => event.group === group).map((event) => {
-        const template = templateByCode.get(event.code);
-        const state = sendState(event);
-        const smsText = template ? renderSmsPreview(template.content, previewContext) : "";
-        return (
-          <div key={event.code} className="py-3 first:pt-0 last:pb-0">
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              <div className="min-w-0">
-                <p className="flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-900">
-                  {event.title}
-                  <Badge tone={state.tone}>{state.label}</Badge>
-                  {template?.isCustom && <Badge tone="neutral">Kliniğinize özel metin</Badge>}
-                </p>
-                <p className="mt-0.5 text-xs leading-5 text-slate-500">{event.when}</p>
-              </div>
-              {template && canEditTexts && (
-                <div className="flex shrink-0 items-center gap-1">
-                  {template.isCustom && canResetTexts && (
-                    <Button variant="ghost" size="sm" icon={Undo2} loading={resettingCode === template.code} onClick={() => void resetText(template, event)}>Hazır metne dön</Button>
-                  )}
-                  <Button variant="secondary" size="sm" icon={PenSquare} onClick={() => setEditing({ event, template })}>Metni düzenle</Button>
-                </div>
-              )}
-            </div>
-            {templatesLoading && !template ? (
-              <div className="ui-skeleton-shimmer mt-2 h-10 rounded-lg bg-slate-100" aria-hidden="true" />
-            ) : template ? (
-              <div className="mt-2 space-y-1.5">
-                <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm leading-5 text-slate-700">{smsText}</p>
-              </div>
-            ) : !templatesError ? (
-              <p className="mt-2 text-xs text-slate-500">Bu mesajın metni bulunamadı.</p>
-            ) : null}
-          </div>
-        );
-      })}
-    </div>
-  );
+  const togglePaymentReminders = async (on: boolean) => {
+    if (!values) return;
+    if (on) {
+      const ok = await confirmDialog({
+        title: "Ödeme hatırlatmaları açılsın mı?",
+        message: "Bugünden itibaren ödenmemiş taksitler için hastalara mesaj gider. SMS ile gidenler kredi harcar.",
+        confirmText: "Aç",
+        cancelText: "Vazgeç",
+      });
+      if (!ok) return;
+    }
+    // Hiç zaman seçili değilken açılırsa "vadeden 3 gün önce" ile açılır
+    // (açık ama hiç gitmeyen hatırlatma olmasın).
+    const needsDefault = on && !hasAnyTiming(values.paymentSchedule);
+    const schedule = needsDefault ? { ...values.paymentSchedule, daysBefore: [3] } : values.paymentSchedule;
+    void persist(
+      "payment",
+      { ...values, paymentReminders: on, paymentSchedule: schedule },
+      { paymentReminderSmsEnabled: on, ...(needsDefault ? { paymentReminderDaysBefore: [3] } : {}) },
+      on ? "Ödeme hatırlatmaları açıldı." : "Ödeme hatırlatmaları kapatıldı.",
+    );
+  };
+
+  const toggleBirthday = async (on: boolean) => {
+    if (!values) return;
+    if (on) {
+      const ok = await confirmDialog({
+        title: "Doğum günü mesajı açılsın mı?",
+        message: "Doğum tarihi kayıtlı hastalara doğum gününde, yılda bir kez kutlama mesajı gider. SMS ile gidenler kredi harcar.",
+        confirmText: "Aç",
+        cancelText: "Vazgeç",
+      });
+      if (!ok) return;
+    }
+    void persist("birthday", { ...values, birthday: on }, { birthdaySmsEnabled: on }, on ? "Doğum günü mesajı açıldı." : "Doğum günü mesajı kapatıldı.");
+  };
+
+  const openText = (code: string) => setModal({ kind: "text", code });
+  const openDays = () => {
+    if (!values) return;
+    setDraftDays(values.paymentSchedule.daysBefore);
+    setModal({ kind: "days" });
+  };
+  const openOverdue = () => {
+    if (!values) return;
+    setDraftOverdue(values.paymentSchedule.overdueEveryDays);
+    setModal({ kind: "overdue" });
+  };
+  const closeModal = () => setModal(null);
+
+  const textAction = (code: string) => {
+    const template = templateByCode.get(code);
+    return (
+      <Button
+        variant="ghost"
+        size="sm"
+        icon={canWriteSms ? PenSquare : Eye}
+        disabled={!template}
+        title={!template && templates.loading ? "Metin yükleniyor" : undefined}
+        onClick={() => openText(code)}
+      >
+        {canWriteSms ? "Metin" : "Metni gör"}
+      </Button>
+    );
+  };
+
+  // Zamanlaması olan satırın düğmesi: yönetici zamanı ve metni "Ayarla"r;
+  // zamanı değiştiremeyen ama metni düzenleyebilen (BANKO) "Metin", hiçbirini
+  // değiştiremeyen "Gör" görür (önceden BANKO'ya pasif günlerle "Ayarla" çıkıyordu).
+  const scheduleAction = (code: string, open: () => void) => {
+    const label = canManageAutomations ? "Ayarla" : canWriteSms ? "Metin" : "Gör";
+    return (
+      <Button
+        variant="ghost"
+        size="sm"
+        icon={canManageAutomations ? SlidersHorizontal : canWriteSms ? PenSquare : Eye}
+        disabled={!templateByCode.get(code)}
+        title={!templateByCode.get(code) && templates.loading ? "Metin yükleniyor" : undefined}
+        onClick={open}
+      >
+        {label}
+      </Button>
+    );
+  };
+
+  const customBadge = (code: string) => (templateByCode.get(code)?.isCustom ? <Badge tone="neutral">Özel metin</Badge> : undefined);
+
+  const enabledCelebrations = celebrations.days.filter((day) => day.enabled);
+  const nextCelebration = enabledCelebrations
+    .filter((day) => day.nextDate)
+    .sort((a, b) => (a.nextDate || "").localeCompare(b.nextDate || ""))[0];
+  const celebrationSummary = celebrations.loading
+    ? "Yükleniyor…"
+    : celebrations.error && celebrations.days.length === 0
+      ? "Liste yüklenemedi"
+      : enabledCelebrations.length === 0
+        ? "Hiçbiri açık değil"
+        : `${enabledCelebrations.length} gün açık${nextCelebration?.nextDate ? ` · sıradaki ${dayAndMonth(nextCelebration.nextDate)}, ${nextCelebration.title}` : ""}`;
 
   const consentPreview = SMS_CONSENT_MESSAGE_TEMPLATE
     .replace("{{institutionName}}", status?.clinic.legalName || "Kliniğiniz")
     .replace("{{link}}", `${status?.consentLink.address || "https://…"}/sms-onay/xxxxxxxx`);
-  const smsOff = Boolean(status?.sms && !status.sms.enabled);
-  const readOnlyHint = canManageAutomations ? undefined : "Yalnız klinik yöneticisi açıp kapatabilir.";
+
+  const readOnly = !canManageAutomations;
+  // Bir kayıt sürerken diğer anahtarlar da kısa süre beklenir: ardışık iki
+  // kayıtta ilki hata verip geri alınırsa ikincisinin durumu bozulmasın.
+  const busy = readOnly || !values || savingKey !== null;
+
+  // ── Pencereler ──────────────────────────────────────────────────────────
+  const modalEvent = modal?.kind === "text" ? eventOf(modal.code) : modal?.kind === "days" ? eventOf("ODEME_YAKLASIYOR") : modal?.kind === "overdue" ? eventOf("ODEME_GECIKTI") : null;
+  const modalTemplate: MessageTemplate | null = modalEvent ? templateByCode.get(modalEvent.code) || null : null;
+
+  const dayOptions = useMemo(() => {
+    const extra = (values?.paymentSchedule.daysBefore || []).filter((day) => !DAY_CHOICES.includes(day));
+    return [...DAY_CHOICES, ...extra].sort((a, b) => a - b).map((day) => ({ value: day, label: `${day} gün`, disabled: readOnly }));
+  }, [readOnly, values?.paymentSchedule.daysBefore]);
+  const overdueOptions = useMemo(() => {
+    const current = values?.paymentSchedule.overdueEveryDays;
+    const list = current && !OVERDUE_CHOICES.includes(current) ? [...OVERDUE_CHOICES, current].sort((a, b) => a - b) : OVERDUE_CHOICES;
+    return list.map((day) => ({ value: String(day), label: day === 1 ? "Her gün" : `${day} günde bir`, disabled: readOnly }));
+  }, [readOnly, values?.paymentSchedule.overdueEveryDays]);
+
+  const daysError = values && values.paymentReminders && draftDays.length === 0 && !values.paymentSchedule.onDueDate && !values.paymentSchedule.overdueEnabled
+    ? NO_TIMING_MESSAGE
+    : null;
+
+  const saveDays = async () => {
+    if (!values) return;
+    // Sunucu günleri büyükten küçüğe sıralar (api/settings); ekran da öyle tutar.
+    const days = [...draftDays].sort((a, b) => b - a);
+    await putSettings({ paymentReminderDaysBefore: days });
+    const next = { ...values, paymentSchedule: { ...values.paymentSchedule, daysBefore: days } };
+    setValues(next);
+    onAutomationsChange(next);
+  };
+
+  const saveOverdue = async () => {
+    if (!values) return;
+    await putSettings({ paymentReminderOverdueEveryDays: draftOverdue });
+    const next = { ...values, paymentSchedule: { ...values.paymentSchedule, overdueEveryDays: draftOverdue } };
+    setValues(next);
+    onAutomationsChange(next);
+  };
+
+  const modalSettings = modal?.kind === "days" ? (
+    <ToggleChips<number>
+      label="Vadeden kaç gün önce?"
+      options={dayOptions}
+      value={draftDays}
+      onChange={setDraftDays}
+      error={daysError || undefined}
+      hint={draftDays.length === 0 ? "Gün seçmezseniz vadesi yaklaşan hatırlatma gitmez." : "Aynı taksit için günde en fazla bir mesaj gider."}
+    />
+  ) : modal?.kind === "overdue" ? (
+    <ChoiceCards<string>
+      label="Kaç günde bir tekrar gitsin?"
+      variant="pills"
+      options={overdueOptions}
+      value={String(draftOverdue)}
+      onChange={(value) => setDraftOverdue(Number(value))}
+    />
+  ) : undefined;
+
+  if (!values) {
+    return (
+      <Section padding="none">
+        <ListRowSkeleton variant="row" leading="icon" rows={10} />
+      </Section>
+    );
+  }
+
+  const schedule = values.paymentSchedule;
+  const paymentOff = !values.paymentReminders;
 
   return (
-    <div className="space-y-4">
-      <p className="text-sm text-slate-600">
-        Aşağıdaki mesajlar koşulu oluşunca hastaya kendiliğinden gider: WhatsApp bağlıysa WhatsApp&apos;tan, değilse SMS ile
-        (her SMS 1 kredi). Kime gidip gitmediğini Gönderim Geçmişi&apos;nde görebilirsiniz.
-      </p>
-      {smsOff && (
-        <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-700" role="status">
-          SMS gönderimi kapalı: aşağıdaki mesajların hiçbiri SMS ile gitmez. Açmak için Ayarlar bölümüne bakın.
-        </p>
+    <div className="space-y-2">
+      {readOnly ? (
+        <p className="text-xs text-slate-500">Açıp kapatmayı klinik yöneticisi yapar.</p>
+      ) : status?.branch.multiple ? (
+        <p className="text-xs text-slate-500">Bu ayarlar tüm şubelerde geçerlidir.</p>
+      ) : null}
+      {templates.error && !templates.loaded && (
+        <LoadErrorState compact message={templates.error} onRetry={() => void templates.reload()} />
       )}
-      {templatesError && <LoadErrorState message={templatesError} onRetry={() => void reloadTemplates()} />}
-      {canManageAutomations && settingsError && <LoadErrorState message={settingsError} onRetry={() => void loadSettings()} />}
 
-      <FormSection icon={CalendarClock} title="Randevu mesajları" description="Bilgilendirme ve hatırlatma her randevuda ayrı seçilir (randevu formundaki kutular). Değişiklik ve iptal mesajlarını buradan açıp kapatabilirsiniz.">
-        <div className="space-y-4">
-          <div className="space-y-3 rounded-lg border border-slate-200 p-3">
-            <Switch
-              checked={settings ? settings.appointmentChangeNotifyEnabled : true}
-              disabled={!canManageAutomations || !settings}
-              onChange={(checked) => settings && setSettings({ ...settings, appointmentChangeNotifyEnabled: checked })}
-              label="Randevu değişince hastaya haber ver"
-              description={readOnlyHint || "Tarih, saat veya doktor değişince yeni bilgi hastaya gider."}
+      <Section padding="none">
+        <SettingsList aria-label="Otomatik mesajlar">
+          <SettingsGroup label="Randevu">
+            <SettingsRow
+              icon={EVENT_ICONS.BILGI}
+              title="Randevu bilgilendirme"
+              description={`${eventOf("BILGI").when} · ${values.smsDefaultInfo ? "yeni randevularda seçili gelir" : "randevuda elle seçilir"}`}
+              status={customBadge("BILGI")}
+              actions={textAction("BILGI")}
+              toggle={{
+                checked: values.smsDefaultInfo,
+                disabled: busy,
+                label: "Yeni randevularda bilgilendirme seçili gelsin",
+                onChange: (on) => void persist("info", { ...values, smsDefaultInfo: on }, { smsDefaultInfo: on },
+                  on ? "Yeni randevularda bilgilendirme seçili gelecek." : "Yeni randevularda bilgilendirme seçili gelmeyecek."),
+              }}
             />
-            <Switch
-              checked={settings ? settings.appointmentCancelNotifyEnabled : true}
-              disabled={!canManageAutomations || !settings}
-              onChange={(checked) => settings && setSettings({ ...settings, appointmentCancelNotifyEnabled: checked })}
-              label="Randevu iptal edilince hastaya haber ver"
-              description={readOnlyHint || "İptal edilen gelecek randevular için hastaya bilgi gider."}
+            <SettingsRow
+              icon={EVENT_ICONS.HATIRLATMA}
+              title="Randevu hatırlatma"
+              description={`${eventOf("HATIRLATMA").when} · ${values.smsDefaultReminder ? "yeni randevularda seçili gelir" : "randevuda elle seçilir"}`}
+              status={customBadge("HATIRLATMA")}
+              actions={textAction("HATIRLATMA")}
+              toggle={{
+                checked: values.smsDefaultReminder,
+                disabled: busy,
+                label: "Yeni randevularda hatırlatma seçili gelsin",
+                onChange: (on) => void persist("reminder", { ...values, smsDefaultReminder: on }, { smsDefaultReminder: on },
+                  on ? "Yeni randevularda hatırlatma seçili gelecek." : "Yeni randevularda hatırlatma seçili gelmeyecek."),
+              }}
             />
-          </div>
-          {renderRows("randevu")}
-        </div>
-      </FormSection>
+            <SettingsRow
+              icon={EVENT_ICONS.RANDEVU_DEGISIKLIK}
+              title="Randevu değişikliği"
+              description={eventOf("RANDEVU_DEGISIKLIK").when}
+              status={customBadge("RANDEVU_DEGISIKLIK")}
+              actions={textAction("RANDEVU_DEGISIKLIK")}
+              toggle={{
+                checked: values.appointmentChange,
+                disabled: busy,
+                label: "Randevu değişince hastaya mesaj gönderilsin",
+                onChange: (on) => void persist("change", { ...values, appointmentChange: on }, { appointmentChangeNotifyEnabled: on },
+                  on ? "Randevu değişince hastaya mesaj gidecek." : "Randevu değişince mesaj gitmeyecek."),
+              }}
+            />
+            <SettingsRow
+              icon={EVENT_ICONS.RANDEVU_IPTAL}
+              title="Randevu iptali"
+              description={eventOf("RANDEVU_IPTAL").when}
+              status={customBadge("RANDEVU_IPTAL")}
+              actions={textAction("RANDEVU_IPTAL")}
+              toggle={{
+                checked: values.appointmentCancel,
+                disabled: busy,
+                label: "Randevu iptal edilince hastaya mesaj gönderilsin",
+                onChange: (on) => void persist("cancel", { ...values, appointmentCancel: on }, { appointmentCancelNotifyEnabled: on },
+                  on ? "Randevu iptal edilince hastaya mesaj gidecek." : "Randevu iptal edilince mesaj gitmeyecek."),
+              }}
+            />
+          </SettingsGroup>
 
-      <FormSection icon={Wallet} title="Ödeme hatırlatmaları" description="Taksit ve vadeli ödemeler için otomatik hatırlatma.">
-        <div className="space-y-4">
-          <Switch
-            checked={paymentOn}
-            disabled={!canManageAutomations || !settings}
-            onChange={(checked) => settings && setSettings({ ...settings, paymentReminderSmsEnabled: checked })}
-            label="Ödeme hatırlatmalarını otomatik gönder"
-            description={readOnlyHint || (paymentOn ? "Açık: aşağıdaki zamanlarda hatırlatma gider." : "Kapalı: hastaya ödeme hatırlatması gitmez.")}
-          />
-          {paymentOn && settings && canManageAutomations && (
-            <div className="space-y-3 rounded-lg border border-slate-200 p-3">
-              <div>
-                <p className="ui-form-label mb-1.5 text-xs font-bold text-slate-800">Vadeden kaç gün önce?</p>
-                <div className="flex flex-wrap gap-2" role="group" aria-label="Vadeden önce hatırlatma günleri">
-                  {DAY_CHOICES.map((day) => {
-                    const active = settings.paymentReminderDaysBefore.includes(day);
-                    return (
-                      <button
-                        key={day}
-                        type="button"
-                        aria-pressed={active}
-                        onClick={() => setSettings({
-                          ...settings,
-                          paymentReminderDaysBefore: active
-                            ? settings.paymentReminderDaysBefore.filter((item) => item !== day)
-                            : [...settings.paymentReminderDaysBefore, day].sort((a, b) => a - b),
-                        })}
-                        className={`inline-flex min-h-9 items-center rounded-full border px-3.5 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${active ? "border-primary bg-primary/10 text-primary" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"}`}
-                      >
-                        {day} gün
-                      </button>
-                    );
-                  })}
-                </div>
-                <p className="mt-1 text-xs text-slate-500">Birden fazla gün seçebilirsiniz. Aynı taksit için günde en fazla bir mesaj gider.</p>
-              </div>
+          <SettingsGroup
+            label="Ödeme hatırlatmaları"
+            action={(
               <Switch
-                checked={settings.paymentReminderOnDueDate}
-                onChange={(checked) => setSettings({ ...settings, paymentReminderOnDueDate: checked })}
-                label="Vade gününde de hatırlat"
+                checked={values.paymentReminders}
+                disabled={busy}
+                onChange={(on) => void togglePaymentReminders(on)}
+                label="Ödeme hatırlatmaları gönderilsin"
+                labelHidden
               />
-              <Switch
-                checked={settings.paymentReminderOverdueEnabled}
-                onChange={(checked) => setSettings({ ...settings, paymentReminderOverdueEnabled: checked })}
-                label="Geciken ödemeyi tekrar hatırlat"
-                description="Ödeme yapılana kadar seçtiğiniz aralıkla tekrar gider."
-              />
-              {settings.paymentReminderOverdueEnabled && (
-                <FormField label="Gecikmede kaç günde bir?">
-                  <Input
-                    type="number"
-                    min={1}
-                    max={30}
-                    className="w-28"
-                    value={settings.paymentReminderOverdueEveryDays}
-                    onChange={(e) => setSettings({ ...settings, paymentReminderOverdueEveryDays: Math.max(1, Math.min(30, Number(e.target.value) || 1)) })}
-                  />
-                </FormField>
+            )}
+          >
+            <SettingsRow
+              icon={EVENT_ICONS.ODEME_YAKLASIYOR}
+              title="Vadesi yaklaşan ödeme"
+              description={schedule.daysBefore.length ? `Vadeden ${daysText(schedule.daysBefore)}` : "Kapalı — gün seçilmedi"}
+              status={customBadge("ODEME_YAKLASIYOR")}
+              muted={paymentOff}
+              actions={scheduleAction("ODEME_YAKLASIYOR", openDays)}
+              reserveToggleSpace
+            />
+            <SettingsRow
+              icon={EVENT_ICONS.ODEME_VADE_GUNU}
+              title="Vade günü"
+              description={eventOf("ODEME_VADE_GUNU").when}
+              status={customBadge("ODEME_VADE_GUNU")}
+              muted={paymentOff}
+              actions={textAction("ODEME_VADE_GUNU")}
+              toggle={{
+                checked: schedule.onDueDate,
+                // Grup kapalıyken alt anahtar da kapalı (önceden soluk ama
+                // tıklanabiliyordu ve "hatırlatma gidecek" diyordu).
+                disabled: busy || paymentOff,
+                label: "Vade gününde hatırlatma gönderilsin",
+                onChange: (on) => setSchedule("due", { onDueDate: on }, { paymentReminderOnDueDate: on },
+                  on ? "Vade gününde de hatırlatma gidecek." : "Vade gününde hatırlatma gitmeyecek."),
+              }}
+            />
+            <SettingsRow
+              icon={EVENT_ICONS.ODEME_GECIKTI}
+              title="Geciken ödeme"
+              description={schedule.overdueEveryDays === 1 ? "Ödenene kadar her gün" : `Ödenene kadar ${schedule.overdueEveryDays} günde bir`}
+              status={customBadge("ODEME_GECIKTI")}
+              muted={paymentOff}
+              actions={scheduleAction("ODEME_GECIKTI", openOverdue)}
+              toggle={{
+                checked: schedule.overdueEnabled,
+                disabled: busy || paymentOff,
+                label: "Geciken ödeme hatırlatması gönderilsin",
+                onChange: (on) => setSchedule("overdue", { overdueEnabled: on }, { paymentReminderOverdueEnabled: on },
+                  on ? "Geciken ödemeler için hatırlatma gidecek." : "Geciken ödemeler için hatırlatma gitmeyecek."),
+              }}
+            />
+          </SettingsGroup>
+
+          <SettingsGroup label="Kutlama">
+            <SettingsRow
+              icon={EVENT_ICONS.DOGUM_GUNU}
+              title="Doğum günü"
+              description={eventOf("DOGUM_GUNU").when}
+              status={customBadge("DOGUM_GUNU")}
+              actions={textAction("DOGUM_GUNU")}
+              toggle={{
+                checked: values.birthday,
+                disabled: busy,
+                label: "Doğum günü mesajı gönderilsin",
+                onChange: (on) => void toggleBirthday(on),
+              }}
+            />
+            <SettingsRow
+              icon={PartyPopper}
+              title="Bayram ve özel günler"
+              description={celebrationSummary}
+              actions={(
+                <Button variant="ghost" size="sm" icon={canToggleCelebrations ? SlidersHorizontal : Eye} onClick={() => setModal({ kind: "celebrations" })}>
+                  {canToggleCelebrations ? "Yönet" : "Gör"}
+                </Button>
               )}
-              {paymentScheduleEmpty && <p className="text-xs font-semibold text-red-700">En az bir zaman seçin; yoksa hatırlatma hiç gitmez.</p>}
-            </div>
-          )}
-          {renderRows("odeme")}
-        </div>
-      </FormSection>
+              reserveToggleSpace
+            />
+          </SettingsGroup>
 
-      <FormSection icon={Cake} title="Doğum günü" description="Doğum tarihi kayıtlı hastalara yılda bir kez kutlama mesajı.">
-        <div className="space-y-4">
-          <Switch
-            checked={birthdayOn}
-            disabled={!canManageAutomations || !settings}
-            onChange={(checked) => settings && setSettings({ ...settings, birthdaySmsEnabled: checked })}
-            label="Doğum günü mesajını otomatik gönder"
-            description={readOnlyHint}
-          />
-          {renderRows("dogum-gunu")}
-        </div>
-      </FormSection>
+          <SettingsGroup label="İzin">
+            <SettingsRow
+              icon={ShieldCheck}
+              title="SMS izni isteği"
+              description="Yeni hasta kaydında bir kez gider · metni değiştirilemez"
+              actions={<Button variant="ghost" size="sm" icon={Eye} onClick={() => setModal({ kind: "consent" })}>Metni gör</Button>}
+              reserveToggleSpace
+            />
+          </SettingsGroup>
+        </SettingsList>
+      </Section>
 
-      <div id="ozel-gunler" className="scroll-mt-4">
-      <FormSection icon={PartyPopper} title="Bayramlar ve özel günler" description="Açtığınız günlerde, kurumun TÜM şubelerindeki uygun hastalara her yıl otomatik gider. Mesleğe özel günler yalnız o meslekteki hastalara gider.">
-        <CelebrationList
-          canToggle={canToggleCelebrations}
-          clinicName={status?.clinic.legalName || ""}
-          showWhatsapp={canReadWhatsapp && whatsappConnected}
-        />
-      </FormSection>
-      </div>
-
-      <FormSection icon={ShieldCheck} title="SMS izni isteği" description="Yeni hasta kaydedilince hastaya bir kez izin SMS'i gider. Hasta onaylayana kadar ona SMS gönderilmez. Metin yasal gereklilik nedeniyle sabittir.">
-        <div className="space-y-2">
-          <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm leading-5 text-slate-700">{consentPreview}</p>
-          {status && (status.consentLink.ready ? (
-            <Badge tone="success">Onay bağlantısı hastanın telefonunda açılır</Badge>
-          ) : (
-            <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="status">
-              Onay bağlantısı hastanın telefonunda açılmaz{status.consentLink.address ? ` (${status.consentLink.address})` : ""}. Hastalar izin veremez; sistem yöneticinize bildirin.
-            </p>
-          ))}
-          {smsOff && <p className="text-xs font-semibold text-red-700">SMS gönderimi kapalı olduğu için izin SMS&apos;i de gitmez; yeni hastalar “İzin SMS&apos;i gitmedi” durumunda kalır.</p>}
-        </div>
-      </FormSection>
-
-      {editing && (
+      {modalEvent && modalTemplate && (
         <MessageTextModal
           open
-          onClose={() => setEditing(null)}
+          onClose={closeModal}
           mode="event"
-          event={editing.event}
-          template={editing.template}
-          existingCodes={new Set(templates.map((item) => item.code))}
+          event={modalEvent}
+          template={modalTemplate}
+          existingCodes={existingCodes}
           canWriteSms={canWriteSms}
           canWriteWhatsapp={canWriteWhatsapp}
           whatsappConnected={whatsappConnected}
           previewContext={previewContext}
-          onSaved={() => void reloadTemplates()}
+          readOnly={!canWriteSms}
+          // Liste kayıt yanıtıyla yerelde güncellenir; ayrıca yeniden çekilmez
+          // (art arda iki kayıtta eski yanıt yeni metni ezmesin).
+          onSaved={(saved) => { if (saved) templates.upsert(saved); }}
+          onReset={templates.upsert}
+          canResetToDefault={canResetTexts}
+          settings={modalSettings}
+          settingsDirty={modal?.kind === "days"
+            ? !readOnly && !sameDays(draftDays, schedule.daysBefore)
+            : modal?.kind === "overdue" ? !readOnly && draftOverdue !== schedule.overdueEveryDays : false}
+          settingsError={modal?.kind === "days" ? daysError : null}
+          onSaveSettings={modal?.kind === "days" ? saveDays : modal?.kind === "overdue" ? saveOverdue : undefined}
         />
       )}
 
-      {canManageAutomations && (
-        <SaveBar
-          dirty={dirty}
-          saving={saving}
-          onSave={() => void save()}
-          onDiscard={() => savedSettings && setSettings(savedSettings)}
-          message="Otomatik mesaj ayarlarında kaydedilmemiş değişiklik var"
-        />
-      )}
+      <CelebrationManageModal
+        open={modal?.kind === "celebrations"}
+        onClose={closeModal}
+        canToggle={canToggleCelebrations}
+        clinicName={status?.clinic.legalName || ""}
+        multipleBranches={Boolean(status?.branch.multiple)}
+        // status.whatsapp yalnız WhatsApp okuma yetkisi + modül açıkken döner.
+        showWhatsappText={whatsappConnected}
+        onToggled={celebrations.setDayEnabled}
+      />
+
+      <Modal
+        module="sms"
+        open={modal?.kind === "consent"}
+        onClose={closeModal}
+        title="SMS izni isteği"
+        description="Yeni hasta kaydedilince bir kez gider; hasta onaylayana kadar ona SMS gitmez. Metin yasal zorunluluk nedeniyle değiştirilemez."
+        trackFormChanges={false}
+        footer={<Button variant="secondary" onClick={closeModal}>Kapat</Button>}
+      >
+        <p className="whitespace-pre-wrap break-words rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm leading-5 text-slate-800">{consentPreview}</p>
+      </Modal>
     </div>
   );
 }

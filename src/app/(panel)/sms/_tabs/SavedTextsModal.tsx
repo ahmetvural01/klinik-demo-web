@@ -1,10 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { PenSquare, PlusCircle, Trash2, Undo2 } from "lucide-react";
+import { PenSquare, PlusCircle, Trash2 } from "lucide-react";
+import { Badge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { Modal } from "@/components/ui/Modal";
-import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import { SettingsList, SettingsRow } from "@/components/ui/SettingsList";
 import { MessageTextModal } from "@/components/sms/MessageTextModal";
 import type { MessageTemplate } from "@/components/sms/communication-status";
 import { confirmDialog } from "@/lib/confirm-client";
@@ -19,75 +21,47 @@ type SavedTextsModalProps = {
   canWriteSms: boolean;
   canWriteWhatsapp: boolean;
   whatsappConnected: boolean;
-  /** Silme/varsayılana dönme hem SMS hem WhatsApp düzenleme yetkisi ister (api/sms/templates DELETE). */
+  /** Silme/hazır metne dönme hem SMS hem WhatsApp düzenleme yetkisi ister (api/sms/templates DELETE). */
   canDelete: boolean;
   previewContext: Partial<Record<string, string>>;
-  onChanged: () => void;
+  /** Eklenen/düzenlenen ya da hazır metne dönen metin — liste beklemeden güncellenir. */
+  onSaved: (template: MessageTemplate) => void;
+  /** Silinen kliniğe özel metin. */
+  onRemoved: (code: string) => void;
 };
 
-/** Mesaj Gönder'de seçilebilen kayıtlı metinlerin yönetimi (ekle, düzenle, sil). */
-export function SavedTextsModal({ open, onClose, texts, allCodes, canWriteSms, canWriteWhatsapp, whatsappConnected, canDelete, previewContext, onChanged }: SavedTextsModalProps) {
+/**
+ * Mesaj gönder'de seçilebilen kayıtlı metinlerin yönetimi (ekle, düzenle, sil).
+ * Kliniğin değiştirdiği sistem metni ("Genel bilgilendirme") silinmez; düzenleme
+ * penceresinde "Hazır metne dön" ile eski haline döner.
+ */
+export function SavedTextsModal({ open, onClose, texts, allCodes, canWriteSms, canWriteWhatsapp, whatsappConnected, canDelete, previewContext, onSaved, onRemoved }: SavedTextsModalProps) {
   const [editing, setEditing] = useState<MessageTemplate | null>(null);
   const [creating, setCreating] = useState(false);
   const [busyCode, setBusyCode] = useState<string | null>(null);
 
   const remove = async (text: MessageTemplate) => {
-    const resetsToDefault = text.hasDefault;
     const ok = await confirmDialog({
-      title: resetsToDefault ? "Varsayılan metne dönülsün mü?" : "Kayıtlı metin silinsin mi?",
-      message: resetsToDefault
-        ? `“${text.defaultTitle || text.title}” için yaptığınız değişiklik silinir, sistemin hazır metni kullanılır.`
-        : `“${text.title}” kalıcı olarak silinir. Daha önce gönderilmiş mesajlar etkilenmez.`,
-      confirmText: resetsToDefault ? "Varsayılana dön" : "Sil",
+      title: "Kayıtlı metin silinsin mi?",
+      message: `“${text.title}” kalıcı olarak silinir. Daha önce gönderilmiş mesajlar etkilenmez.`,
+      confirmText: "Sil",
       cancelText: "Vazgeç",
-      danger: !resetsToDefault,
+      danger: true,
     });
     if (!ok) return;
     setBusyCode(text.code);
     try {
       const response = await fetch(`/api/sms/templates?code=${encodeURIComponent(text.code)}`, { method: "DELETE" });
       const data = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(data?.message || "İşlem tamamlanamadı.");
-      showToastSafe({ message: resetsToDefault ? "Hazır metne dönüldü." : "Kayıtlı metin silindi.", type: "success" });
-      onChanged();
+      if (!response.ok) throw new Error(data?.message || "Silinemedi.");
+      onRemoved(text.code);
+      showToastSafe({ message: "Kayıtlı metin silindi.", type: "success" });
     } catch (error) {
-      showToastSafe({ message: error instanceof Error ? error.message : "İşlem tamamlanamadı.", type: "error" });
+      showToastSafe({ message: error instanceof Error ? error.message : "Silinemedi.", type: "error" });
     } finally {
       setBusyCode(null);
     }
   };
-
-  const columns: ListTableColumn<MessageTemplate>[] = [
-    {
-      key: "title",
-      header: "Metin",
-      render: (text) => (
-        <span className="block min-w-0">
-          <span className="block font-semibold text-slate-900">{text.title}</span>
-          <span className="line-clamp-2 text-xs text-slate-500">{renderSmsPreview(text.content, previewContext)}</span>
-        </span>
-      ),
-    },
-    {
-      key: "actions",
-      header: "",
-      align: "right",
-      render: (text) => (
-        <span className="inline-flex gap-1">
-          {canWriteSms && <IconButton icon={PenSquare} title="Düzenle" onClick={() => setEditing(text)} />}
-          {canDelete && (text.isCustom) && (
-            <IconButton
-              icon={text.hasDefault ? Undo2 : Trash2}
-              title={text.hasDefault ? "Hazır metne dön" : "Sil"}
-              tone={text.hasDefault ? "neutral" : "danger"}
-              disabled={busyCode === text.code}
-              onClick={() => void remove(text)}
-            />
-          )}
-        </span>
-      ),
-    },
-  ];
 
   return (
     <>
@@ -96,7 +70,7 @@ export function SavedTextsModal({ open, onClose, texts, allCodes, canWriteSms, c
         open={open && !editing && !creating}
         onClose={onClose}
         title="Kayıtlı metinler"
-        description="Sık gönderdiğiniz duyuru ve bilgilendirme metinleri. Mesaj Gönder'de “Hazır metin” listesinden seçilir."
+        description="Mesaj gönderirken “Hazır metin” listesinden seçilir."
         size="lg"
         trackFormChanges={false}
         footer={(
@@ -106,13 +80,30 @@ export function SavedTextsModal({ open, onClose, texts, allCodes, canWriteSms, c
           </>
         )}
       >
-        <ListTable<MessageTemplate>
-          columns={columns}
-          rows={texts}
-          rowKey={(text) => text.code}
-          emptyText="Henüz kayıtlı metin yok"
-          emptyDescription="Mesaj yazarken “Bu metni kaydet” ile ya da aşağıdaki düğmeyle ekleyebilirsiniz."
-        />
+        {texts.length === 0 ? (
+          <EmptyState compact title="Henüz kayıtlı metin yok" description="Mesaj yazarken “Bu metni kaydet” ile ya da aşağıdaki düğmeyle ekleyebilirsiniz." />
+        ) : (
+          <div className="overflow-hidden rounded-lg border border-slate-200">
+            <SettingsList aria-label="Kayıtlı metinler">
+              {texts.map((text) => (
+                <SettingsRow
+                  key={text.code}
+                  title={text.title}
+                  status={text.isCustom && text.hasDefault ? <Badge tone="neutral">Değiştirildi</Badge> : undefined}
+                  description={<span className="line-clamp-1 break-words">{renderSmsPreview(text.content, previewContext)}</span>}
+                  actions={(
+                    <>
+                      <IconButton icon={PenSquare} size="sm" title={canWriteSms ? "Düzenle" : "Metni gör"} onClick={() => setEditing(text)} />
+                      {canDelete && text.isCustom && !text.hasDefault && (
+                        <IconButton icon={Trash2} size="sm" tone="danger" title="Sil" disabled={busyCode === text.code} onClick={() => void remove(text)} />
+                      )}
+                    </>
+                  )}
+                />
+              ))}
+            </SettingsList>
+          </div>
+        )}
       </Modal>
       <MessageTextModal
         open={Boolean(editing) || creating}
@@ -124,7 +115,10 @@ export function SavedTextsModal({ open, onClose, texts, allCodes, canWriteSms, c
         canWriteWhatsapp={canWriteWhatsapp}
         whatsappConnected={whatsappConnected}
         previewContext={previewContext}
-        onSaved={onChanged}
+        readOnly={!canWriteSms}
+        canResetToDefault={canDelete}
+        onSaved={(saved) => { if (saved) onSaved(saved); }}
+        onReset={onSaved}
       />
     </>
   );

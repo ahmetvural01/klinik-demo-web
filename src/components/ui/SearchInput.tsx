@@ -56,6 +56,9 @@ export const SearchInput = forwardRef<HTMLInputElement, SearchInputProps>(functi
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === "Escape" && value) {
+            // İlk Esc yalnız yazıyı temizler: stopPropagation window'daki Modal'a,
+            // preventDefault aynı document'taki Drawer dinleyicisine "kullanıldı" der.
+            event.preventDefault();
             event.stopPropagation();
             onChange("");
           }
@@ -76,7 +79,7 @@ export const SearchInput = forwardRef<HTMLInputElement, SearchInputProps>(functi
             innerRef.current?.focus();
           }}
           aria-label="Aramayı temizle"
-          className="ui-search-clear absolute right-1.5 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+          className="ui-search-clear absolute right-1.5 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-700"
         >
           <X className="h-4 w-4" aria-hidden="true" />
         </button>

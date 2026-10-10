@@ -50,6 +50,7 @@
     "test:task-listbox": "tsx scripts/task-listbox-test.ts",
     "test:staff-credentials": "tsx scripts/staff-credential-update-test.ts",
     "test:auth-security": "tsx scripts/auth-security-regression-test.ts",
+    "test:middleware-rate-limit": "tsx scripts/middleware-rate-limit-test.mts",
     "test:ui-network-failures": "tsx scripts/ui-network-failure-regression-test.ts",
     "test:demo-form": "node scripts/demo-form-regression-test.mjs",
     "test:client-workflows": "tsx scripts/client-workflows-regression-test.ts",
@@ -71,7 +72,6 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1096.0",
-    "@icon-park/react": "^1.4.2",
     "@prisma/client": "^5.17.0",
     "@tanstack/react-table": "^8.21.3",
     "@types/jsbarcode": "^3.11.4",

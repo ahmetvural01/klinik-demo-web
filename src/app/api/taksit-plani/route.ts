@@ -1,14 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import type { PaymentMethod, Prisma, TaksitPeriod } from "@prisma/client";
+import { Prisma, type PaymentMethod, type TaksitPeriod } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { createIntegratedPayment } from "@/lib/payment-ledger";
-import { requireAuth, writeAudit, withApiTiming } from "@/lib/api";
+import { hasEffectivePermission, requireAuth, writeAudit, withApiTiming } from "@/lib/api";
 import { parsePagination } from "@/lib/pagination";
 import { isValidDateKey, turkeyTodayStartUtc } from "@/lib/tz";
-import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
+import { shouldHidePatientPhoneForUser } from "@/lib/patient-visibility-server";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
 import { addInstallmentPeriod, INSTALLMENT_PERIODS } from "@/lib/installment-schedule";
 import { requireActiveBranch } from "@/lib/branch-context";
+import { computePatientBalances, loadOpenInstallmentSummaries } from "@/lib/patient-balance";
+import { BusinessRuleError } from "@/lib/public-error";
+import { formatCurrency } from "@/lib/format";
 
 const AGING4_KEYS = ["current", "d0_30", "d31_60", "d60p"] as const;
 
@@ -57,7 +60,18 @@ export const GET = withApiTiming("taksit-plani", async function GET(req: NextReq
     const status = searchParams.get("status");
     const patientId = searchParams.get("patientId");
     const q = (searchParams.get("q") || "").trim();
+    // stats=0: sayaç gerekmeyen çağrılar (ör. tahsilat formunun hasta bağlamı,
+    // özeti ayrıca okunan süzgeçler) altı istatistik sorgusunu atlar.
+    const withStats = searchParams.get("stats") !== "0";
     const { page, take, skip, pageCount } = parsePagination(searchParams, { defaultTake: 25, maxTake: 100 });
+
+    // Kurum geneli taksit listesi Muhasebe ekranının işidir (finance:center).
+    // Tek hastanın planları (hasta dosyası › Hesap, tahsilat formu) taksit
+    // okuma izniyle açılmaya devam eder. Önceden finans merkezi olmayan rol
+    // (ör. asistan) patientId vermeden kliniğin bütün planlarını okuyabiliyordu.
+    if (!patientId && !(await hasEffectivePermission(user, "finance:center"))) {
+      return NextResponse.json({ error: "Tüm hastaların taksit listesini görme yetkiniz yok; hastanın planına hasta dosyasından bakabilirsiniz." }, { status: 403 });
+    }
 
     const baseWhere: Record<string, unknown> = { institutionId: user.institutionId, branchId: branch.branchId };
     if (patientId) baseWhere.patientId = patientId;
@@ -103,7 +117,40 @@ export const GET = withApiTiming("taksit-plani", async function GET(req: NextReq
       : {};
     const listWhere = q ? { AND: [baseWhere, searchWhere] } : baseWhere;
 
-    const [total, plans, geciktenPlanIds, kalanAgg, bekleyen, bugunVade, aging4Rows, aging5Rows] = await Promise.all([
+    // Özet sorguları (geciken, kalan, yaşlandırma) yalnız istendiğinde.
+    const statsPromise = withStats
+      ? Promise.all([
+          (prisma as any).taksit.findMany({
+            where: { plan: baseWhere, OR: [{ status: "GECIKTI" }, overdueTaksitWhere] },
+            select: { planId: true },
+            distinct: ["planId"],
+            take: 20000,
+          }),
+          (prisma as any).taksit.aggregate({
+            _sum: { kalan: true },
+            where: { plan: { ...baseWhere, status: { notIn: ["TAMAMLANDI", "IPTAL"] } } },
+          }),
+          // "Bekleyen" vadesi henüz gelmemiş taksitleri sayar — vadesi geçmiş ama
+          // henüz GECIKTI'ye çevrilmemiş taksitler burada değil, "geciken"de sayılır
+          // (yukarıdaki not).
+          (prisma as any).taksit.count({ where: { plan: baseWhere, status: "BEKLIYOR", vadeDate: { gte: todayStart } } }),
+          (prisma as any).taksit.count({
+            where: { plan: baseWhere, status: "BEKLIYOR", vadeDate: { gte: todayStart, lte: todayEnd } },
+          }),
+          (prisma as any).taksit.findMany({
+            where: { plan: { ...baseWhere, status: { notIn: ["IPTAL", "TAMAMLANDI"] } }, kalan: { gt: 0 } },
+            select: { kalan: true, vadeDate: true },
+            take: 20000,
+          }),
+          (prisma as any).taksit.findMany({
+            where: { plan: baseWhere, kalan: { gt: 0 }, status: { notIn: ["ODENDI", "IPTAL"] } },
+            select: { kalan: true, vadeDate: true },
+            take: 20000,
+          }),
+        ])
+      : Promise.resolve(null);
+
+    const [total, plans, statRows] = await Promise.all([
       (prisma as any).taksitPlan.count({ where: listWhere }),
       (prisma as any).taksitPlan.findMany({
         where: listWhere,
@@ -122,36 +169,11 @@ export const GET = withApiTiming("taksit-plani", async function GET(req: NextReq
         skip,
         take,
       }),
-      (prisma as any).taksit.findMany({
-        where: { plan: baseWhere, OR: [{ status: "GECIKTI" }, overdueTaksitWhere] },
-        select: { planId: true },
-        distinct: ["planId"],
-        take: 20000,
-      }),
-      (prisma as any).taksit.aggregate({
-        _sum: { kalan: true },
-        where: { plan: { ...baseWhere, status: { notIn: ["TAMAMLANDI", "IPTAL"] } } },
-      }),
-      // "Bekleyen" vadesi henüz gelmemiş taksitleri sayar — vadesi geçmiş ama
-      // henüz GECIKTI'ye çevrilmemiş taksitler burada değil, "geciken"de sayılır
-      // (yukarıdaki not).
-      (prisma as any).taksit.count({ where: { plan: baseWhere, status: "BEKLIYOR", vadeDate: { gte: todayStart } } }),
-      (prisma as any).taksit.count({
-        where: { plan: baseWhere, status: "BEKLIYOR", vadeDate: { gte: todayStart, lte: todayEnd } },
-      }),
-      (prisma as any).taksit.findMany({
-        where: { plan: { ...baseWhere, status: { notIn: ["IPTAL", "TAMAMLANDI"] } }, kalan: { gt: 0 } },
-        select: { kalan: true, vadeDate: true },
-        take: 20000,
-      }),
-      (prisma as any).taksit.findMany({
-        where: { plan: baseWhere, kalan: { gt: 0 }, status: { notIn: ["ODENDI", "IPTAL"] } },
-        select: { kalan: true, vadeDate: true },
-        take: 20000,
-      }),
+      statsPromise,
     ]);
 
-    const hidePhone = await shouldHidePatientPhoneForRole(user.role);
+    // KVKK: telefon maskesi kişinin etkin iznine (rol + şube daraltması) bakar.
+    const hidePhone = await shouldHidePatientPhoneForUser(user);
     const withLiveTaksitStatus = (p: any) => ({
       ...p,
       taksitler: (p.taksitler || []).map((t: any) =>
@@ -166,6 +188,11 @@ export const GET = withApiTiming("taksit-plani", async function GET(req: NextReq
         ? { ...withStatus, patient: withStatus.patient ? { ...withStatus.patient, phone: "***" } : withStatus.patient }
         : withStatus;
     });
+
+    if (!statRows) {
+      return NextResponse.json({ items, total, page, pageCount: pageCount(total) });
+    }
+    const [geciktenPlanIds, kalanAgg, bekleyen, bugunVade, aging4Rows, aging5Rows] = statRows;
 
     // Tek birimli özet: geciken ve bu hafta vadesi gelen taksitlerin TUTARI ve ADEDİ.
     // (Önceden kartlarda para ile adet karışıktı: "Bekleyen 2" neyin 2'si belli değildi.)
@@ -246,7 +273,8 @@ export async function POST(req: NextRequest) {
     }
 
     // Mantıksız/negatif değerler sessizce negatif bakiyeli taksitlere yol
-    // açmasın diye burada da (istemcinin yanı sıra) doğrulanıyor.
+    // açmasın diye burada da (istemcinin yanı sıra) doğrulanıyor. Tutarlar
+    // Decimal: kuruş hesabı JS sayısıyla yapılmaz.
     const toplamBorcNum = Number(toplamBorc);
     const pesnatNum = Number(pesnat) || 0;
     if (!Number.isFinite(toplamBorcNum) || toplamBorcNum <= 0 || toplamBorcNum > 99_999_999.99) {
@@ -255,7 +283,9 @@ export async function POST(req: NextRequest) {
     if (!Number.isFinite(pesnatNum) || pesnatNum < 0) {
       return NextResponse.json({ error: "Peşinat negatif olamaz" }, { status: 400 });
     }
-    if (pesnatNum >= toplamBorcNum) {
+    const toplamBorcD = toMoney(toplamBorcNum);
+    const pesnatD = toMoney(pesnatNum);
+    if (pesnatD.gte(toplamBorcD)) {
       return NextResponse.json({ error: "Peşinat toplam borçtan küçük olmalıdır" }, { status: 400 });
     }
 
@@ -264,7 +294,7 @@ export async function POST(req: NextRequest) {
     const pesinatTahsilat = body.pesinatTahsilat;
     let pesinatMethod: PaymentMethod | null = null;
     let pesinatPosId: string | null = null;
-    if (pesinatTahsilat !== undefined && pesinatTahsilat !== null && pesnatNum > 0) {
+    if (pesinatTahsilat !== undefined && pesinatTahsilat !== null && pesnatD.gt(0)) {
       // Peşinat tahsilatı bir Payment kaydı açar: taksit izninin yanında tahsilat izni de gerekir.
       const paymentAuth = await requireAuth("payments:write");
       if (paymentAuth.error) return paymentAuth.error;
@@ -307,11 +337,11 @@ export async function POST(req: NextRequest) {
     }
 
     const [patient, doctor] = await Promise.all([
-      (prisma as any).patient.findFirst({
+      prisma.patient.findFirst({
         where: { id: patientId, institutionId: user.institutionId, homeBranchId: branch.branchId, archivedAt: null },
         select: { id: true },
       }),
-      (prisma as any).user.findFirst({
+      prisma.user.findFirst({
         where: { id: doctorId, ...effectiveDoctorWhere(user.institutionId, branch.branchId) },
         select: { id: true },
       }),
@@ -326,9 +356,9 @@ export async function POST(req: NextRequest) {
       if (!pos) return NextResponse.json({ error: "Seçilen POS bu kuruma ait değil veya kullanım dışı" }, { status: 403 });
     }
 
-    const kalan = Number(toplamBorc) - Number(pesnat);
+    const kalan = toplamBorcD.minus(pesnatD);
 
-    let taksitlerCreate: { siraNo: number; vadeDate: Date; tutar: number; odenen: number; kalan: number; status: string }[];
+    let taksitlerCreate: { siraNo: number; vadeDate: Date; tutar: Prisma.Decimal }[];
 
     if (Array.isArray(customTaksitler) && customTaksitler.length > 0) {
       const invalidCustom = customTaksitler.some((t: unknown) => {
@@ -340,50 +370,40 @@ export async function POST(req: NextRequest) {
       if (invalidCustom) {
         return NextResponse.json({ error: "Özel taksitlerin tarih ve tutarları geçersiz" }, { status: 400 });
       }
-      taksitlerCreate = customTaksitler.map((t: { date: string; amount: number }, i: number) => {
-        const amount = Number(Number(t.amount).toFixed(2));
-        return { siraNo: i + 1, vadeDate: new Date(t.date), tutar: amount, odenen: 0, kalan: amount, status: "BEKLIYOR" };
-      });
+      taksitlerCreate = customTaksitler.map((t: { date: string; amount: number }, i: number) => (
+        { siraNo: i + 1, vadeDate: new Date(t.date), tutar: toMoney(Number(t.amount)) }
+      ));
       const datesAreOrdered = taksitlerCreate.every((item, index) => index === 0 || item.vadeDate >= taksitlerCreate[index - 1].vadeDate);
       if (!datesAreOrdered) {
         return NextResponse.json({ error: "Taksit vadeleri kronolojik sırada olmalıdır" }, { status: 400 });
       }
     } else {
-      const taksitTutar = Math.round((kalan / Number(taksitSayisi)) * 100) / 100;
+      // Eşit bölme: her taksit kuruşa yarım-yukarı yuvarlanır, küsurat son taksite eklenir.
+      const count = Number(taksitSayisi);
+      const per = kalan.div(count).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
       const start = new Date(`${startDate}T00:00:00.000Z`);
-      taksitlerCreate = Array.from({ length: Number(taksitSayisi) }, (_, i) => {
-        const vadeDate = addInstallmentPeriod(start, period, i);
-        const isLast = i === Number(taksitSayisi) - 1;
-        const tutar = isLast
-          ? Math.round((kalan - taksitTutar * (Number(taksitSayisi) - 1)) * 100) / 100
-          : taksitTutar;
-        return {
-          siraNo: i + 1,
-          vadeDate,
-          tutar,
-          odenen: 0,
-          kalan: tutar,
-          status: "BEKLIYOR"
-        };
-      });
+      taksitlerCreate = Array.from({ length: count }, (_, i) => ({
+        siraNo: i + 1,
+        vadeDate: addInstallmentPeriod(start, period, i),
+        tutar: i === count - 1 ? kalan.minus(per.mul(count - 1)) : per,
+      }));
     }
 
     // Güvenlik ağı: küsurat nereden gelirse gelsin (istemci ya da yukarıdaki hesap), taksitlerin
     // toplamı her zaman "kalan" ile birebir eşitlensin — aksi halde hasta hesabında asla
     // kapanmayan bir kuruş bakiyesi oluşur.
     if (taksitlerCreate.length > 0) {
-      if (taksitlerCreate.some((item) => item.tutar < 0.01)) {
+      if (taksitlerCreate.some((item) => item.tutar.lt(MIN_INSTALLMENT))) {
         return NextResponse.json({ error: "Her taksit en az 0,01 TL olmalıdır; taksit sayısını azaltın" }, { status: 400 });
       }
-      const sum = Math.round(taksitlerCreate.reduce((acc, t) => acc + t.tutar, 0) * 100) / 100;
-      const diff = Math.round((kalan - sum) * 100) / 100;
-      if (Array.isArray(customTaksitler) && customTaksitler.length > 0 && Math.abs(diff) > 0.01) {
+      const sum = taksitlerCreate.reduce((acc, t) => acc.plus(t.tutar), new Prisma.Decimal(0));
+      const diff = kalan.minus(sum);
+      if (Array.isArray(customTaksitler) && customTaksitler.length > 0 && diff.abs().gt(MIN_INSTALLMENT)) {
         return NextResponse.json({ error: "Özel taksitlerin toplamı peşinat sonrası kalan borca eşit olmalıdır" }, { status: 400 });
       }
-      if (diff !== 0) {
+      if (!diff.isZero()) {
         const last = taksitlerCreate[taksitlerCreate.length - 1];
-        last.tutar = Math.round((last.tutar + diff) * 100) / 100;
-        last.kalan = last.tutar;
+        last.tutar = last.tutar.plus(diff);
       }
     }
 
@@ -394,14 +414,15 @@ export async function POST(req: NextRequest) {
       ? taksitlerCreate[0].vadeDate
       : new Date(`${startDate}T00:00:00.000Z`);
 
+    const institutionId = user.institutionId;
     const planData: Prisma.TaksitPlanUncheckedCreateInput = {
-      institutionId: user.institutionId,
+      institutionId,
       branchId: branch.branchId,
       patientId,
       doctorId,
       baslik: baslik?.trim() || null,
-      toplamBorc: Number(toplamBorc),
-      pesnat: Number(pesnat),
+      toplamBorc: toplamBorcD,
+      pesnat: pesnatD,
       taksitSayisi: effectiveTaksitSayisi,
       period: period as TaksitPeriod,
       startDate: effectiveStartDate,
@@ -412,8 +433,8 @@ export async function POST(req: NextRequest) {
           siraNo: item.siraNo,
           vadeDate: item.vadeDate,
           tutar: item.tutar,
-          odenen: item.odenen,
-          kalan: item.kalan,
+          odenen: 0,
+          kalan: item.tutar,
           status: "BEKLIYOR" as const,
         })),
       },
@@ -424,49 +445,126 @@ export async function POST(req: NextRequest) {
       taksitler: true,
     } as const;
 
-    // Peşinat bugün alındıysa (istemci yöntemini gönderdiyse) plan ile AYNI işlemde
-    // tahsilat kaydı açılır: kasa, defter, rapor ve hasta bakiyesi peşinatı görür.
-    // Taksitlere otomatik eşleştirme yapılmaz (peşinat taksit değildir). Aynı
-    // işlem anahtarıyla tekrar gelen istek tahsilatta çakışır ve plan da ikinci
-    // kez oluşmaz.
-    if (pesinatMethod && pesnatNum > 0) {
-      const result = await prisma.$transaction(async (tx) => {
-        const created = await tx.taksitPlan.create({ data: planData, include: planInclude });
-        const { payment } = await createIntegratedPayment({
-          tx,
-          institutionId: user.institutionId as string,
-          branchId: branch.branchId,
-          requestKey,
-          patientId,
-          doctorId,
-          method: pesinatMethod,
-          amount: pesnatNum,
-          description: `Peşinat — ${created.baslik || "taksit planı"}`,
-          posId: pesinatPosId,
-          integrateInstallments: false,
-        });
-        return { created, paymentId: payment.id };
-      }, { isolationLevel: "Serializable" });
+    const collectNow = Boolean(pesinatMethod && pesnatD.gt(0));
+    // Aynı işlem anahtarıyla tekrar gelen istek (ağ tekrarı): plan ve peşinat
+    // zaten kaydedildi. Borç denetiminden ÖNCE bakılır; yoksa tekrar "açık plan
+    // var" hatası alırdı.
+    if (collectNow && requestKey) {
+      const duplicate = await prisma.payment.findUnique({
+        where: { branchId_requestKey: { branchId: branch.branchId, requestKey } },
+        select: { id: true },
+      });
+      if (duplicate) {
+        return NextResponse.json({ error: "Bu plan ve peşinat zaten kaydedildi. Liste yenileniyor." }, { status: 409 });
+      }
+    }
+
+    // Borç denetimi, plan ve (varsa) peşinat tahsilatı TEK serializable işlemde:
+    // iki personel aynı anda aynı borca plan açarsa ikincisi reddedilir. Peşinat
+    // bugün alındıysa plan ile AYNI işlemde tahsilat kaydı açılır: kasa, defter,
+    // rapor ve hasta bakiyesi peşinatı görür. Taksitlere otomatik eşleştirme
+    // yapılmaz (peşinat taksit değildir). Aynı işlem anahtarıyla tekrar gelen
+    // istek tahsilatta çakışır ve plan da ikinci kez oluşmaz.
+    const result = await prisma.$transaction(async (tx) => {
+      await assertPlanFitsDebt(tx, {
+        institutionId,
+        branchId: branch.branchId,
+        patientId,
+        planRemaining: kalan,
+        collectedNow: collectNow ? pesnatD : null,
+      });
+      const created = await tx.taksitPlan.create({ data: planData, include: planInclude });
+      if (!collectNow || !pesinatMethod) return { created, paymentId: null as string | null };
+      const { payment } = await createIntegratedPayment({
+        tx,
+        institutionId,
+        branchId: branch.branchId,
+        requestKey,
+        patientId,
+        doctorId,
+        method: pesinatMethod,
+        amount: pesnatD.toNumber(),
+        description: `Peşinat — ${created.baslik || "taksit planı"}`,
+        posId: pesinatPosId,
+        integrateInstallments: false,
+      });
+      return { created, paymentId: payment.id };
+    }, { isolationLevel: "Serializable" });
+
+    if (result.paymentId) {
       await writeAudit(
         auth.user.id,
         "TAKSIT_PLAN_CREATE",
-        `${toplamBorc} TL taksit planı oluşturuldu; ${pesnatNum} TL peşinat tahsil edildi (${pesinatMethod}).`,
+        `${toplamBorcD.toFixed(2)} TL taksit planı oluşturuldu; ${pesnatD.toFixed(2)} TL peşinat tahsil edildi (${pesinatMethod}).`,
       );
       return NextResponse.json({ ...result.created, pesinatPaymentId: result.paymentId }, { status: 201 });
     }
 
-    const plan = await prisma.taksitPlan.create({ data: planData, include: planInclude });
-
-    await writeAudit(auth.user.id, "TAKSIT_PLAN_CREATE", `${toplamBorc} TL taksit planı oluşturuldu`);
-    return NextResponse.json(plan, { status: 201 });
+    await writeAudit(auth.user.id, "TAKSIT_PLAN_CREATE", `${toplamBorcD.toFixed(2)} TL taksit planı oluşturuldu`);
+    return NextResponse.json(result.created, { status: 201 });
   } catch (e) {
+    if (e instanceof PlanExceedsDebtError) {
+      return NextResponse.json({ error: e.message, code: "PLAN_EXCEEDS_DEBT", unplanned: e.unplanned }, { status: 409 });
+    }
+    if (e instanceof BusinessRuleError) {
+      return NextResponse.json({ error: e.message }, { status: e.status });
+    }
     if (e && typeof e === "object" && "code" in e && (e as { code?: string }).code === "P2002") {
       return NextResponse.json({ error: "Bu plan ve peşinat zaten kaydedildi. Liste yenileniyor." }, { status: 409 });
     }
     if (e && typeof e === "object" && "code" in e && (e as { code?: string }).code === "P2034") {
-      return NextResponse.json({ error: "Bu hasta için aynı anda başka bir ödeme işlendi. Lütfen tekrar deneyin." }, { status: 409 });
+      return NextResponse.json({ error: "Bu hasta için aynı anda başka bir işlem kaydedildi. Bilgileriniz korundu; yeniden deneyin." }, { status: 409 });
     }
     console.error("[taksit-plani POST] fallback:", e);
     return NextResponse.json({ error: "Taksit planı oluşturulamadı" }, { status: 503 });
   }
+}
+
+const MIN_INSTALLMENT = new Prisma.Decimal("0.01");
+/** Hasta dosyasının istemci hesabıyla olası 1 kuruşluk yuvarlama farkı reddedilmesin. */
+const DEBT_TOLERANCE = new Prisma.Decimal("0.01");
+
+/** Kuruşa yarım-yukarı yuvarlanmış Decimal tutar. */
+function toMoney(value: number) {
+  return new Prisma.Decimal(value).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
+}
+
+class PlanExceedsDebtError extends BusinessRuleError {
+  constructor(message: string, readonly unplanned: number) {
+    super(message, 409);
+  }
+}
+
+/**
+ * Aynı borç ikinci kez taksitlenmesin (canlı muhasebe H2: iki POST ile aynı
+ * 2.400 TL borca iki plan açılıyor, Taksitler toplamı alacağı iki kez
+ * sayıyordu). Kural istemcideki sınırla aynı ve tek kaynaktan
+ * (src/lib/patient-balance.ts):
+ *   taksitte olmayan borç = bakiye − açık planların (Süren) kalanı
+ *   yeni planın taksitlenen kısmı (toplam − peşinat) ≤ taksitte olmayan borç
+ *   − (peşinat bu işlemde tahsil ediliyorsa) peşinat
+ * Peşinat önceden tahsilat olarak girildiyse bakiye onu zaten düşmüştür.
+ */
+async function assertPlanFitsDebt(
+  tx: Prisma.TransactionClient,
+  input: { institutionId: string; branchId: string; patientId: string; planRemaining: Prisma.Decimal; collectedNow: Prisma.Decimal | null },
+) {
+  const scope = { institutionId: input.institutionId, branchId: input.branchId, patientIds: [input.patientId] };
+  const [balances, openPlans] = await Promise.all([
+    computePatientBalances(scope, tx),
+    loadOpenInstallmentSummaries(scope, tx),
+  ]);
+  const bakiye = balances.get(input.patientId)?.bakiye ?? new Prisma.Decimal(0);
+  const openRemaining = new Prisma.Decimal(openPlans.get(input.patientId)?.kalan ?? 0);
+  const unplanned = bakiye.minus(openRemaining);
+  const available = input.collectedNow ? unplanned.minus(input.collectedNow) : unplanned;
+  if (input.planRemaining.lte(available.plus(DEBT_TOLERANCE))) return;
+
+  const shown = Prisma.Decimal.max(0, unplanned).toNumber();
+  throw new PlanExceedsDebtError(
+    openRemaining.gt(0)
+      ? `Bu borç için açık taksit planı var; taksitte olmayan borç ${formatCurrency(shown)}.`
+      : `Taksitlendirilecek tutar kalan borcu (${formatCurrency(shown)}) aşamaz.`,
+    shown,
+  );
 }

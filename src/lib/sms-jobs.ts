@@ -114,6 +114,17 @@ export async function processSmsDispatchJob(job: SmsDispatchJob) {
     }
   }
 
+  // Değerlendirme mesajının tek işi bağlantıdır: bağlantı tanımlı değilken
+  // hastaya boş metin gidiyor ve kredi harcanıyordu (H-7). Hiçbir şey gönderilmez.
+  if (job.smsType === "ANKET" && !settings?.reviewLink?.trim()) {
+    return {
+      sent: 0,
+      failed: 0,
+      failedRecipients: [],
+      message: "Değerlendirme bağlantısı tanımlı değil; mesaj gönderilmedi. Bağlantıyı Ayarlar › Klinik sekmesinden ekleyin.",
+    };
+  }
+
   const requestedIds = [...new Set(job.appointmentIds)];
   const appointments = await prisma.appointment.findMany({
     where: {

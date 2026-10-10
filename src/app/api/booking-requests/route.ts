@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/api";
 import type { BookingRequestStatus } from "@prisma/client";
 import { requireActiveBranch } from "@/lib/branch-context";
+import { shouldHidePatientPhoneForUser } from "@/lib/patient-visibility-server";
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth("appointments:read");
@@ -28,7 +29,16 @@ export async function GET(req: NextRequest) {
       // acil talep listenin dibinde kalıyordu).
       orderBy: [{ preferredFrom: "asc" }, { createdAt: "asc" }],
       include: { doctor: { select: { id: true, fullName: true } } },
+      // Geçmiş (onaylanan/reddedilen) talepler için üst sınır; bekleyenler zaten az.
+      take: status && status !== "BEKLIYOR" ? 200 : undefined,
     });
+    // Hasta listesi ve bekleme listesiyle aynı kural: telefon görme yetkisi
+    // olmayan role talep sahibinin telefonu/TC'si gönderilmez. Önceden yalnız
+    // arayüz gizliyordu, yanıt maskesizdi (KVKK). Hasta eşleştirmesi sunucuda
+    // yapılır (GET /api/booking-requests/[id]).
+    if (await shouldHidePatientPhoneForUser(auth.user)) {
+      return NextResponse.json(requests.map((request) => ({ ...request, phone: "", tcNo: request.tcNo ? "***" : request.tcNo })));
+    }
     return NextResponse.json(requests);
   } catch (error) {
     console.error("[booking-requests GET]", error);

@@ -1,19 +1,21 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, Pause, Pencil, Play, Plus, Trash2 } from "lucide-react";
+import { Pause, Pencil, Play, Plus, Trash2 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Badge } from "@/components/ui/Badge";
+import { Callout } from "@/components/ui/Callout";
 import { Button, IconButton } from "@/components/ui/Button";
-import { Modal } from "@/components/ui/Modal";
+import { FormModal } from "@/components/ui/FormModal";
 import { Input, Textarea } from "@/components/ui/Input";
-import { FormErrorBanner, FormField } from "@/components/ui/FormField";
+import { FormField } from "@/components/ui/FormField";
 import { Switch } from "@/components/ui/Switch";
 import { EmptyValue, ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { createModuleEmptyIcon } from "@/components/ui/ModuleIcon";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
 import { shortDate } from "@/components/superadmin/sa-format";
+import { turkeyDateKey } from "@/lib/tz";
 import { errorMessage, isAbort, saGet, saSend } from "@/components/superadmin/sa-fetch";
 
 const AdsEmptyIcon = createModuleEmptyIcon("chart");
@@ -48,6 +50,8 @@ export default function AdsPage() {
   const [editing, setEditing] = useState<Ad | null>(null);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(EMPTY);
+  // Pencere açılırkenki değerler: kirli formda kapatırken onay sorulur.
+  const [initialForm, setInitialForm] = useState(EMPTY);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -74,16 +78,19 @@ export default function AdsPage() {
   const openCreate = () => {
     setEditing(null);
     setForm(EMPTY);
+    setInitialForm(EMPTY);
     setFormError(null);
     setOpen(true);
   };
 
   const openEdit = (ad: Ad) => {
     setEditing(ad);
-    setForm({
+    const next = {
       title: ad.title, content: ad.content, imageUrl: ad.imageUrl ?? "", ctaText: ad.ctaText ?? "", ctaUrl: ad.ctaUrl ?? "",
-      sponsorName: ad.sponsorName ?? "", startAt: ad.startAt ? ad.startAt.slice(0, 10) : "", endAt: ad.endAt ? ad.endAt.slice(0, 10) : "", isActive: ad.isActive,
-    });
+      sponsorName: ad.sponsorName ?? "", startAt: ad.startAt ? turkeyDateKey(new Date(ad.startAt)) : "", endAt: ad.endAt ? turkeyDateKey(new Date(ad.endAt)) : "", isActive: ad.isActive,
+    };
+    setForm(next);
+    setInitialForm(next);
     setFormError(null);
     setOpen(true);
   };
@@ -175,19 +182,20 @@ export default function AdsPage() {
 
   return (
     <section className="space-y-4">
-      <PageHeader icon="chart" title="Reklamlar" description="Sponsorlu içerik kayıtları." actions={<Button icon={Plus} onClick={openCreate}>Yeni reklam</Button>} />
+      <PageHeader icon="sa-ads" title="Reklamlar" description="Sponsorlu içerik kayıtları." actions={<Button icon={Plus} onClick={openCreate}>Yeni reklam</Button>} />
 
-      <p className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-        Klinik panelinde reklamların gösterildiği bir alan henüz yok: burada “aktif” görünen reklamlar hiçbir klinikte görünmez. Sponsorlara gösterim sözü vermeyin.
-      </p>
+      <Callout tone="warning" title="Reklamlar kliniklerde görünmüyor">
+        Klinik panelinde gösterim alanı henüz yok; “aktif” görünen reklamlar hiçbir klinikte çıkmaz. Sponsorlara gösterim sözü vermeyin.
+      </Callout>
 
       <ListTable<Ad>
         columns={columns}
         rows={ads}
         rowKey={(ad) => ad.id}
         loading={loading}
-        error={loadError}
+        // Veri varken yenileme hatası listeyi silmez; üstte şerit olarak görünür.
+        error={ads.length > 0 ? null : loadError}
+        staleError={ads.length > 0 ? loadError : null}
         onRetry={reload}
         emptyText="Reklam yok"
         emptyIcon={AdsEmptyIcon}
@@ -205,49 +213,44 @@ export default function AdsPage() {
         )}
       />
 
-      <Modal
+      <FormModal
         open={open}
         onClose={() => setOpen(false)}
         title={editing ? "Reklamı düzenle" : "Yeni reklam"}
         size="lg"
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => setOpen(false)}>Vazgeç</Button>
-            <Button loading={saving} onClick={() => void save()}>Kaydet</Button>
-          </>
-        }
+        onSubmit={() => save()}
+        submitting={saving}
+        error={formError}
+        isDirty={JSON.stringify(form) !== JSON.stringify(initialForm)}
       >
-        <div className="space-y-3">
-          <FormErrorBanner message={formError} />
-          <FormField label="Başlık" htmlFor="ad-title" required>
-            <Input id="ad-title" value={form.title} onChange={(event) => set("title", event.target.value)} />
+        <FormField label="Başlık" htmlFor="ad-title" required>
+          <Input id="ad-title" value={form.title} onChange={(event) => set("title", event.target.value)} />
+        </FormField>
+        <FormField label="Metin" htmlFor="ad-content" required>
+          <Textarea id="ad-content" rows={3} value={form.content} onChange={(event) => set("content", event.target.value)} />
+        </FormField>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <FormField label="Sponsor" htmlFor="ad-sponsor">
+            <Input id="ad-sponsor" value={form.sponsorName} onChange={(event) => set("sponsorName", event.target.value)} />
           </FormField>
-          <FormField label="Metin" htmlFor="ad-content" required>
-            <Textarea id="ad-content" rows={3} value={form.content} onChange={(event) => set("content", event.target.value)} />
+          <FormField label="Görsel adresi" htmlFor="ad-image">
+            <Input id="ad-image" value={form.imageUrl} onChange={(event) => set("imageUrl", event.target.value)} placeholder="https://" />
           </FormField>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <FormField label="Sponsor" htmlFor="ad-sponsor">
-              <Input id="ad-sponsor" value={form.sponsorName} onChange={(event) => set("sponsorName", event.target.value)} />
-            </FormField>
-            <FormField label="Görsel adresi" htmlFor="ad-image">
-              <Input id="ad-image" value={form.imageUrl} onChange={(event) => set("imageUrl", event.target.value)} placeholder="https://" />
-            </FormField>
-            <FormField label="Düğme yazısı" htmlFor="ad-cta-text">
-              <Input id="ad-cta-text" value={form.ctaText} onChange={(event) => set("ctaText", event.target.value)} placeholder="İncele" />
-            </FormField>
-            <FormField label="Düğme bağlantısı" htmlFor="ad-cta-url">
-              <Input id="ad-cta-url" value={form.ctaUrl} onChange={(event) => set("ctaUrl", event.target.value)} placeholder="https://" />
-            </FormField>
-            <FormField label="Başlangıç" htmlFor="ad-start">
-              <Input id="ad-start" type="date" value={form.startAt} onChange={(event) => set("startAt", event.target.value)} />
-            </FormField>
-            <FormField label="Bitiş" htmlFor="ad-end">
-              <Input id="ad-end" type="date" value={form.endAt} onChange={(event) => set("endAt", event.target.value)} />
-            </FormField>
-          </div>
-          <Switch checked={form.isActive} onChange={(checked) => set("isActive", checked)} label="Aktif" description="Gösterim alanı yapılana kadar aktif reklam da kliniklerde görünmez." />
+          <FormField label="Düğme yazısı" htmlFor="ad-cta-text">
+            <Input id="ad-cta-text" value={form.ctaText} onChange={(event) => set("ctaText", event.target.value)} placeholder="İncele" />
+          </FormField>
+          <FormField label="Düğme bağlantısı" htmlFor="ad-cta-url">
+            <Input id="ad-cta-url" value={form.ctaUrl} onChange={(event) => set("ctaUrl", event.target.value)} placeholder="https://" />
+          </FormField>
+          <FormField label="Başlangıç" htmlFor="ad-start">
+            <Input id="ad-start" type="date" value={form.startAt} onChange={(event) => set("startAt", event.target.value)} />
+          </FormField>
+          <FormField label="Bitiş" htmlFor="ad-end">
+            <Input id="ad-end" type="date" value={form.endAt} onChange={(event) => set("endAt", event.target.value)} />
+          </FormField>
         </div>
-      </Modal>
+        <Switch checked={form.isActive} onChange={(checked) => set("isActive", checked)} label="Kliniklerde gösterilsin" description="Gösterim alanı yapılana kadar açık reklam da kliniklerde görünmez." />
+      </FormModal>
     </section>
   );
 }

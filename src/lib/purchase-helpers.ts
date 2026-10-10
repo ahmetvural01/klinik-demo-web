@@ -74,7 +74,8 @@ export async function resolveOrCreateStockItem(
       category: normalizeCategory(item.category),
       unit: item.unit || "adet",
       quantity: 0,
-      minQuantity: 5,
+      // Satın almadan açılan kartta eşik bilinmiyor; 0 ile ürün teslimden önce "Kritik" görünmez.
+      minQuantity: 0,
       unitPrice: null,
       supplier: null,
     },

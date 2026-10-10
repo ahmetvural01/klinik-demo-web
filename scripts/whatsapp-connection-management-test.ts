@@ -82,19 +82,22 @@ async function main() {
     assert.equal(signupStart.status(), stateData.platformReady ? 200 : 503, "Yönetici gerçek Embedded Signup başlangıç noktasına ulaşmalı.");
 
     const page = await managerContext.newPage();
+    // Güncel ekran: eski "WhatsApp Bağlantısı" sekmesi yok; ?tab=baglanti adresi
+    // İletişim › "Kanal ve kredi" sekmesini açar ve "WhatsApp" bölümüne kaydırır.
+    // Bağlantı QR kodu / telefon numarasıyla kurulur (WhatsappWebConnect).
     await page.goto(`${baseUrl}/sms?tab=baglanti`, { waitUntil: "domcontentloaded", timeout: 30_000 });
-    const deepLinkedTab = page.getByRole("tab", { name: "WhatsApp Bağlantısı", exact: true });
+    const deepLinkedTab = page.getByRole("tab", { name: "Kanal ve kredi", exact: true });
     await deepLinkedTab.waitFor({ timeout: 30_000 });
-    await page.waitForFunction(() => document.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.includes("WhatsApp Bağlantısı"));
-    await page.getByText("WhatsApp Business numaranızı bağlayın", { exact: true }).waitFor({ timeout: 30_000 });
-    await page.getByText("API bilgisi, erişim anahtarı veya teknik kurulum gerekmez.", { exact: true }).waitFor();
-    const connectButton = page.getByRole("button", { name: "Numaramı Bağla", exact: true });
-    if (stateData.platformReady) {
-      assert.equal(await connectButton.isEnabled(), true, "Hazır platformda gerçek bağlantı düğmesi etkin olmalı.");
-    } else {
-      assert.equal(await connectButton.count(), 0, "Başlatılamayan bağlantı için çalışmayan bir düğme gösterilmemeli.");
-      await page.getByText("Numara bağlama hizmeti şu anda kullanılamıyor.", { exact: true }).waitFor();
-    }
+    await page.waitForFunction(() => document.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.includes("Kanal ve kredi"));
+    await page.locator("#whatsapp-baglanti").waitFor({ timeout: 30_000 });
+    await page.getByText("Kliniğinizin WhatsApp numarasını bağlayın; mesajlar bu numaradan gider. Kurumsal numara gerekmez.", { exact: true }).waitFor({ timeout: 30_000 });
+    await page.getByRole("radio", { name: "QR kodu okut", exact: true }).waitFor();
+    await page.getByRole("radio", { name: "Telefon numarasıyla bağla", exact: true }).waitFor();
+    // Bağlama düğmesi yöneticiye her zaman etkin görünür (Embedded Signup platform
+    // hazırlığına bağlı değil; sunucu kapalıysa tıklayınca nedenini söyler).
+    const connectButton = page.getByRole("button", { name: "QR kodu göster", exact: true });
+    await connectButton.waitFor();
+    assert.equal(await connectButton.isEnabled(), true, "Yönetici için bağlantı düğmesi etkin olmalı.");
     assert.equal(await page.getByLabel("WhatsApp Business Hesap ID").count(), 0);
     assert.equal(await page.getByLabel("Telefon Numarası ID").count(), 0);
     assert.equal(await page.getByText("Meta Uygulama Sırrı", { exact: true }).count(), 0);
@@ -131,14 +134,38 @@ async function main() {
     const connectedStateData = await connectedState.json();
     assert.equal(connectedStateData.provider?.connectionStatus, "CONNECTED");
     assert.equal(connectedStateData.provider?.isActive, true);
+    // Bağlı hesap kartı canlı WhatsApp oturumunun durumunu (/api/whatsapp/web)
+    // gösterir; testte canlı oturum kurulamayacağı için sunucunun bağlı oturumda
+    // döndürdüğü yanıt verilir ve ekranın onu nasıl gösterdiği denetlenir.
+    await page.route("**/api/whatsapp/web", async (route) => {
+      if (route.request().method() !== "GET") return route.continue();
+      return route.fulfill({
+        json: {
+          state: "CONNECTED",
+          method: "qr",
+          qrDataUrl: null,
+          pairingCode: null,
+          pairingExpired: false,
+          phone: "+90 532 123 45 67",
+          name: "Test Ağız ve Diş Sağlığı",
+          error: null,
+          notice: null,
+          connectedAt: new Date().toISOString(),
+          restrictedUntil: null,
+          dailySentCount: 3,
+          dailyLimit: 200,
+          canManage: true,
+        },
+      });
+    });
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(`${baseUrl}/sms?tab=baglanti`, { waitUntil: "domcontentloaded", timeout: 30_000 });
-    await page.waitForFunction(() => document.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.includes("WhatsApp Bağlantısı"));
-    await page.getByText("WhatsApp hesabınız kullanıma hazır.", { exact: true }).waitFor({ timeout: 30_000 });
-    await page.getByText("Test Ağız ve Diş Sağlığı", { exact: true }).waitFor();
+    await page.waitForFunction(() => document.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.includes("Kanal ve kredi"));
+    await page.locator("#whatsapp-baglanti").getByText("Bağlı", { exact: true }).waitFor({ timeout: 30_000 });
     await page.getByText("+90 532 123 45 67", { exact: true }).waitFor();
-    await page.getByRole("button", { name: "Test Mesajı Gönder", exact: true }).waitFor();
-    await page.getByRole("button", { name: "Bağlantıyı Kes", exact: true }).waitFor();
+    await page.getByText(/Test Ağız ve Diş Sağlığı/).first().waitFor();
+    await page.getByRole("button", { name: "Test mesajı gönder", exact: true }).waitFor();
+    await page.getByRole("button", { name: "Bağlantıyı kes", exact: true }).waitFor();
     assert.equal(await page.getByText(/WABA|Phone Number|Access Token|App Secret/).count(), 0, "Bağlı hesap ekranı teknik kimlik göstermemeli.");
     await page.screenshot({ path: path.join(outputDir, "manager-connected-account.png"), fullPage: true });
     await managerContext.close();

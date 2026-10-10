@@ -57,7 +57,15 @@ export async function GET() {
         defaultNotificationChannel: true,
         whatsappSmsFallback: true,
         paymentReminderSmsEnabled: true,
+        paymentReminderDaysBefore: true,
+        paymentReminderOnDueDate: true,
+        paymentReminderOverdueEnabled: true,
+        paymentReminderOverdueEveryDays: true,
         birthdaySmsEnabled: true,
+        appointmentChangeNotifyEnabled: true,
+        appointmentCancelNotifyEnabled: true,
+        smsDefaultInfo: true,
+        smsDefaultReminder: true,
         reviewLink: true,
       },
     }),
@@ -91,9 +99,25 @@ export async function GET() {
     whatsapp: whatsappVisible
       ? { connected: Boolean(provider), phone: provider?.displayPhoneNumber || null }
       : null,
+    // Otomatik mesajların GERÇEK durumu (salt okunur): ayar okuma yetkisi
+    // olmayan roller (BANKO, DOKTOR...) önceden değişiklik/iptal anahtarlarını
+    // gerçek değerden bağımsız "açık" görüyordu. Varsayılanlar şemadakiyle aynı.
     automations: {
       paymentReminders: setting?.paymentReminderSmsEnabled ?? false,
       birthday: setting?.birthdaySmsEnabled ?? false,
+      appointmentChange: setting?.appointmentChangeNotifyEnabled ?? true,
+      appointmentCancel: setting?.appointmentCancelNotifyEnabled ?? true,
+      paymentSchedule: {
+        daysBefore: (setting?.paymentReminderDaysBefore ?? [3])
+          .filter((day) => Number.isInteger(day) && day >= 1 && day <= 30)
+          .sort((a, b) => b - a),
+        onDueDate: setting?.paymentReminderOnDueDate ?? true,
+        overdueEnabled: setting?.paymentReminderOverdueEnabled ?? true,
+        overdueEveryDays: setting?.paymentReminderOverdueEveryDays ?? 3,
+      },
+      // Randevu formunda bilgilendirme/hatırlatma kutusunun varsayılanı.
+      smsDefaultInfo: setting?.smsDefaultInfo ?? true,
+      smsDefaultReminder: setting?.smsDefaultReminder ?? false,
     },
     defaultChannel: setting?.defaultNotificationChannel === "WHATSAPP" ? "WHATSAPP" : "SMS",
     whatsappSmsFallback: setting?.whatsappSmsFallback ?? true,

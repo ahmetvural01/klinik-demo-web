@@ -10,6 +10,8 @@ import { superadminClinicLogin } from "@/lib/platform-auth";
 
 const MAX_ATTEMPT = 5;
 const BLOCK_MINUTES = 15;
+// Formda "kullanıcı adı" alanı yok; hangi alanın yanlış olduğu bilerek söylenmez.
+const LOGIN_FAILED_MESSAGE = "Kurum adı, TC kimlik no veya şifre hatalı.";
 
 function getClientIp(request: NextRequest) {
   return getClientIpFromHeaders(request.headers);
@@ -42,9 +44,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Geçersiz giriş verisi" }, { status: 400 });
   }
 
-  const institutionInput = parsed.data.institution.toLowerCase().trim();
+  // Arama yalnız trim ile yapılır: toLowerCase() "İ"yi birleşik noktalı "i̇" yapıp
+  // büyük/küçük harf duyarsız eşleşmeyi bozuyordu. Deneme anahtarı Türkçe küçük harfle.
+  const institutionInput = parsed.data.institution.trim();
+  const institutionKey = institutionInput.toLocaleLowerCase("tr-TR");
   const rememberMe = parsed.data.rememberMe ?? false;
-  const attemptKey = getAttemptKey(request, institutionInput, parsed.data.identityNo);
+  const attemptKey = getAttemptKey(request, institutionKey, parsed.data.identityNo);
 
   try {
     // Platform kimliği kurum içindeki aynı kimlikli kayda düşmemeli.
@@ -65,7 +70,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Platform hesabı bulunmayan kimlikler yalnız gerçek kurum adıyla giriş yapar.
-    if (institutionInput === "superadmin" || institutionInput === "admin") {
+    const reservedName = institutionInput.toLowerCase();
+    if (reservedName === "superadmin" || reservedName === "admin") {
       return NextResponse.json({ message: "Bu hesapla klinik giriş ekranı kullanılamaz." }, { status: 400 });
     }
 
@@ -84,7 +90,7 @@ export async function POST(request: NextRequest) {
     if (!institution) {
       await recordFailure(attemptKey, BLOCK_MINUTES * 60_000);
       metricIncrement("auth_failures_total");
-      return NextResponse.json({ message: "Kullanıcı adı veya şifre hatalı" }, { status: 401 });
+      return NextResponse.json({ message: LOGIN_FAILED_MESSAGE }, { status: 401 });
     }
 
     if (!institution.isActive) {
@@ -115,7 +121,7 @@ export async function POST(request: NextRequest) {
     if (!user) {
       await recordFailure(attemptKey, BLOCK_MINUTES * 60_000);
       metricIncrement("auth_failures_total");
-      return NextResponse.json({ message: "Kullanıcı adı veya şifre hatalı" }, { status: 401 });
+      return NextResponse.json({ message: LOGIN_FAILED_MESSAGE }, { status: 401 });
     }
 
     const isValid = await verifyPassword(parsed.data.password, user.passwordHash);
@@ -123,7 +129,7 @@ export async function POST(request: NextRequest) {
     if (!isValid) {
       await recordFailure(attemptKey, BLOCK_MINUTES * 60_000);
       metricIncrement("auth_failures_total");
-      return NextResponse.json({ message: "Kullanıcı adı veya şifre hatalı" }, { status: 401 });
+      return NextResponse.json({ message: LOGIN_FAILED_MESSAGE }, { status: 401 });
     }
 
     if (user.branchMemberships.length === 0) {

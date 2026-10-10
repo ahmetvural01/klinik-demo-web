@@ -3,6 +3,9 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { requireActiveBranch } from "@/lib/branch-context";
 
+// Önceden "bozuk-eposta" gibi değerler kabul ediliyordu.
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 export async function GET(req: NextRequest, props: { params: Promise<{ id: string; kid: string }> }) {
   const params = await props.params;
   try {
@@ -42,6 +45,9 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     const { ad, unvan, email, telefon, rol, isPrimary } = await req.json();
     if (ad !== undefined && (typeof ad !== "string" || !ad.trim())) {
       return NextResponse.json({ error: "Yetkili kişinin adı zorunlu" }, { status: 400 });
+    }
+    if (typeof email === "string" && email.trim() && !EMAIL_PATTERN.test(email.trim())) {
+      return NextResponse.json({ error: "E-posta adresi geçerli değil (ör. ad@firma.com)." }, { status: 400 });
     }
     const existing = await (prisma as any).firmaKontakt.findFirst({
       where: {

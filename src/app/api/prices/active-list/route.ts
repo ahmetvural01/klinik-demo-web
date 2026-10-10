@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { requirePriceRead } from "@/app/api/prices/price-access";
 
 export async function GET() {
-  const auth = await requireAuth("prices:read");
+  // Tedavi ekleyen (examinations:write) kullanıcı da hangi listenin önerildiğini okur (plan §4).
+  const auth = await requirePriceRead();
   if (auth.error) return auth.error;
   if (!auth.user.institutionId) {
     return NextResponse.json({ message: "Kurum bilgisi bulunamadı." }, { status: 403 });

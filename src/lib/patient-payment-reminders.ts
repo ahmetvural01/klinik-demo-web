@@ -3,15 +3,20 @@ import { renderCommunicationTemplate, resolveSmsTemplate } from "@/lib/sms-templ
 import { dispatchPatientMessage } from "@/lib/notification-dispatch";
 import { isoLocalDate } from "@/lib/celebration-days";
 import { operationalInstitutionWhere } from "@/lib/operational-state";
+import { isWithinPatientMessageWindow } from "@/lib/appointment-reminders";
 
 // Hastanın taksit/ödeme vadesi yaklaştığında veya geciktiğinde SMS hatırlatması
 // — süperadmin'in kurumlara gönderdiği fatura hatırlatmasından (billing-reminders.ts)
 // TAMAMEN AYRI bir özellik: bu, kliniğin KENDİ hastasına gönderdiği bir SMS'tir
-// ve klinik Ayarlar > SMS ekranından açıp kapatabilir (Setting.paymentReminderSmsEnabled).
+// ve klinik İletişim > Otomatik mesajlar'dan açıp kapatabilir (Setting.paymentReminderSmsEnabled).
 // Varsayılan KAPALI — SMS kurumun kendi bakiyesinden düşer, bilinçli açılmalı.
 
-const DEFAULT_APPROACHING_WINDOW_DAYS = 3;
 const MIN_HOURS_BETWEEN_REMINDERS = 20;
+// İlk taksit ödenince ya da bir taksit gecikince plan DEVAM_EDIYOR olur
+// (taksit-plani/[id]/taksitler/[tid], taksit-plani/mark-gecikti); önceden
+// yalnız AKTIF planlara bakıldığı için kalan taksitlere ve gecikene hiç
+// hatırlatma gitmiyordu. TAMAMLANDI/IPTAL planlar hariç.
+const OPEN_PLAN_STATUSES = ["AKTIF", "DEVAM_EDIYOR"] as const;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 function fmtDate(d: Date) {
@@ -31,6 +36,11 @@ export async function runPatientPaymentReminderSweep(): Promise<{
   skippedNoBalance: number;
 }> {
   const now = new Date();
+  // Saatlik tarama gün değişince gece (sunucu UTC ise Türkiye saatiyle ~03:00)
+  // gönderiyordu; hasta mesajı yalnız 09:00–20:00 arası gider.
+  if (!isWithinPatientMessageWindow(now)) {
+    return { institutionsChecked: 0, checked: 0, sent: 0, failed: 0, skippedRecent: 0, skippedNoBalance: 0 };
+  }
   const cutoff = new Date(now.getTime() - MIN_HOURS_BETWEEN_REMINDERS * 60 * 60 * 1000);
 
   const settings = await prisma.setting.findMany({
@@ -39,7 +49,6 @@ export async function runPatientPaymentReminderSweep(): Promise<{
       institutionId: true,
       institutionName: true,
       institutionPhone: true,
-      paymentReminderWindowDays: true,
       paymentReminderDaysBefore: true,
       paymentReminderOnDueDate: true,
       paymentReminderOverdueEnabled: true,
@@ -64,9 +73,12 @@ export async function runPatientPaymentReminderSweep(): Promise<{
     });
     if (!institution) continue;
 
-    const daysBefore = setting.paymentReminderDaysBefore.length > 0
-      ? setting.paymentReminderDaysBefore
-      : [setting.paymentReminderWindowDays ?? DEFAULT_APPROACHING_WINDOW_DAYS];
+    // Boş liste = "vadesi yaklaşan" hatırlatması kapalı. Sütun eklenirken eski
+    // tek gün değeriyle dolduruldu (migration 20260809150000) ve varsayılanı [3];
+    // boş liste yalnız klinik tüm günleri kaldırınca oluşur. Önceden boş liste
+    // yine paymentReminderWindowDays'e düşüyor, ekranda "kapalı" görünen
+    // hatırlatma gitmeye devam ediyordu.
+    const daysBefore = setting.paymentReminderDaysBefore.filter((day) => day >= 1 && day <= 30);
     const windowDays = Math.max(...daysBefore, 0);
     const windowEnd = new Date(now.getTime() + windowDays * DAY_MS);
 
@@ -76,7 +88,7 @@ export async function runPatientPaymentReminderSweep(): Promise<{
         vadeDate: { lte: windowEnd },
         branch: { isActive: true },
         plan: {
-          status: "AKTIF",
+          status: { in: [...OPEN_PLAN_STATUSES] },
           patient: { institutionId: institution.id, archivedAt: null, homeBranch: { isActive: true } },
         },
       },

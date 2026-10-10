@@ -4,7 +4,7 @@ import { requireAuth, writeAudit } from "@/lib/api";
 import { requireActiveBranch } from "@/lib/branch-context";
 import { z } from "zod";
 import { patientFollowUpEventCreateSchema } from "@/lib/validators";
-import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
+import { shouldHidePatientPhoneForUser } from "@/lib/patient-visibility-server";
 import { FOLLOW_UP_INCLUDE, maskFollowUpPhone } from "../../follow-up-include";
 
 // "Görüşme kaydet" tek adımda hem görüşmeyi geçmişe yazar hem takibin
@@ -158,7 +158,7 @@ export async function POST(request: NextRequest, props: Params) {
       "PATIENT_FOLLOW_UP_EVENT_CREATE",
       `${followUp.patient.fullName} için görüşme kaydedildi${outcome?.close ? " ve takip kapatıldı" : ""}`,
     );
-    const hidePhone = updatedFollowUp ? await shouldHidePatientPhoneForRole(auth.user.role) : false;
+    const hidePhone = updatedFollowUp ? await shouldHidePatientPhoneForUser(auth.user) : false;
     return NextResponse.json(
       { ...event, followUp: updatedFollowUp ? maskFollowUpPhone(updatedFollowUp, hidePhone) : null },
       { status: 201 },

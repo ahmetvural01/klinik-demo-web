@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
   const password = body.password || "";
 
   if (!identityNo || !password) {
-    return NextResponse.json({ message: "TC kimlik ve sifre zorunlu" }, { status: 400 });
+    return NextResponse.json({ message: "TC kimlik no ve şifre zorunlu." }, { status: 400 });
   }
 
   // Şifre, deneme kilidi ve hata mesajları klinik giriş ekranındaki süperadmin
@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
   // açıksa şifre doğrulaması yeterli değildir, kod da istenir.
   if (user.twoFactorEnabled) return startPendingTwoFactor(user);
 
-  const modules = await startPlatformSession(user, "Superadmin sisteme giris yapti");
+  const modules = await startPlatformSession(user, "Süperadmin sisteme giriş yaptı");
   return NextResponse.json({
     id: user.id,
     fullName: user.fullName,

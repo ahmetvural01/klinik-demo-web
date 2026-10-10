@@ -1,7 +1,15 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
-import { checkWorkingHoursInterval, normalizeDailySchedules, validateWorkingHoursSettings } from "@/lib/working-hours-core";
+import { FALLBACK_DAILY_SCHEDULES, checkWorkingHoursInterval, normalizeDailySchedules, validateWorkingHoursSettings } from "@/lib/working-hours-core";
+import {
+  REVIEW_LINK_MESSAGE,
+  normalizeClinicAddress,
+  normalizeClinicName,
+  normalizeClinicPhone,
+  normalizeWebAddress,
+  type FieldResult,
+} from "./clinic-contact";
 
 function fmt(v: unknown): string {
   if (v === null || v === undefined || v === "") return "-";
@@ -9,10 +17,19 @@ function fmt(v: unknown): string {
   return String(v);
 }
 
+// Takvim saat adımı en fazla 120 dk'dır (randevu ekranı daha büyüğünü 120'ye
+// indiriyordu); yeni kayıtta sınırlar takvimle aynı. Eskiden kaydedilmiş daha
+// büyük bir değer, bu alan gönderilmedikçe olduğu gibi kalır.
+const APPOINTMENT_INTERVAL_MIN = 5;
+const APPOINTMENT_INTERVAL_MAX = 120;
+
 const SETTING_LABELS: Record<string, string> = {
   institutionName: "Kurum Adı",
   institutionPhone: "Kurum Telefonu",
-  appointmentDuration: "Randevu Süresi (dk)",
+  institutionAddress: "Kurum Adresi",
+  institutionWebsite: "Web Sitesi",
+  reviewLink: "Değerlendirme Bağlantısı",
+  appointmentDuration: "Randevu Aralığı (dk)",
   smsDefaultInfo: "SMS Bilgilendirme",
   smsDefaultReminder: "SMS Hatırlatma",
   smsDefaultSurvey: "SMS Anket",
@@ -61,13 +78,23 @@ function validateLogoUrl(value: unknown): string | null {
   return logoUrl;
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const auth = await requireAuth("settings:read");
     if (auth.error) return auth.error;
 
     if (!auth.user.institutionId) {
       return NextResponse.json({ message: "Yalnızca klinik kullanıcıları ayarlara erişebilir." }, { status: 403 });
+    }
+
+    // Ayarlar > Randevu sekmesi yalnız randevu aralığını okur; tam yanıt
+    // kurum logosunu (≤ ~530 KB) da taşıdığı için sekme ona yüklenmez.
+    if (request.nextUrl.searchParams.get("fields") === "randevu") {
+      const setting = await prisma.setting.findUnique({
+        where: { institutionId: auth.user.institutionId },
+        select: { appointmentDuration: true },
+      });
+      return NextResponse.json({ appointmentDuration: setting?.appointmentDuration ?? 15 });
     }
 
     const [settings, institution] = await Promise.all([
@@ -141,6 +168,28 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ message: "Logo PNG, JPG, WEBP veya GIF biçiminde olmalı; güvenli bir HTTPS bağlantısı ya da 400 KB altı bir dosya kullanın." }, { status: 400 });
     }
 
+    // Klinik iletişim alanları yalnız gönderildiyse denetlenir (İletişim
+    // ekranı yalnız kendi alanlarını gönderir) ve ekranla aynı kuralla
+    // biçimlenir (bkz. ./clinic-contact).
+    const contactRules: Array<[key: "institutionName" | "institutionPhone" | "institutionAddress" | "institutionWebsite" | "reviewLink", check: (value: string) => FieldResult]> = [
+      ["institutionName", normalizeClinicName],
+      ["institutionPhone", normalizeClinicPhone],
+      ["institutionAddress", normalizeClinicAddress],
+      ["institutionWebsite", (value) => normalizeWebAddress(value)],
+      ["reviewLink", (value) => normalizeWebAddress(value, REVIEW_LINK_MESSAGE)],
+    ];
+    for (const [key, check] of contactRules) {
+      if (data[key] === undefined) continue;
+      if (data[key] !== null && typeof data[key] !== "string") {
+        return NextResponse.json({ message: "Klinik bilgileri geçersiz." }, { status: 400 });
+      }
+      const result = check((data[key] as string | null) ?? "");
+      if (!result.ok) return NextResponse.json({ message: result.message, field: key }, { status: 400 });
+      // Boş değer "" olarak kalır (null değil): GET boş adresi kurum kaydındaki
+      // eski adresle doldurmasın, kullanıcı alanı gerçekten temizleyebilsin.
+      data[key] = result.value;
+    }
+
     const institution = await prisma.institution.findUnique({
       where: { id: institutionId },
     });
@@ -153,9 +202,15 @@ export async function PUT(request: NextRequest) {
       where: { institutionId },
     });
 
-    const duration = Number(data.appointmentDuration ?? current?.appointmentDuration ?? 15);
-    if (!Number.isInteger(duration) || duration < 5 || duration > 240) {
-      return NextResponse.json({ message: "Randevu süresi 5 ile 240 dakika arasında olmalıdır." }, { status: 400 });
+    // Randevu aralığı (takvimin saat adımı) yalnız gönderildiyse denetlenir;
+    // önceden her kayıtta (ör. yalnız SMS anahtarı değişirken) kayıtlı değer de
+    // denetleniyordu ve eski geçersiz bir değer ilgisiz ayarları kilitliyordu.
+    if (data.appointmentDuration !== undefined) {
+      const duration = Number(data.appointmentDuration);
+      if (!Number.isInteger(duration) || duration < APPOINTMENT_INTERVAL_MIN || duration > APPOINTMENT_INTERVAL_MAX) {
+        return NextResponse.json({ message: `Randevu aralığı ${APPOINTMENT_INTERVAL_MIN} ile ${APPOINTMENT_INTERVAL_MAX} dakika arasında olmalıdır.` }, { status: 400 });
+      }
+      data.appointmentDuration = duration;
     }
 
     // Yalnızca istemci tarafında (sms/page.tsx) sınırlanıyordu — doğrudan API
@@ -186,28 +241,39 @@ export async function PUT(request: NextRequest) {
       data.paymentReminderOverdueEveryDays = overdueEveryDays;
     }
 
+    // Çalışma saatleri yalnız bu istekte değiştiyse denetlenir. Önceden her
+    // kısmi kayıtta (SMS anahtarı, randevu aralığı, vade günü...) kayıtlı dizi
+    // de denetleniyordu; çalışma saati hiç kaydedilmemiş kurumda (şema
+    // varsayılanı "[]") bütün bu kayıtlar "yedi gün tanımlanmalı" diye 400
+    // dönüyordu. Kayıtlı dizi boşsa takvimle aynı varsayılan hafta kullanılır
+    // (bkz. lib/working-hours.ts).
+    const scheduleTouched = data.dailySchedules !== undefined || data.lunchStart !== undefined || data.lunchEnd !== undefined;
     let parsedDailySchedules: unknown = [];
-    const dailySchedulesRaw = data.dailySchedules ?? current?.dailySchedules ?? "[]";
-    try {
-      parsedDailySchedules =
-        typeof dailySchedulesRaw === "string" ? JSON.parse(dailySchedulesRaw) : dailySchedulesRaw;
-    } catch {
-      return NextResponse.json({ message: "Çalışma günü ayarları geçerli bir biçimde değil." }, { status: 400 });
-    }
-    const workingHoursError = validateWorkingHoursSettings({
-      dailySchedules: parsedDailySchedules,
-      lunchStart: data.lunchStart ?? current?.lunchStart ?? "",
-      lunchEnd: data.lunchEnd ?? current?.lunchEnd ?? "",
-    });
-    if (workingHoursError) {
-      return NextResponse.json({ message: workingHoursError }, { status: 400 });
+    if (scheduleTouched) {
+      const dailySchedulesRaw = data.dailySchedules ?? current?.dailySchedules ?? "[]";
+      try {
+        parsedDailySchedules =
+          typeof dailySchedulesRaw === "string" ? JSON.parse(dailySchedulesRaw) : dailySchedulesRaw;
+      } catch {
+        return NextResponse.json({ message: "Çalışma günü ayarları geçerli bir biçimde değil." }, { status: 400 });
+      }
+      if (data.dailySchedules === undefined && Array.isArray(parsedDailySchedules) && parsedDailySchedules.length === 0) {
+        parsedDailySchedules = FALLBACK_DAILY_SCHEDULES;
+      }
+      const workingHoursError = validateWorkingHoursSettings({
+        dailySchedules: parsedDailySchedules,
+        lunchStart: data.lunchStart ?? current?.lunchStart ?? "",
+        lunchEnd: data.lunchEnd ?? current?.lunchEnd ?? "",
+      });
+      if (workingHoursError) {
+        return NextResponse.json({ message: workingHoursError }, { status: 400 });
+      }
     }
 
     // Çalışma saatleri daraltılır, öğle arası eklenir ya da bir gün kapatılırsa
     // gelecekteki randevular sessizce kapalı saatte kalmasın (personel mesaisi
     // için aynı kontrol api/staff/[id]'de var). Kullanıcı bilerek onaylarsa
     // (allowOutsideAppointments) yine kaydedilir; randevular silinmez.
-    const scheduleTouched = data.dailySchedules !== undefined || data.lunchStart !== undefined || data.lunchEnd !== undefined;
     if (scheduleTouched && (body as Record<string, unknown>).allowOutsideAppointments !== true) {
       let currentSchedulesRaw: unknown = [];
       try {
@@ -277,6 +343,13 @@ export async function PUT(request: NextRequest) {
   if (requestedLogo !== undefined && (institution.logo || "") !== (logoUrl || "")) {
     beforeParts.push(`Kurum Logosu: ${institution.logo ? "Tanımlı" : "Yok"}`);
     afterParts.push(`Kurum Logosu: ${logoUrl ? "Tanımlı" : "Kaldırıldı"}`);
+  }
+  // Çalışma saati değişikliği önceden kayıtta "Alan değişikliği yok" görünüyordu.
+  if (scheduleTouched && ((current?.dailySchedules || "[]") !== updated.dailySchedules
+    || (current?.lunchStart || "") !== updated.lunchStart
+    || (current?.lunchEnd || "") !== updated.lunchEnd)) {
+    beforeParts.push("Çalışma Saatleri: önceki düzen");
+    afterParts.push("Çalışma Saatleri: güncellendi");
   }
 
   const detail = [

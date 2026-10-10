@@ -2,6 +2,9 @@ import { requireAuth, writeAudit } from "@/lib/api";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
+import { isValidTurkishIdentityNumber } from "@/lib/tc-kimlik";
+
+const VALID_ROLES = new Set(["YONETICI", "DOKTOR", "ASISTAN", "BANKO", "MUHASEBE"]);
 
 // GET /api/superadmin/institutions/[id]/users - Klinik kullanıcılarını listele
 export async function GET(_req: NextRequest, props: { params: Promise<{ id: string }> }) {
@@ -38,10 +41,31 @@ export async function POST(request: NextRequest, props: { params: Promise<{ id: 
   if (auth.error) return auth.error;
   if (auth.user.role !== "SUPERADMIN") return NextResponse.json({ message: "Yetki yok" }, { status: 403 });
 
-  const body = await request.json();
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ message: "Geçersiz istek" }, { status: 400 });
+  }
 
   if (!body.fullName || !body.identityNo || !body.password) {
     return NextResponse.json({ message: "Ad, TC kimlik no ve şifre zorunlu" }, { status: 400 });
+  }
+  // Önceden rol, şifre uzunluğu ve TC doğrulanmadan Prisma'ya veriliyordu:
+  // geçersiz rol ham bir 500 hatası, kısa şifre ise zayıf hesap üretiyordu.
+  // Kurallar PUT ucu ve klinik Personel ekranıyla aynı.
+  if (typeof body.fullName !== "string" || !body.fullName.trim() || body.fullName.trim().length > 120) {
+    return NextResponse.json({ message: "Ad soyad 1-120 karakter olmalı" }, { status: 400 });
+  }
+  if (body.role !== undefined && !VALID_ROLES.has(body.role)) {
+    return NextResponse.json({ message: "Geçersiz kurum kullanıcı rolü" }, { status: 400 });
+  }
+  if (typeof body.password !== "string" || body.password.length < 8 || body.password.length > 72) {
+    return NextResponse.json({ message: "Şifre 8-72 karakter olmalı" }, { status: 400 });
+  }
+  if (!isValidTurkishIdentityNumber(String(body.identityNo))) {
+    return NextResponse.json({ message: "TC kimlik numarası geçerli değil" }, { status: 400 });
+  }
+  if (body.email && (typeof body.email !== "string" || !/^\S+@\S+\.\S+$/.test(body.email.trim()))) {
+    return NextResponse.json({ message: "Geçerli bir e-posta adresi girin" }, { status: 400 });
   }
 
   const institution = await prisma.institution.findUnique({
@@ -88,14 +112,19 @@ export async function POST(request: NextRequest, props: { params: Promise<{ id: 
   if (existing) {
     return NextResponse.json({ message: "Bu TC kimlik no bu kurumda zaten kayıtlı" }, { status: 400 });
   }
+  // E-posta sistem genelinde benzersiz; önceden çakışma ham 500 hatasıydı.
+  const email = typeof body.email === "string" && body.email.trim() ? body.email.trim().toLowerCase() : null;
+  if (email && await prisma.user.findFirst({ where: { email }, select: { id: true } })) {
+    return NextResponse.json({ message: "Bu e-posta başka bir kullanıcıda kayıtlı" }, { status: 400 });
+  }
 
   const passwordHash = await bcrypt.hash(body.password, 10);
 
   const user = await prisma.user.create({
     data: {
-      fullName: body.fullName,
+      fullName: body.fullName.trim(),
       identityNo: body.identityNo,
-      email: body.email || null,
+      email,
       passwordHash,
       role: body.role || "DOKTOR",
       institutionId: params.id,
@@ -104,11 +133,11 @@ export async function POST(request: NextRequest, props: { params: Promise<{ id: 
         create: { branchId: headquartersBranchId, isPrimary: true },
       },
     },
+    // TC kimlik no yanıtta dönmez (klinik dosyasıyla aynı KVKK kuralı).
     select: {
       id: true,
       fullName: true,
       email: true,
-      identityNo: true,
       role: true,
       isActive: true,
       createdAt: true,

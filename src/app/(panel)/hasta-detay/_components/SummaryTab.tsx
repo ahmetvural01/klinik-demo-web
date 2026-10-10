@@ -1,33 +1,20 @@
 "use client";
 
-import { useMemo, useState, type ComponentType, type ReactNode } from "react";
-import {
-  CalendarClock,
-  CalendarPlus,
-  ClipboardList,
-  FlaskConical,
-  HeartPulse,
-  MessageSquareText,
-  Pencil,
-  Stethoscope,
-  Wallet,
-} from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
+import { CalendarClock, CalendarPlus, FlaskConical, Stethoscope, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/Button";
-import { Badge } from "@/components/ui/Badge";
-import { FormField } from "@/components/ui/FormField";
+import { Section } from "@/components/ui/Section";
+import { DescriptionList, type DescriptionItem } from "@/components/ui/DescriptionList";
+import { IconFrame, type IconAccent } from "@/components/ui/IconFrame";
 import { Textarea } from "@/components/ui/Input";
 import { formatDateText } from "@/components/ui/Money";
-import { formatPhoneNumber } from "@/lib/format";
 import { showToastSafe } from "@/lib/toast-client";
 import { getOrderSummary, LAB_STAGE_LABEL, stageDetail } from "@/lib/lab-workflow";
 import { usePatientFile } from "./PatientFileContext";
 import {
-  ageFrom,
   errorMessageOf,
-  genderLabel,
   getItemDueDate,
   getItemRemaining,
-  healthFlagsOf,
   isOpenInstallment,
   isPendingExam,
   money,
@@ -35,6 +22,7 @@ import {
   type SmsPreference,
 } from "./patient-file-shared";
 import { SmsConsentCard } from "./SmsConsentCard";
+import { TasksSection } from "./TasksSection";
 
 type NextStep = {
   id: string;
@@ -45,11 +33,11 @@ type NextStep = {
   action?: { label: string; onClick?: () => void; href?: string };
 };
 
-const TONE_ICON: Record<NextStep["tone"], string> = {
-  critical: "bg-red-50 text-red-600",
-  warning: "bg-amber-50 text-amber-600",
-  info: "bg-primary/10 text-primary",
-  neutral: "bg-slate-100 text-slate-500",
+const TONE_ACCENT: Record<NextStep["tone"], IconAccent> = {
+  critical: "rose",
+  warning: "amber",
+  info: "teal",
+  neutral: "neutral",
 };
 
 type NoteEntry = { at: string; author: string; text: string };
@@ -74,28 +62,18 @@ function parseNotes(notes?: string | null): NoteEntry[] {
     .reverse();
 }
 
-function Card({ title, action, children, className = "" }: { title: string; action?: ReactNode; children: ReactNode; className?: string }) {
-  return (
-    <section className={`ui-surface p-4 sm:p-5 ${className}`} aria-label={title}>
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <h2 className="text-base font-bold text-slate-900">{title}</h2>
-        {action}
-      </div>
-      {children}
-    </section>
-  );
+function SubHeading({ children }: { children: ReactNode }) {
+  return <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">{children}</h3>;
 }
 
-function InfoRow({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] gap-2 py-1.5 text-sm">
-      <dt className="text-slate-500">{label}</dt>
-      <dd className="min-w-0 break-words font-medium text-slate-800">{children}</dd>
-    </div>
-  );
-}
-
-export function SummaryTab({ currentUserName }: { currentUserName: string }) {
+/**
+ * Özet: bankonun "bu hasta için bugün ne yapmalıyım" sorusu (Yapılacaklar),
+ * notlar, hastaya bağlı görevler ve başlıkta olmayan hasta bilgileri. Kimlik
+ * (yaş, cinsiyet, telefon), risk rozetleri ve borç başlıkta TEK yerde durur;
+ * burada tekrar edilmez. Bilgileri düzenlemek için tek giriş başlıktaki
+ * "Düzenle"dir.
+ */
+export function SummaryTab() {
   const {
     data,
     patientId,
@@ -103,91 +81,99 @@ export function SummaryTab({ currentUserName }: { currentUserName: string }) {
     can,
     canOpenTab,
     selectTab,
-    hidePatientPhone,
     canEditPatient,
     balance,
-    clinicTasks,
     openPayment,
-    openEditPatient,
     appointmentHref,
+    openEditPatient,
+    intent,
+    clearIntent,
   } = usePatientFile();
   const [noteText, setNoteText] = useState("");
   const [noteSaving, setNoteSaving] = useState(false);
   const [noteError, setNoteError] = useState("");
   const [showAllNotes, setShowAllNotes] = useState(false);
+  const noteRef = useRef<HTMLTextAreaElement>(null);
 
-  const healthFlags = healthFlagsOf(data);
+  // "İşlem ekle > Not ekle": not kutusuna odaklan.
+  useEffect(() => {
+    if (intent !== "note") return;
+    clearIntent();
+    noteRef.current?.scrollIntoView({ block: "center" });
+    noteRef.current?.focus();
+  }, [intent, clearIntent]);
+
   const notes = useMemo(() => parseNotes(data.notes), [data.notes]);
-  const age = ageFrom(data.birthDate);
 
   const nextSteps = useMemo<NextStep[]>(() => {
     const steps: NextStep[] = [];
     const now = Date.now();
 
     if (canOpenTab("odeme")) {
-      const overdue = data.taksitPlanlari
-        .flatMap((plan) => plan.taksitler || [])
-        .filter((item) => isOpenInstallment(item) && item.status === "GECIKTI");
+      const overduePlans = data.taksitPlanlari.filter((plan) => (plan.taksitler || []).some((item) => isOpenInstallment(item) && item.status === "GECIKTI"));
+      const overdue = overduePlans.flatMap((plan) => plan.taksitler || []).filter((item) => isOpenInstallment(item) && item.status === "GECIKTI");
       if (overdue.length > 0) {
         const overdueTotal = roundMoney(overdue.reduce((sum, item) => sum + getItemRemaining(item), 0));
         const oldest = overdue.map(getItemDueDate).sort()[0];
+        const planDoctor = overduePlans.find((plan) => plan.doctor?.fullName)?.doctor?.fullName;
         steps.push({
           id: "overdue",
           icon: Wallet,
           tone: "critical",
           title: `${overdue.length} taksit gecikti · ${money(overdueTotal)}`,
-          detail: oldest ? `En eski vade ${formatDateText(oldest)}. Tahsilat alınınca taksitler otomatik kapanır.` : "Tahsilat alınınca taksitler otomatik kapanır.",
+          // Taksit, yalnız plan hekimi adına alınan tahsilatla kapanır (sunucu kuralı).
+          detail: [oldest ? `En eski vade ${formatDateText(oldest)}` : "", planDoctor ? `tahsilatı ${planDoctor} adına alın` : ""].filter(Boolean).join(" · "),
           action: can("payments:write") ? { label: "Tahsilat al", onClick: () => openPayment() } : { label: "Taksitleri gör", onClick: () => selectTab("odeme") },
         });
       } else if (balance.totalDebt > 0.004) {
+        // Tutar başlıkta yazıyor; burada borcun nereden geldiği ve eylem.
         steps.push({
           id: "debt",
           icon: Wallet,
           tone: "warning",
-          title: `Kalan borç ${money(balance.totalDebt)}`,
+          title: "Tahsilat bekliyor",
           detail: `Yapılan tedaviler ${money(balance.discountedTotal)}${balance.discountRate > 0 ? ` (%${balance.discountRate} indirimli)` : ""}, alınan ${money(balance.totalPaid)}.`,
           action: can("payments:write") ? { label: "Tahsilat al", onClick: () => openPayment() } : { label: "Hesabı gör", onClick: () => selectTab("odeme") },
         });
       }
     }
 
-    if (canOpenTab("randevular")) {
-      const upcoming = data.appointments
+    const upcoming = canOpenTab("randevular")
+      ? data.appointments
         .filter((appointment) => new Date(appointment.startAt).getTime() >= now && !["IPTAL", "TAMAMLANDI", "GELMEDI"].includes(appointment.status))
-        .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
+        .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime())
+      : [];
+    if (upcoming[0]) {
       const next = upcoming[0];
-      if (next) {
-        steps.push({
-          id: "next-appointment",
-          icon: CalendarClock,
-          tone: "info",
-          title: `Sıradaki randevu: ${formatDateText(next.startAt, "long")} ${formatDateText(next.startAt, "time")}`,
-          detail: [next.doctor?.fullName, upcoming.length > 1 ? `${upcoming.length - 1} randevu daha var` : ""].filter(Boolean).join(" · ") || "Hekim belirtilmedi",
-          action: { label: "Randevular", onClick: () => selectTab("randevular") },
-        });
-      } else if (can("appointments:write")) {
-        const pendingCount = data.examinations.filter(isPendingExam).length;
+      steps.push({
+        id: "next-appointment",
+        icon: CalendarClock,
+        tone: "info",
+        title: `Sıradaki randevu: ${formatDateText(next.startAt, "long")} ${formatDateText(next.startAt, "time")}`,
+        detail: [next.doctor?.fullName, upcoming.length > 1 ? `${upcoming.length - 1} randevu daha var` : ""].filter(Boolean).join(" · ") || "Hekim belirtilmedi",
+        action: { label: "Randevular", onClick: () => selectTab("randevular") },
+      });
+    }
+
+    const pending = canOpenTab("tedavi") ? data.examinations.filter(isPendingExam) : [];
+    if (pending.length > 0) {
+      steps.push({
+        id: "pending-treatments",
+        icon: Stethoscope,
+        tone: "info",
+        title: `${pending.length} yapılacak tedavi`,
+        detail: pending.slice(0, 3).map((exam) => `${exam.treatmentName}${exam.toothNo ? ` (${exam.toothNo})` : ""}`).join(", ") + (pending.length > 3 ? "…" : ""),
+        action: { label: "Tedaviye git", onClick: () => selectTab("tedavi") },
+      });
+      // Yapılacak tedavisi olup ileri randevusu olmayan hasta: kontrol randevusu.
+      if (!upcoming[0] && canOpenTab("randevular") && can("appointments:write")) {
         steps.push({
           id: "no-appointment",
           icon: CalendarPlus,
-          tone: pendingCount > 0 ? "warning" : "neutral",
+          tone: "warning",
           title: "İleri tarihli randevusu yok",
-          detail: pendingCount > 0 ? `${pendingCount} bekleyen tedavisi var; kontrol randevusu verilebilir.` : "Gerekirse kontrol randevusu verin.",
-          action: { label: "Randevu ver", href: appointmentHref },
-        });
-      }
-    }
-
-    if (canOpenTab("tedavi")) {
-      const pending = data.examinations.filter(isPendingExam);
-      if (pending.length > 0) {
-        steps.push({
-          id: "pending-treatments",
-          icon: Stethoscope,
-          tone: "info",
-          title: `${pending.length} tedavi yapılmayı bekliyor`,
-          detail: pending.slice(0, 3).map((exam) => `${exam.treatmentName}${exam.toothNo ? ` (${exam.toothNo})` : ""}`).join(", ") + (pending.length > 3 ? "…" : ""),
-          action: { label: "Tedaviye git", onClick: () => selectTab("tedavi") },
+          detail: "Yapılacak tedavisi için randevu verilebilir.",
+          action: { label: "Yeni randevu", href: appointmentHref },
         });
       }
     }
@@ -209,25 +195,8 @@ export function SummaryTab({ currentUserName }: { currentUserName: string }) {
         });
       }
     }
-
-    if (canOpenTab("gorevler")) {
-      const openTasks = clinicTasks.filter((task) => task.status === "ACIK" || task.status === "BEKLEMEDE");
-      if (openTasks.length > 0) {
-        const overdueTask = openTasks.some((task) => task.dueAt && new Date(task.dueAt).getTime() < now);
-        steps.push({
-          id: "tasks",
-          icon: ClipboardList,
-          tone: overdueTask ? "warning" : "neutral",
-          title: openTasks.length === 1 ? `Görev: ${openTasks[0].title}` : `${openTasks.length} açık görev`,
-          detail: openTasks.length === 1
-            ? (openTasks[0].dueAt ? `Son tarih ${formatDateText(openTasks[0].dueAt, "datetime")}` : "Son tarih yok")
-            : openTasks.slice(0, 2).map((task) => task.title).join(", "),
-          action: { label: "Görevler", onClick: () => selectTab("gorevler") },
-        });
-      }
-    }
     return steps;
-  }, [data, balance, clinicTasks, canOpenTab, can, openPayment, selectTab, appointmentHref]);
+  }, [data, balance, canOpenTab, can, openPayment, selectTab, appointmentHref]);
 
   const saveNote = async () => {
     const text = noteText.trim();
@@ -235,18 +204,13 @@ export function SummaryTab({ currentUserName }: { currentUserName: string }) {
     setNoteSaving(true);
     setNoteError("");
     try {
-      // Notu en güncel metnin sonuna ekle: başka biri az önce not eklediyse
-      // onun notu silinmesin.
-      const latestResponse = await fetch(`/api/patients/${patientId}`, { cache: "no-store", headers: { "x-silent-refresh": "1" } });
-      const latest = await latestResponse.json().catch(() => null);
-      if (!latestResponse.ok) throw new Error(errorMessageOf(latest, "Hasta bilgisi okunamadı; not kaydedilmedi."));
-      const stamp = formatDateText(new Date(), "datetime");
-      const existing = typeof latest?.notes === "string" ? latest.notes : "";
-      const nextNotes = `${existing ? `${existing}\n` : ""}[${stamp} - ${currentUserName || "Personel"}] ${text}`;
-      const response = await fetch(`/api/patients/${patientId}`, {
-        method: "PUT",
+      // Not sunucuda damgalanıp en güncel notların sonuna eklenir: önceden önce
+      // bütün hasta dosyası okunup sonra bütün not metni geri yazılıyordu;
+      // arada başkasının eklediği not silinebiliyordu.
+      const response = await fetch(`/api/patients/${encodeURIComponent(patientId)}`, {
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ notes: nextNotes }),
+        body: JSON.stringify({ appendNote: text }),
       });
       const body = await response.json().catch(() => null);
       if (!response.ok) throw new Error(errorMessageOf(body, "Not kaydedilemedi."));
@@ -262,63 +226,80 @@ export function SummaryTab({ currentUserName }: { currentUserName: string }) {
 
   const visibleNotes = showAllNotes ? notes : notes.slice(0, 5);
 
+  const tcVisible = Boolean(data.tcNo) && data.tcNo !== "***";
+  const generalItems: DescriptionItem[] = [
+    { key: "tc", label: data.isForeigner ? "Kimlik / pasaport no" : "TC kimlik no", value: <span className="tabular-nums">{data.tcNo}</span>, hidden: !tcVisible },
+    { key: "birth", label: "Doğum tarihi", value: data.birthDate ? formatDateText(data.birthDate) : null },
+    { key: "insurance", label: "Kurum / sigorta", value: data.insurance, hidden: !data.insurance },
+    { key: "discount", label: "İndirim", value: `%${data.discountRate}`, hidden: !(Number(data.discountRate) > 0) },
+    { key: "profession", label: "Meslek", value: data.profession, hidden: !data.profession },
+    { key: "referrer", label: "Referans", value: data.referrer, hidden: !data.referrer },
+    { key: "address", label: "Adres", value: data.address, hidden: !data.address },
+    { key: "created", label: "Kayıt tarihi", value: formatDateText(data.createdAt) },
+  ];
+  const healthItems: DescriptionItem[] = [
+    { key: "contagious", label: "Bulaşıcı hastalık", value: <span className="text-red-700">{data.contagiousDiseaseNote}</span>, hidden: !(data.hasContagiousDisease && data.contagiousDiseaseNote) },
+    { key: "medications", label: "Kullandığı ilaçlar", value: data.medications, hidden: !data.medications },
+    { key: "surgeries", label: "Ameliyatlar", value: data.surgeries, hidden: !data.surgeries },
+    { key: "other", label: "Diğer hastalıklar", value: data.otherDiseases, hidden: !data.otherDiseases },
+    { key: "blood", label: "Kan grubu", value: data.bloodType, hidden: !data.bloodType },
+  ];
+  const hasHealthRows = healthItems.some((item) => !item.hidden);
+  const hasHealthFlags = data.hasAllergy || data.hasHepatitis || data.hasKidney || data.hasDiabetes || data.hasHeart || data.hasBloodIssue || data.hasContagiousDisease;
+  const showSms = data.smsPreference !== undefined && can("sms:read");
+
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
       <div className="min-w-0 space-y-4">
-        <Card title="Yapılacaklar">
+        <Section title="Yapılacaklar" padding={nextSteps.length > 0 ? "none" : "md"}>
           {nextSteps.length === 0 ? (
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-3 text-sm text-slate-600">
-              <span>Bu hasta için bekleyen iş yok.</span>
-              {can("appointments:write") && <Button variant="secondary" size="sm" href={appointmentHref} icon={CalendarPlus}>Randevu ver</Button>}
-            </div>
+            <p className="text-sm text-slate-500">Bu hasta için bekleyen iş yok.</p>
           ) : (
             <ul className="divide-y divide-slate-100">
-              {nextSteps.map((step) => {
-                const Icon = step.icon;
-                return (
-                  <li key={step.id} className="flex flex-wrap items-center gap-3 py-3 first:pt-0 last:pb-0 sm:flex-nowrap">
-                    <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${TONE_ICON[step.tone]}`}>
-                      <Icon className="h-4 w-4" aria-hidden="true" />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold text-slate-900">{step.title}</p>
-                      <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">{step.detail}</p>
-                    </div>
-                    {step.action && (
-                      <Button variant="secondary" size="sm" className="ml-12 sm:ml-0" href={step.action.href} onClick={step.action.onClick}>
-                        {step.action.label}
-                      </Button>
-                    )}
-                  </li>
-                );
-              })}
+              {nextSteps.map((step) => (
+                <li key={step.id} className="flex flex-wrap items-center gap-3 px-4 py-3 sm:flex-nowrap">
+                  <IconFrame icon={step.icon} size="md" accent={TONE_ACCENT[step.tone]} />
+                  {/* Telefonda metin satırın tamamını alır, düğme alta (ml-11) iner:
+                      önceden düğme yanda kalıyor, metin ~150 px'e sıkışıp "tahsilatı
+                      Dr. X adına alın" gibi ayrıntı kesiliyordu. */}
+                  <div className="min-w-0 flex-1 basis-[calc(100%-2.75rem)] sm:basis-0">
+                    <p className="text-sm font-semibold text-slate-900">{step.title}</p>
+                    {step.detail && <p className="mt-0.5 line-clamp-2 text-xs text-slate-500" title={step.detail}>{step.detail}</p>}
+                  </div>
+                  {step.action && (
+                    <Button variant="secondary" size="sm" className="ml-11 sm:ml-0" href={step.action.href} onClick={step.action.onClick}>
+                      {step.action.label}
+                    </Button>
+                  )}
+                </li>
+              ))}
             </ul>
           )}
-        </Card>
+        </Section>
 
-        <Card title="Notlar">
+        <Section title="Notlar">
           {canEditPatient && (
-            <form
-              className="mb-4 space-y-2"
-              onSubmit={(event) => { event.preventDefault(); void saveNote(); }}
-            >
-              <FormField label="Yeni not" htmlFor="hd-note" error={noteError || undefined} hint="Not, adınız ve saatle birlikte hastanın notlarına eklenir.">
-                <Textarea
-                  id="hd-note"
-                  rows={2}
-                  maxLength={2000}
-                  value={noteText}
-                  onChange={(event) => setNoteText(event.target.value)}
-                  placeholder="Örn. Hasta öğleden sonra aranmak istiyor."
-                />
-              </FormField>
+            <form className="mb-4 space-y-2" onSubmit={(event) => { event.preventDefault(); void saveNote(); }}>
+              <Textarea
+                ref={noteRef}
+                id="hd-note"
+                rows={2}
+                maxLength={2000}
+                aria-label="Yeni not"
+                aria-invalid={noteError ? true : undefined}
+                aria-describedby={noteError ? "hd-note-error" : undefined}
+                value={noteText}
+                onChange={(event) => setNoteText(event.target.value)}
+                placeholder="Not yazın…"
+              />
+              {noteError && <p id="hd-note-error" role="alert" className="text-xs font-medium text-red-600">{noteError}</p>}
               <div className="flex justify-end">
-                <Button type="submit" size="sm" loading={noteSaving} disabled={!noteText.trim()}>Notu kaydet</Button>
+                <Button type="submit" size="sm" variant="secondary" loading={noteSaving} disabled={!noteText.trim()}>Kaydet</Button>
               </div>
             </form>
           )}
           {notes.length === 0 ? (
-            <p className="rounded-lg bg-slate-50 px-3 py-3 text-sm text-slate-500">Henüz not yok.</p>
+            <p className="text-sm text-slate-500">Henüz not yok.</p>
           ) : (
             <>
               <ol className="space-y-2">
@@ -331,73 +312,50 @@ export function SummaryTab({ currentUserName }: { currentUserName: string }) {
                   </li>
                 ))}
               </ol>
-              {notes.length > 5 && (
-                <Button variant="ghost" size="sm" className="mt-2" onClick={() => setShowAllNotes((current) => !current)}>
-                  {showAllNotes ? "Son 5 notu göster" : `Tüm notları göster (${notes.length})`}
-                </Button>
-              )}
+              <div className="mt-2 flex flex-wrap gap-2">
+                {notes.length > 5 && (
+                  <Button variant="ghost" size="sm" onClick={() => setShowAllNotes((current) => !current)} aria-expanded={showAllNotes}>
+                    {showAllNotes ? "Son 5 notu göster" : `Tüm notları göster (${notes.length})`}
+                  </Button>
+                )}
+                {/* Yanlış yazılan notu düzeltmenin yeri hasta formundaki "Diğer bilgiler"dir. */}
+                {canEditPatient && (
+                  <Button variant="ghost" size="sm" onClick={() => openEditPatient("diger")}>Notu düzelt</Button>
+                )}
+              </div>
             </>
           )}
-        </Card>
+        </Section>
+
+        {can("clinictasks:read") && <TasksSection />}
       </div>
 
-      <aside className="min-w-0 space-y-4">
-        <Card
-          title="Hasta bilgileri"
-          action={canEditPatient ? <Button variant="ghost" size="sm" icon={Pencil} onClick={openEditPatient}>Düzenle</Button> : undefined}
-        >
-          <dl className="divide-y divide-slate-100">
-            {!hidePatientPhone && (
-              <InfoRow label="Telefon">
-                {data.phone ? <a href={`tel:${data.phoneCountryCode && data.phoneCountryCode !== "+90" ? data.phoneCountryCode : "0"}${data.phone.replace(/^0/, "")}`} className="text-primary hover:underline">{data.phoneCountryCode && data.phoneCountryCode !== "+90" ? `${data.phoneCountryCode} ${data.phone}` : formatPhoneNumber(data.phone)}</a> : <span className="text-slate-300">—</span>}
-              </InfoRow>
+      <aside className="min-w-0">
+        <Section title="Hasta bilgileri">
+          <div className="space-y-5">
+            <DescriptionList layout="rows" items={generalItems} />
+            {(hasHealthRows || !hasHealthFlags) && (
+              <div>
+                <SubHeading>Sağlık</SubHeading>
+                {hasHealthRows
+                  ? <DescriptionList layout="rows" items={healthItems} />
+                  : <p className="text-sm text-slate-500">Bilinen sağlık uyarısı yok.</p>}
+              </div>
             )}
-            <InfoRow label="Doğum tarihi">
-              {data.birthDate ? `${formatDateText(data.birthDate)}${age !== null ? ` (${age} yaş)` : ""}` : <span className="text-slate-300">—</span>}
-            </InfoRow>
-            {genderLabel(data.gender) && <InfoRow label="Cinsiyet">{genderLabel(data.gender)}</InfoRow>}
-            {data.insurance && <InfoRow label="Kurum / sigorta">{data.insurance}</InfoRow>}
-            {Number(data.discountRate) > 0 && <InfoRow label="İndirim">%{data.discountRate}</InfoRow>}
-            {data.profession && <InfoRow label="Meslek">{data.profession}</InfoRow>}
-            {data.referrer && <InfoRow label="Referans">{data.referrer}</InfoRow>}
-            {data.address && <InfoRow label="Adres">{data.address}</InfoRow>}
-            <InfoRow label="Kayıt tarihi">{formatDateText(data.createdAt)}</InfoRow>
-          </dl>
-        </Card>
-
-        <Card title="Sağlık bilgileri" action={canEditPatient ? <Button variant="ghost" size="sm" icon={Pencil} onClick={openEditPatient}>Düzenle</Button> : undefined}>
-          {healthFlags.length === 0 && !data.medications && !data.surgeries && !data.otherDiseases && !data.bloodType ? (
-            <p className="flex items-center gap-2 text-sm text-slate-500"><HeartPulse className="h-4 w-4 text-slate-400" aria-hidden="true" />Bilinen sağlık uyarısı yok.</p>
-          ) : (
-            <div className="space-y-3">
-              {healthFlags.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {healthFlags.map((flag) => <Badge key={flag} tone="critical">{flag}</Badge>)}
-                </div>
-              )}
-              {data.hasContagiousDisease && data.contagiousDiseaseNote && (
-                <p className="text-sm text-red-700">{data.contagiousDiseaseNote}</p>
-              )}
-              <dl className="divide-y divide-slate-100">
-                {data.medications && <InfoRow label="Kullandığı ilaçlar">{data.medications}</InfoRow>}
-                {data.surgeries && <InfoRow label="Ameliyatlar">{data.surgeries}</InfoRow>}
-                {data.otherDiseases && <InfoRow label="Diğer">{data.otherDiseases}</InfoRow>}
-                {data.bloodType && <InfoRow label="Kan grubu">{data.bloodType}</InfoRow>}
-              </dl>
-            </div>
-          )}
-        </Card>
-
-        {data.smsPreference !== undefined && can("sms:read") && (
-          <SmsConsentCard
-            patientId={patientId}
-            preference={(data.smsPreference ?? null) as SmsPreference | null}
-            latestToken={data.smsConsentTokens?.[0] ?? null}
-            canResend={canEditPatient}
-            onChanged={() => void reload(true)}
-            icon={MessageSquareText}
-          />
-        )}
+            {showSms && (
+              <div>
+                <SubHeading>İletişim</SubHeading>
+                <SmsConsentCard
+                  patientId={patientId}
+                  preference={(data.smsPreference ?? null) as SmsPreference | null}
+                  latestToken={data.smsConsentTokens?.[0] ?? null}
+                  canResend={canEditPatient}
+                  onChanged={() => void reload(true)}
+                />
+              </div>
+            )}
+          </div>
+        </Section>
       </aside>
     </div>
   );

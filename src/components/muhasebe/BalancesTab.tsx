@@ -1,19 +1,22 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Wallet } from "lucide-react";
+import { CalendarPlus, Wallet } from "lucide-react";
 import { ListTable, EmptyValue, type ListSort, type ListTableColumn } from "@/components/ui/ListTable";
-import { Toolbar } from "@/components/ui/Toolbar";
+import { ActionMenu } from "@/components/ui/ActionMenu";
+import { Toolbar, ActiveFilters, type ActiveFilter } from "@/components/ui/Toolbar";
 import { SearchInput } from "@/components/ui/SearchInput";
-import { Select } from "@/components/ui/Input";
+import { ChoiceCards } from "@/components/ui/ChoiceCards";
+import { StatStrip, type StatItem } from "@/components/ui/StatStrip";
 import { Badge } from "@/components/ui/Badge";
-import { Button, IconButton } from "@/components/ui/Button";
-import { downloadCsv } from "@/lib/csv-export";
+import { Button } from "@/components/ui/Button";
+import { ExportMenu } from "@/components/ui/ExportMenu";
 import { formatPhoneNumber } from "@/lib/format";
+import { turkeyDateKey } from "@/lib/tz";
 import type { PickedPatient } from "@/components/patient/PatientPicker";
-import { money, shortDate } from "@/components/muhasebe/muhasebe-utils";
-import { ExportMenu } from "@/components/muhasebe/ExportMenu";
+import { FINANCE_TOOLBAR_CLASS, money, shortDate } from "@/components/muhasebe/muhasebe-utils";
+import { useLoadWhenActive } from "@/components/muhasebe/finance-hooks";
 
 type BalanceRow = {
   id: string;
@@ -31,11 +34,17 @@ type BalanceRow = {
 };
 
 type View = "borclu" | "avans";
+const VIEW_OPTIONS: { value: View; label: string }[] = [
+  { value: "borclu", label: "Borçlu" },
+  { value: "avans", label: "Fazla ödeme" },
+];
 const PAGE_SIZE = 50;
 
+/** "Bugün / Dün / n gün önce" Türkiye takvim günüyle (24 saatlik farkla dünkü ödeme gece yarısından sonra "Bugün" görünüyordu). */
 function daysAgo(value: string | null) {
   if (!value) return "";
-  const days = Math.floor((Date.now() - new Date(value).getTime()) / 86_400_000);
+  const dayKey = turkeyDateKey(new Date(value));
+  const days = Math.round((Date.parse(`${turkeyDateKey()}T12:00:00.000Z`) - Date.parse(`${dayKey}T12:00:00.000Z`)) / 86_400_000);
   if (days <= 0) return "Bugün";
   if (days === 1) return "Dün";
   if (days < 60) return `${days} gün önce`;
@@ -50,53 +59,79 @@ const lastMovement = (row: BalanceRow) => {
 };
 
 type Props = {
+  /** Görünüm ekranda mı (gizliyken istek atılmaz). */
+  active: boolean;
+  refreshKey: number;
   canWritePayments: boolean;
   canReadPatients: boolean;
   canSeePatientPhone: boolean;
   canReadInstallments: boolean;
-  refreshKey: number;
+  /** Dışa aktarma (finance:export). */
+  canExport: boolean;
   onCollect: (patient: PickedPatient, doctorId?: string) => void;
+  /** Hastanın taksit planlarını Taksitler görünümünde açar. */
   onOpenPlans: (patientName: string) => void;
+  /** Aynı yerin adresi (yeni sekmede açmak için). */
+  plansHref: (patientName: string) => string;
+  /** installments:write — satırda "Taksit planı kur" (taksitte olmayan borcu olan hastada). */
+  canWriteInstallments?: boolean;
+  /** Yeni taksit planı formunu bu hasta seçili (ve sabit) açar. */
+  onCreatePlan?: (patient: PickedPatient) => void;
 };
 
-export function BalancesTab({ canWritePayments, canReadPatients, canSeePatientPhone, canReadInstallments, refreshKey, onCollect, onOpenPlans }: Props) {
+/**
+ * Alacaklar › Hastalar: kimden ne alacağız, tek tıkla tahsilat. Kalan borcun
+ * taksit planındaki kısmı aynı hücrede ikinci satırdır (önceden ayrı sütundu
+ * ve kullanıcı iki tutarı toplayabiliyordu).
+ */
+export function BalancesTab({
+  active, refreshKey, canWritePayments, canReadPatients, canSeePatientPhone, canReadInstallments, canExport,
+  onCollect, onOpenPlans, plansHref, canWriteInstallments = false, onCreatePlan,
+}: Props) {
   const [view, setView] = useState<View>("borclu");
-  const [rows, setRows] = useState<BalanceRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  // Her görünümün verisi ayrı tutulur: görünüm değişirken öteki listenin satırları yanlış başlık altında görünmez.
+  const [rowsByView, setRowsByView] = useState<Record<View, BalanceRow[] | null>>({ borclu: null, avans: null });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<{ view: View; message: string } | null>(null);
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<ListSort>({ key: "bakiye", dir: "desc" });
-  const [page, setPage] = useState(1);
+  const sequenceRef = useRef(0);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (target: View) => {
+    const sequence = ++sequenceRef.current;
     setLoading(true);
-    setError("");
     try {
-      const response = await fetch(`/api/muhasebe/alacaklar${view === "avans" ? "?durum=avans" : ""}`, { cache: "no-store" });
+      const response = await fetch(`/api/muhasebe/alacaklar${target === "avans" ? "?durum=avans" : ""}`, { cache: "no-store" });
       const body = await response.json().catch(() => null);
+      if (sequence !== sequenceRef.current) return;
       if (!response.ok) throw new Error(body?.message || "Hasta bakiyeleri yüklenemedi.");
-      setRows(Array.isArray(body?.rows) ? body.rows : []);
+      setRowsByView((current) => ({ ...current, [target]: Array.isArray(body?.rows) ? body.rows : [] }));
+      setError(null);
     } catch (loadError) {
-      setRows([]);
-      setError(loadError instanceof Error ? loadError.message : "Hasta bakiyeleri yüklenemedi.");
+      if (sequence !== sequenceRef.current) return;
+      setError({ view: target, message: loadError instanceof Error ? loadError.message : "Hasta bakiyeleri yüklenemedi." });
     } finally {
-      setLoading(false);
+      if (sequence === sequenceRef.current) setLoading(false);
     }
-  }, [view]);
+  }, []);
 
-  useEffect(() => { void load(); }, [load, refreshKey]);
-  useEffect(() => { setPage(1); }, [search, view, sort]);
+  useLoadWhenActive(active, `${view}|${refreshKey}`, () => void load(view));
+
+  const rows = rowsByView[view];
+  const viewError = error?.view === view ? error.message : "";
 
   const filtered = useMemo(() => {
+    const list = rows || [];
     const q = search.trim().toLocaleLowerCase("tr");
-    const list = q
-      ? rows.filter((row) =>
+    const digits = q.replace(/\D/g, "");
+    const matched = q
+      ? list.filter((row) =>
           row.fullName.toLocaleLowerCase("tr").includes(q)
-          || (row.phone || "").replace(/\D/g, "").includes(q.replace(/\D/g, "") || "\u0000")
+          || (digits.length > 0 && (row.phone || "").replace(/\D/g, "").includes(digits))
           || row.doctors.some((doctor) => doctor.fullName.toLocaleLowerCase("tr").includes(q)))
-      : rows;
+      : list;
     const direction = sort.dir === "asc" ? 1 : -1;
-    return [...list].sort((a, b) => {
+    return [...matched].sort((a, b) => {
       if (sort.key === "son") {
         const at = (row: BalanceRow) => { const value = lastMovement(row).at; return value ? new Date(value).getTime() : 0; };
         return (at(a) - at(b)) * direction;
@@ -106,9 +141,17 @@ export function BalancesTab({ canWritePayments, canReadPatients, canSeePatientPh
     });
   }, [rows, search, sort]);
 
-  const total = filtered.reduce((sum, row) => sum + Math.abs(row.bakiye), 0);
+  // Sayfa numarası süzgece bağlı: arama/sıralama değişince 1. sayfaya döner.
+  const pageKey = `${view}|${search}|${sort.key}|${sort.dir}`;
+  const [pageState, setPageState] = useState({ key: pageKey, page: 1 });
+  const page = pageState.key === pageKey ? pageState.page : 1;
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const total = filtered.reduce((sum, row) => sum + Math.abs(row.bakiye), 0);
+  const planned = filtered.reduce((sum, row) => sum + (row.plan?.kalan || 0), 0);
+  const plannedPatients = filtered.filter((row) => row.plan).length;
+  const overduePatients = filtered.filter((row) => (row.plan?.overdueCount || 0) > 0).length;
 
   const collect = (row: BalanceRow) => onCollect(
     { id: row.id, fullName: row.fullName, phone: row.phone || null },
@@ -127,30 +170,66 @@ export function BalancesTab({ canWritePayments, canReadPatients, canSeePatientPh
     </div>
   );
 
-  const planCell = (row: BalanceRow) => {
-    if (!row.plan) return <EmptyValue />;
-    const content = (
-      <span className="text-left">
-        <span className="block text-sm text-slate-700">Kalan {money(row.plan.kalan)}</span>
-        <span className="block text-xs text-slate-500">
-          {row.plan.nextDueDate ? `Sonraki vade ${shortDate(row.plan.nextDueDate)}` : "Vade yok"}
-          {row.plan.overdueCount > 0 && <Badge tone="critical" className="ml-1.5">{row.plan.overdueCount} gecikmiş</Badge>}
-        </span>
-      </span>
-    );
-    return canReadInstallments
-      ? <button type="button" onClick={() => onOpenPlans(row.fullName)} className="rounded-md text-left hover:bg-slate-50" title="Bu hastanın taksit planını aç">{content}</button>
-      : content;
-  };
+  // Borcun taksit planındaki kısmı: tıklanınca o hastanın planları Taksitler görünümünde açılır.
+  // Sıradaki vade (önceki "Taksit planı" sütununda yazıyordu) bağlantının ipucunda.
+  const planLine = (row: BalanceRow) => (canReadInstallments && row.plan && view === "borclu" ? (
+    <span className="mt-0.5 flex flex-wrap items-center justify-end gap-1.5 text-xs">
+      <a
+        href={plansHref(row.fullName)}
+        onClick={(event) => { event.preventDefault(); onOpenPlans(row.fullName); }}
+        className="font-semibold text-primary hover:underline"
+        title={[row.plan.nextDueDate ? `Sıradaki vade ${shortDate(row.plan.nextDueDate)}` : "", "Bu hastanın taksit planını aç"].filter(Boolean).join(" — ")}
+      >
+        {money(row.plan.kalan)} taksitte
+      </a>
+      {row.plan.overdueCount > 0 && <Badge tone="critical">{row.plan.overdueCount} gecikmiş</Badge>}
+    </span>
+  ) : null);
 
-  const actionsCell = (row: BalanceRow) => (
-    view === "borclu" && canWritePayments
-      ? <div className="flex justify-end"><IconButton icon={Wallet} title={`${row.fullName} için tahsilat al`} tone="primary" size="sm" onClick={() => collect(row)} /></div>
-      : null
-  );
+  // Taksitte olmayan borç (kalan borç − açık planın kalanı) varsa satırdan plan kurulabilir.
+  const canPlan = canWriteInstallments && Boolean(onCreatePlan);
+  const canPlanRow = (row: BalanceRow) => canPlan && view === "borclu" && row.bakiye - (row.plan?.kalan || 0) > 0.5;
+  const startPlan = (row: BalanceRow) => onCreatePlan?.({ id: row.id, fullName: row.fullName, phone: row.phone || null });
+
+  // Tek birincil eylem "Tahsilat al"; plan kurma "…" menüsünde. Tahsilat izni yoksa plan düğmesi tek başına.
+  const rowActions = (row: BalanceRow) => {
+    if (view !== "borclu") return null;
+    const planItem = canPlanRow(row);
+    if (!canWritePayments) {
+      return planItem
+        ? <Button size="sm" variant="secondary" icon={CalendarPlus} onClick={() => startPlan(row)} aria-label={`${row.fullName} için taksit planı kur`}>Taksit planı kur</Button>
+        : null;
+    }
+    return (
+      <div className="flex items-center justify-end gap-1">
+        <Button size="sm" variant="secondary" icon={Wallet} onClick={() => collect(row)} aria-label={`${row.fullName} için tahsilat al`}>Tahsilat al</Button>
+        {planItem && (
+          <ActionMenu
+            label={`${row.fullName} için diğer işlemler`}
+            items={[{ key: "plan", label: "Taksit planı kur", icon: CalendarPlus, onSelect: () => startPlan(row) }]}
+          />
+        )}
+      </div>
+    );
+  };
 
   const columns: ListTableColumn<BalanceRow>[] = [
     { key: "hasta", header: "Hasta", sortKey: "hasta", render: nameCell },
+    {
+      key: "bakiye",
+      header: view === "avans" ? "Fazla ödeme" : "Kalan borç",
+      headerHint: view === "avans"
+        ? "Alınan tahsilatların indirimli tedavi tutarını aşan kısmı."
+        : "İndirimli tedavi tutarı − alınan tahsilatlar (taksit tahsilatları dahil). İptal edilen ve planlanan tedaviler hariç.",
+      align: "right",
+      sortKey: "bakiye",
+      render: (row) => (
+        <div className="flex flex-col items-end">
+          <span className={`font-bold tabular-nums ${view === "avans" ? "text-emerald-700" : "text-slate-900"}`}>{money(Math.abs(row.bakiye))}</span>
+          {planLine(row)}
+        </div>
+      ),
+    },
     {
       key: "hekim",
       header: "Doktor",
@@ -158,19 +237,6 @@ export function BalancesTab({ canWritePayments, canReadPatients, canSeePatientPh
         ? <span className="line-clamp-2 text-sm text-slate-600">{row.doctors.map((doctor) => doctor.fullName).join(", ")}</span>
         : <EmptyValue />,
     },
-    {
-      key: "bakiye",
-      header: view === "avans" ? "Fazla ödeme" : "Kalan borç",
-      align: "right",
-      sortKey: "bakiye",
-      render: (row) => (
-        <div className="text-right">
-          <p className={`font-bold tabular-nums ${view === "avans" ? "text-emerald-700" : "text-slate-900"}`}>{money(Math.abs(row.bakiye))}</p>
-          <p className="text-xs text-slate-400">Ödenen {money(row.odenen)} / {money(row.netTedavi)}</p>
-        </div>
-      ),
-    },
-    ...(canReadInstallments ? [{ key: "plan", header: "Taksit planı", render: planCell }] : []),
     {
       key: "son",
       header: "Son hareket",
@@ -182,10 +248,11 @@ export function BalancesTab({ canWritePayments, canReadPatients, canSeePatientPh
           : <EmptyValue />;
       },
     },
-    { key: "islem", header: "", align: "right", render: actionsCell },
+    ...(view === "borclu" && (canWritePayments || canPlan) ? [{ key: "islem", header: "", align: "right" as const, render: rowActions }] : []),
   ];
 
-  const exportExcel = () => {
+  const exportExcel = async () => {
+    const { downloadCsv } = await import("@/lib/csv-export");
     downloadCsv(view === "avans" ? "fazla-odeme-yapan-hastalar.csv" : "hasta-alacaklari.csv", filtered.map((row) => ({
       Hasta: row.fullName,
       Telefon: canSeePatientPhone ? row.phone || "" : "",
@@ -198,34 +265,46 @@ export function BalancesTab({ canWritePayments, canReadPatients, canSeePatientPh
     })));
   };
 
+  const stats: StatItem[] = view === "avans"
+    ? [{ key: "total", label: "Toplam fazla ödeme", value: money(total), tone: "success", hint: rows ? `${filtered.length} hasta` : undefined }]
+    : [
+        { key: "total", label: "Toplam alacak", value: money(total), hint: rows ? `${filtered.length} hasta` : undefined },
+        ...(canReadInstallments ? [{
+          key: "plan",
+          label: "Taksit planında",
+          value: money(planned),
+          tone: overduePatients > 0 ? "warning" as const : "neutral" as const,
+          hint: !rows ? undefined : overduePatients > 0 ? `${overduePatients} hastada geciken taksit` : `${plannedPatients} hasta`,
+        }] : []),
+      ];
+
+  const activeFilters: ActiveFilter[] = [
+    ...(view === "avans" ? [{ key: "view", label: "Fazla ödeme yapanlar", onRemove: () => setView("borclu") }] : []),
+    ...(search.trim() ? [{ key: "q", label: `"${search.trim()}"`, onRemove: () => setSearch("") }] : []),
+  ];
+
   return (
     <div className="space-y-3">
-      <Toolbar actions={<ExportMenu onExcel={exportExcel} disabled={filtered.length === 0} />}>
+      <Toolbar
+        className={FINANCE_TOOLBAR_CLASS}
+        filterCount={view === "avans" ? 1 : 0}
+        filters={<ChoiceCards label="Gösterilecek hastalar" labelHidden variant="pills" value={view} onChange={setView} options={VIEW_OPTIONS} />}
+        actions={canExport ? <ExportMenu disabled={filtered.length === 0} disabledReason="Dışa aktarılacak hasta yok" onExcel={exportExcel} /> : undefined}
+      >
         <SearchInput value={search} onChange={setSearch} placeholder="Hasta adı, telefon veya doktor ara" wrapperClassName="flex-1 min-w-[220px]" />
-        <Select aria-label="Gösterilecek hastalar" size="sm" value={view} onChange={(event) => setView(event.target.value as View)} className="sm:w-auto">
-          <option value="borclu">Borcu olan hastalar</option>
-          <option value="avans">Fazla ödeme yapan hastalar</option>
-        </Select>
       </Toolbar>
+      <ActiveFilters filters={activeFilters} onClearAll={() => { setView("borclu"); setSearch(""); }} />
+      {(rows || !viewError || loading) && <StatStrip items={stats} loading={!rows} aria-label="Alacak özeti" />}
       <ListTable
         columns={columns}
         rows={pageRows}
         rowKey={(row) => row.id}
-        loading={loading}
-        error={error || null}
-        onRetry={() => void load()}
+        loading={loading || (!rows && !viewError)}
+        error={rows ? null : viewError || null}
+        staleError={rows ? viewError || null : null}
+        onRetry={() => void load(view)}
         sort={sort}
         onSortChange={(key) => setSort((current) => ({ key, dir: current.key === key && current.dir === "desc" ? "asc" : "desc" }))}
-        header={(
-          <div className="border-b border-slate-100 px-4 py-3 text-sm text-slate-600">
-            {loading && rows.length === 0 ? "Bakiyeler hesaplanıyor…" : (
-              <>
-                <b className="text-slate-900">{filtered.length}</b> hasta · {view === "avans" ? "Toplam fazla ödeme" : "Toplam alacak"} <b className={`tabular-nums ${view === "avans" ? "text-emerald-700" : "text-slate-900"}`}>{money(total)}</b>
-                <span className="ml-2 hidden text-xs text-slate-400 sm:inline">Kalan borç = indirimli tedavi tutarı − alınan tahsilatlar (taksit tahsilatları dahil).</span>
-              </>
-            )}
-          </div>
-        )}
         emptyText={search ? "Aramaya uyan hasta yok" : view === "avans" ? "Fazla ödeme yapan hasta yok" : "Borcu olan hasta yok"}
         emptyDescription={search ? "Arama metnini değiştirip tekrar deneyin." : undefined}
         emptyAction={search ? <Button size="sm" variant="secondary" onClick={() => setSearch("")}>Aramayı temizle</Button> : undefined}
@@ -234,25 +313,17 @@ export function BalancesTab({ canWritePayments, canReadPatients, canSeePatientPh
             <div className="min-w-0">
               {nameCell(row)}
               <p className="mt-0.5 truncate text-xs text-slate-500">
-                {row.doctors.map((doctor) => doctor.fullName).join(", ") || "Doktor yok"}
-                {lastMovement(row).at ? ` · ${daysAgo(lastMovement(row).at)}` : ""}
+                {[row.doctors.map((doctor) => doctor.fullName).join(", "), daysAgo(lastMovement(row).at)].filter(Boolean).join(" · ") || "—"}
               </p>
-              {row.plan && (
-                <p className="mt-0.5 text-xs text-slate-500">
-                  Taksit kalanı {money(row.plan.kalan)}
-                  {row.plan.overdueCount > 0 && <Badge tone="critical" className="ml-1.5">{row.plan.overdueCount} gecikmiş</Badge>}
-                </p>
-              )}
             </div>
             <div className="flex shrink-0 flex-col items-end gap-1.5">
               <span className={`font-bold tabular-nums ${view === "avans" ? "text-emerald-700" : "text-slate-900"}`}>{money(Math.abs(row.bakiye))}</span>
-              {view === "borclu" && canWritePayments && (
-                <Button size="sm" variant="secondary" icon={Wallet} onClick={() => collect(row)}>Tahsilat al</Button>
-              )}
+              {planLine(row)}
+              {rowActions(row)}
             </div>
           </div>
         )}
-        pager={filtered.length > PAGE_SIZE ? { page, pageCount, pageSize: PAGE_SIZE, total: filtered.length, onPageChange: setPage } : undefined}
+        pager={filtered.length > PAGE_SIZE ? { page, pageCount, pageSize: PAGE_SIZE, total: filtered.length, onPageChange: (next) => setPageState({ key: pageKey, page: next }) } : undefined}
       />
     </div>
   );

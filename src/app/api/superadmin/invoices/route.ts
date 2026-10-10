@@ -48,7 +48,9 @@ export async function GET(request: NextRequest) {
       include: {
         institution: { select: { id: true, name: true, subscriptionPlan: true, billingCycle: true } },
         reminders: { select: { sentAt: true, channel: true, status: true }, orderBy: { sentAt: "desc" }, take: 1 },
-        _count: { select: { reminders: true } },
+        // Yalnız ULAŞAN hatırlatmalar sayılır; başarısız denemeler (ör. SMTP
+        // kapalı) "N hatırlatma" diye gösterilmez (canlı test H3).
+        _count: { select: { reminders: { where: { status: "SENT" } } } },
       },
       orderBy: { createdAt: "desc" },
     }),
@@ -63,6 +65,7 @@ export async function GET(request: NextRequest) {
     dbStatus: inv.status,
     status: deriveInvoiceStatus(inv, now),
     lastReminderAt: reminders[0]?.sentAt ?? null,
+    lastReminderStatus: reminders[0]?.status ?? null,
     reminderCount: _count.reminders,
   }));
 

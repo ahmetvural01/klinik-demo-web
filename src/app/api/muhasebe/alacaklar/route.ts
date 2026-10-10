@@ -1,9 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, withApiTiming } from "@/lib/api";
-import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
+import { shouldHidePatientPhoneForUser } from "@/lib/patient-visibility-server";
 import { requireActiveBranch } from "@/lib/branch-context";
-import { turkeyTodayStartUtc } from "@/lib/tz";
+import {
+  calculateBalance,
+  computePatientBalances,
+  isCreditBalance,
+  isDebtorBalance,
+  loadBalanceTotals,
+  loadOpenInstallmentSummaries,
+  loadTreatmentDoctors,
+  moneyToNumber,
+  type BalanceFigures,
+} from "@/lib/patient-balance";
 
 /**
  * GET /api/muhasebe/alacaklar
@@ -17,6 +28,11 @@ import { turkeyTodayStartUtc } from "@/lib/tz";
  *
  * Her satırda hekimler (kimlikleriyle), son tedaviyi yapan hekim ve açık taksit
  * planı özeti (kalan, sonraki vade, gecikmiş taksit sayısı, planın hekimi) döner.
+ *
+ * Bakiye tek kaynaktan (src/lib/patient-balance.ts): hasta dosyası ve hasta
+ * listesiyle aynı kural — iptal edilen ve planlanan tedaviler borç değildir.
+ * Önceden bu uç onları borca sayıyordu. Hekim listesi ve son tedavi de aynı
+ * kuralla: iptal edilmiş bir tedavinin hekimi tahsilata önerilmez.
  */
 export const GET = withApiTiming("muhasebe-alacaklar", async function GET(request: NextRequest) {
   try {
@@ -26,201 +42,98 @@ export const GET = withApiTiming("muhasebe-alacaklar", async function GET(reques
     if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
 
     const institutionId = auth.user.institutionId;
-    const hidePatientPhone = await shouldHidePatientPhoneForRole(auth.user.role);
     const params = request.nextUrl.searchParams;
     const singlePatientId = params.get("patientId")?.trim() || null;
     const creditMode = params.get("durum") === "avans";
+    const scope = { institutionId, branchId: branch.branchId };
 
-    const treatmentOnlyWhere = {
-      NOT: [
-        { status: { contains: "diagnoz", mode: "insensitive" as const } },
-        { status: { contains: "ön teşhis", mode: "insensitive" as const } },
-        { status: { contains: "on teshis", mode: "insensitive" as const } },
-      ],
-    };
-
-    const patientFilter = singlePatientId ? { patientId: singlePatientId } : {};
-    const examinationWhere = {
-      ...treatmentOnlyWhere,
-      ...(institutionId ? { institutionId } : {}),
-      branchId: branch.branchId,
-      ...patientFilter,
-    };
-    const paymentWhere = {
-      ...(institutionId ? { institutionId } : {}),
-      branchId: branch.branchId,
-      status: "ACTIVE" as const,
-      patientId: singlePatientId ? singlePatientId : { not: null },
-    };
-
-    // Birbirinden bağımsız defter sorgularını ardışık bekletmek, hasta sayısı
-    // arttıkça ekranın açılışını gereksiz yere uzatıyordu. Aynı tutarlı anlık
-    // görünüm için paralel okuyup son aşamada hasta kartlarıyla birleştiriyoruz.
-    const [
-      examGroups,
-      payGroups,
-      examDoctorRows,
-      latestTreatmentRows,
-      latestPayments,
-      openInstallments,
-    ] = await Promise.all([
-      prisma.examination.groupBy({
-        by: ["patientId"],
-        where: examinationWhere,
-        _sum: { amount: true },
-      }),
-      prisma.payment.groupBy({
-        by: ["patientId"],
-        _sum: { amount: true },
-        where: paymentWhere,
-      }),
-      prisma.examination.findMany({
-        where: examinationWhere,
-        select: {
-          patientId: true,
-          doctorId: true,
-          doctor: { select: { fullName: true } },
-        },
-        distinct: ["patientId", "doctorId"],
-      }),
-      prisma.examination.findMany({
-        where: examinationWhere,
-        select: {
-          patientId: true,
-          doctorId: true,
-          diagnosedAt: true,
-        },
-        orderBy: { diagnosedAt: "desc" },
-        distinct: ["patientId"],
-      }),
-      prisma.payment.findMany({
-        where: paymentWhere,
-        select: { patientId: true, createdAt: true },
-        orderBy: { createdAt: "desc" },
-        distinct: ["patientId"],
-      }),
-      // Açık (iptal/tamamlanmamış) planların ödenmemiş taksitleri — satırdaki plan özeti için.
-      prisma.taksit.findMany({
-        where: {
-          institutionId: institutionId || undefined,
-          branchId: branch.branchId,
-          status: { in: ["BEKLIYOR", "GECIKTI"] },
-          kalan: { gt: 0 },
-          plan: {
-            status: { in: ["AKTIF", "DEVAM_EDIYOR"] },
-            branchId: branch.branchId,
-            ...(singlePatientId ? { patientId: singlePatientId } : {}),
-          },
-        },
-        select: { kalan: true, vadeDate: true, status: true, plan: { select: { id: true, patientId: true, doctorId: true } } },
-        orderBy: { vadeDate: "asc" },
-      }),
+    // Satırın hasta kartı, hekimleri ve açık taksit özeti — yalnız listede
+    // gösterilecek hastalar için (önceden şubedeki her hasta okunuyordu).
+    const loadRowContext = (patientIds: string[]) => Promise.all([
+      patientIds.length > 0
+        ? prisma.patient.findMany({
+            where: {
+              id: { in: patientIds },
+              archivedAt: null,
+              ...(institutionId ? { institutionId } : {}),
+              homeBranchId: branch.branchId,
+            },
+            select: { id: true, fullName: true, phone: true, discountRate: true },
+          })
+        : Promise.resolve([]),
+      loadTreatmentDoctors({ ...scope, patientIds }),
+      loadOpenInstallmentSummaries({ ...scope, patientIds }),
     ]);
 
-    const doctorMap = new Map<string, Map<string, string>>();
-    examDoctorRows.forEach((exam) => {
-      const doctors = doctorMap.get(exam.patientId) || new Map<string, string>();
-      if (exam.doctorId && exam.doctor?.fullName) doctors.set(exam.doctorId, exam.doctor.fullName);
-      doctorMap.set(exam.patientId, doctors);
-    });
+    let balanceOf: (patient: { id: string; discountRate: number }) => BalanceFigures & { lastPaymentAt: Date | null };
+    let context: Awaited<ReturnType<typeof loadRowContext>>;
+    let hidePatientPhone: boolean;
 
-    const treatmentMap = new Map<string, { at: Date; doctorId: string | null }>();
-    latestTreatmentRows.forEach((exam) => {
-      const current = treatmentMap.get(exam.patientId);
-      if (!current || exam.diagnosedAt > current.at) treatmentMap.set(exam.patientId, { at: exam.diagnosedAt, doctorId: exam.doctorId });
-    });
-
-    const paymentDateMap = new Map<string, Date>();
-    latestPayments.forEach((payment) => {
-      if (!payment.patientId) return;
-      paymentDateMap.set(payment.patientId, payment.createdAt);
-    });
-
-    // Açık plan özeti: hastanın açık taksitlerinin toplam kalanı, en yakın vade ve gecikmiş taksit sayısı.
-    const todayStart = turkeyTodayStartUtc();
-    const planMap = new Map<string, { kalan: number; nextDueDate: string | null; nextDueAmount: number; overdueCount: number; doctorId: string | null; planIds: Set<string> }>();
-    for (const item of openInstallments) {
-      const patientId = item.plan.patientId;
-      const summary = planMap.get(patientId) || { kalan: 0, nextDueDate: null, nextDueAmount: 0, overdueCount: 0, doctorId: item.plan.doctorId, planIds: new Set<string>() };
-      summary.kalan += Number(item.kalan);
-      summary.planIds.add(item.plan.id);
-      if (!summary.nextDueDate) {
-        summary.nextDueDate = item.vadeDate.toISOString();
-        summary.nextDueAmount = Number(item.kalan);
-        summary.doctorId = item.plan.doctorId;
-      }
-      if (item.status === "GECIKTI" || item.vadeDate < todayStart) summary.overdueCount += 1;
-      planMap.set(patientId, summary);
+    if (singlePatientId) {
+      // Tek hasta (tahsilat / taksit planı formu): tek turda, hastanın kendi
+      // indirim oranıyla.
+      const [totals, rowContext, hidePhone] = await Promise.all([
+        loadBalanceTotals({ ...scope, patientIds: [singlePatientId] }),
+        loadRowContext([singlePatientId]),
+        shouldHidePatientPhoneForUser(auth.user),
+      ]);
+      context = rowContext;
+      hidePatientPhone = hidePhone;
+      balanceOf = (patient) => {
+        const total = totals.get(patient.id);
+        return {
+          lastPaymentAt: total?.lastPaymentAt ?? null,
+          ...calculateBalance({ tedaviToplam: total?.tedaviToplam, indirimOrani: patient.discountRate, tahsilatToplam: total?.tahsilatToplam }),
+        };
+      };
+    } else {
+      // Liste: önce şubedeki bütün bakiyeler veritabanında gruplanır, eşiği
+      // geçenler seçilir; ad/telefon/hekim/taksit yalnız onlar için okunur.
+      const [balances, hidePhone] = await Promise.all([
+        computePatientBalances(scope),
+        shouldHidePatientPhoneForUser(auth.user),
+      ]);
+      hidePatientPhone = hidePhone;
+      const listedIds = [...balances.values()]
+        .filter((balance) => (creditMode ? isCreditBalance(balance.bakiye) : isDebtorBalance(balance.bakiye)))
+        .map((balance) => balance.patientId);
+      context = await loadRowContext(listedIds);
+      balanceOf = (patient) => balances.get(patient.id) ?? { lastPaymentAt: null, ...calculateBalance({ tedaviToplam: 0, indirimOrani: patient.discountRate, tahsilatToplam: 0 }) };
     }
 
-    // Hasta bilgileri — tedavisi ya da ödemesi olan herkes (yalnız ödemesi olan hasta ön ödeme yapmıştır).
-    const patientIds = [...new Set([
-      ...examGroups.map((e) => e.patientId),
-      ...payGroups.map((p) => p.patientId).filter((id): id is string => Boolean(id)),
-      ...(singlePatientId ? [singlePatientId] : []),
-    ])];
-    const patients = await prisma.patient.findMany({
-      where: {
-        id: { in: patientIds },
-        archivedAt: null,
-        ...(institutionId ? { institutionId } : {}),
-        homeBranchId: branch.branchId,
-      },
-      select: { id: true, fullName: true, phone: true, discountRate: true },
-    });
+    const [patients, doctorMap, planMap] = context;
+    const listed = patients.map((patient) => ({ patient, balance: balanceOf(patient) }));
+    if (!singlePatientId) {
+      listed.sort((a, b) => (creditMode ? a.balance.bakiye.comparedTo(b.balance.bakiye) : b.balance.bakiye.comparedTo(a.balance.bakiye)));
+    }
+    const toplamAlacak = listed.reduce((sum, item) => sum.plus(item.balance.bakiye), new Prisma.Decimal(0));
 
-    const examMap = new Map(examGroups.map((e) => [e.patientId, Number(e._sum.amount ?? 0)]));
-    const payMap = new Map(
-      payGroups.map((p) => [p.patientId as string, Number(p._sum.amount ?? 0)])
-    );
-
-    const allRows = patients.map((p) => {
-      const brutTedavi = examMap.get(p.id) ?? 0;
-      const indirim    = brutTedavi * (Number(p.discountRate || 0) / 100);
-      const netTedavi  = brutTedavi - indirim;
-      const odenen     = payMap.get(p.id) ?? 0;
-      const bakiye     = Math.round((netTedavi - odenen) * 100) / 100;
-      const doctors = Array.from(doctorMap.get(p.id)?.entries() || []).map(([id, fullName]) => ({ id, fullName }));
-      const plan = planMap.get(p.id);
-      const lastTreatment = treatmentMap.get(p.id);
+    const rows = listed.map(({ patient: p, balance }) => {
+      const doctorInfo = doctorMap.get(p.id);
+      const doctors = doctorInfo?.doctors ?? [];
+      const plan = planMap.get(p.id) ?? null;
 
       return {
         id: p.id,
         fullName: p.fullName,
         phone: hidePatientPhone ? "" : p.phone,
-        brutTedavi,
-        indirim,
-        netTedavi,
-        odenen,
-        bakiye,
+        brutTedavi: moneyToNumber(balance.tedaviToplam),
+        indirim: moneyToNumber(balance.indirim),
+        netTedavi: moneyToNumber(balance.netTedavi),
+        odenen: moneyToNumber(balance.tahsilatToplam),
+        bakiye: moneyToNumber(balance.bakiye),
         discountRate: p.discountRate,
         doctors,
         doctorNames: doctors.map((doctor) => doctor.fullName),
-        lastDoctorId: lastTreatment?.doctorId || null,
-        lastPaymentAt: paymentDateMap.get(p.id)?.toISOString() || null,
-        lastTreatmentAt: lastTreatment?.at.toISOString() || null,
+        lastDoctorId: doctorInfo?.lastDoctorId ?? null,
+        lastPaymentAt: balance.lastPaymentAt?.toISOString() ?? null,
+        lastTreatmentAt: doctorInfo?.lastTreatmentAt?.toISOString() ?? null,
         hasActiveTaksitPlan: Boolean(plan),
-        plan: plan
-          ? {
-              kalan: Math.round(plan.kalan * 100) / 100,
-              nextDueDate: plan.nextDueDate,
-              nextDueAmount: Math.round(plan.nextDueAmount * 100) / 100,
-              overdueCount: plan.overdueCount,
-              doctorId: plan.doctorId,
-              planCount: plan.planIds.size,
-            }
-          : null,
+        plan,
       };
     });
 
-    const rows = singlePatientId
-      ? allRows
-      : allRows
-          .filter((r) => (creditMode ? r.bakiye < -0.5 : r.bakiye > 0.5))
-          .sort((a, b) => (creditMode ? a.bakiye - b.bakiye : b.bakiye - a.bakiye));
-
-    const toplamAlacak = rows.reduce((s, r) => s + r.bakiye, 0);
-    return NextResponse.json({ rows, toplamAlacak: Math.round(toplamAlacak * 100) / 100 });
+    return NextResponse.json({ rows, toplamAlacak: moneyToNumber(toplamAlacak) });
   } catch (error) {
     console.error("[muhasebe alacaklar GET]", error);
     return NextResponse.json({ message: "Hasta alacakları hesaplanamadı. Lütfen sistem yöneticinize bildiriniz." }, { status: 503 });

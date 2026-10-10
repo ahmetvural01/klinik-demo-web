@@ -1,21 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, writeAudit } from "@/lib/api";
-import { can } from "@/lib/rbac";
-import type { DocumentCategory, Role } from "@prisma/client";
-import { deleteDocumentFile, DocumentUploadError, isAllowedDocumentFile, saveDocumentFile } from "@/lib/document-storage";
+import { hasEffectivePermission, requireAuth, writeAudit } from "@/lib/api";
+import type { DocumentCategory } from "@prisma/client";
+import { deleteDocumentFile, documentContentMatchesType, DocumentUploadError, isAllowedDocumentFile, saveDocumentFile } from "@/lib/document-storage";
 import { requireActiveBranch } from "@/lib/branch-context";
 
 function permissionForCategory(category: string, action: "read" | "write" | "delete") {
   return category === "BELGE" ? `documents:${action}` : `xray:${action}`;
 }
 
+// Belge ve röntgen yetkileri rol yetkisi VE aktif şubenin izin listesiyle
+// birlikte değerlendirilir (hasEffectivePermission). Önceden yalnız rol
+// bakılıyordu: şubede kısıtlanmış bir yetki belge uçlarında geçerli sayılıyordu.
 export async function GET(req: NextRequest) {
   const auth = await requireAuth();
   if (auth.error) return auth.error;
 
-  const canRead = (await can(auth.user.role as Role, "documents:read")) || (await can(auth.user.role as Role, "xray:read"));
-  if (!canRead) {
+  const [canReadDocuments, canReadXray] = await Promise.all([
+    hasEffectivePermission(auth.user, "documents:read"),
+    hasEffectivePermission(auth.user, "xray:read"),
+  ]);
+  if (!canReadDocuments && !canReadXray) {
     return NextResponse.json({ error: "Bu işlem için yetkiniz yok." }, { status: 403 });
   }
   // Hasta dosyasının kendisi yalnız aktif şubedeki hastayı açar; belgeleri de
@@ -39,8 +44,6 @@ export async function GET(req: NextRequest) {
     });
     if (!patient) return NextResponse.json({ error: "Hasta bulunamadı" }, { status: 404 });
 
-    const canReadDocuments = await can(auth.user.role as Role, "documents:read");
-    const canReadXray = await can(auth.user.role as Role, "xray:read");
     const allowedCategories: DocumentCategory[] = [
       ...(canReadDocuments ? (["BELGE"] as DocumentCategory[]) : []),
       ...(canReadXray ? (["RONTGEN", "FOTOGRAF"] as DocumentCategory[]) : []),
@@ -48,7 +51,12 @@ export async function GET(req: NextRequest) {
 
     const documents = await prisma.document.findMany({
       // Arşivlenen (hasta dosyasından kaldırılan) belgeler listede görünmez.
-      where: { patientId, archivedAt: null, category: { in: allowedCategories } },
+      where: {
+        patientId,
+        ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        archivedAt: null,
+        category: { in: allowedCategories },
+      },
       orderBy: { createdAt: "desc" },
       include: { uploadedBy: { select: { fullName: true } } },
     });
@@ -86,12 +94,17 @@ export async function POST(req: NextRequest) {
     }
 
     const requiredPermission = permissionForCategory(category, "write");
-    if (!(await can(auth.user.role as Role, requiredPermission))) {
+    if (!(await hasEffectivePermission(auth.user, requiredPermission))) {
       return NextResponse.json({ error: "Bu işlem için yetkiniz yok." }, { status: 403 });
     }
 
     const validationError = isAllowedDocumentFile(file.type, file.size);
     if (validationError) return NextResponse.json({ error: validationError }, { status: 400 });
+    // Uzantı/tür değiştirilmiş dosya (ör. düz metni "x.png" diye yüklemek) kabul edilmez.
+    const head = new Uint8Array(await file.slice(0, 1024).arrayBuffer());
+    if (!documentContentMatchesType(file.type, head)) {
+      return NextResponse.json({ error: "Dosya içeriği seçilen türle uyuşmuyor." }, { status: 400 });
+    }
 
     const patient = await prisma.patient.findFirst({
       where: {

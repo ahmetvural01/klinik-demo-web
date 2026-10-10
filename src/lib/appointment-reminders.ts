@@ -2,10 +2,27 @@ import { prisma } from "@/lib/prisma";
 import { renderCommunicationTemplate, resolveSmsTemplate } from "@/lib/sms-templates";
 import { dispatchPatientMessage } from "@/lib/notification-dispatch";
 import { operationalInstitutionWhere } from "@/lib/operational-state";
+import { formatAppointmentDateTime } from "@/lib/appointment-change-notify";
+import { turkeyTimeKey } from "@/lib/tz";
 
 const APPOINTMENT_REMINDER_PREFIX = "[APPT_REMINDER]";
 const MAX_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 10 * 60 * 1000;
+
+/**
+ * Otomatik hasta mesajları (randevu hatırlatma, ödeme hatırlatma, doğum günü)
+ * yalnız bu saatler arasında gönderilir — Türkiye saati, bitiş hariç.
+ * Hatırlatma kaydının zamanı randevudan önceki gün 00:00'dır (bkz.
+ * api/appointments → turkeyDayBeforeStartUtc); dakikalık tarama önceden onu
+ * gece yarısı gönderiyordu. Pencere dışında tarama hiçbir kaydı almaz; kayıt
+ * AKTIF kalır ve pencere açılınca (09:00) gider.
+ */
+export const PATIENT_MESSAGE_WINDOW = { start: "09:00", end: "20:00" } as const;
+
+export function isWithinPatientMessageWindow(now: Date = new Date()) {
+  const time = turkeyTimeKey(now);
+  return time >= PATIENT_MESSAGE_WINDOW.start && time < PATIENT_MESSAGE_WINDOW.end;
+}
 
 type SweepOptions = {
   institutionId?: string;
@@ -17,12 +34,11 @@ function parseAppointmentId(note: string) {
   return note.slice(APPOINTMENT_REMINDER_PREFIX.length + 1).trim() || null;
 }
 
-function appointmentDateText(value: Date) {
-  return value.toLocaleString("tr-TR", { timeZone: "Europe/Istanbul" });
-}
-
 export async function runAppointmentReminderSweep(options: SweepOptions = {}) {
   const now = new Date();
+  if (!isWithinPatientMessageWindow(now)) {
+    return { processed: 0, sent: 0, sentWhatsapp: 0, sentSms: 0, skipped: 0, failed: 0, outsideSendWindow: true };
+  }
   const take = Math.max(1, Math.min(250, options.take || 100));
   const dueReminders = await prisma.reminder.findMany({
     where: {
@@ -46,6 +62,7 @@ export async function runAppointmentReminderSweep(options: SweepOptions = {}) {
       branchId: true,
       patientId: true,
       note: true,
+      reminderDate: true,
       attemptCount: true,
       patient: { select: { institutionId: true } },
     },
@@ -135,6 +152,36 @@ export async function runAppointmentReminderSweep(options: SweepOptions = {}) {
       continue;
     }
 
+    // Randevu hatırlatma zamanından SONRA açıldıysa (aynı gün / ertesi gün
+    // randevusu) ya da o arada tarihi değiştiyse hasta tarihi zaten
+    // bilgilendirme/değişiklik mesajıyla yeni aldı; aynı dakikada ikinci mesaj
+    // (ikinci kredi) gitmesin. Yalnız GERÇEKTEN gitmiş bir mesaj sayılır.
+    const informedRecently = await prisma.smsDispatch.findFirst({
+      where: {
+        institutionId,
+        patientId: appointment.patient.id,
+        status: { in: ["SENT", "DELIVERED", "READ"] },
+        sentAt: { gte: reminder.reminderDate },
+        OR: [
+          { idempotencyKey: `appt-info:${appointment.id}` },
+          { idempotencyKey: { startsWith: `appt-change:${appointment.id}:` } },
+        ],
+      },
+      select: { id: true },
+    });
+    if (informedRecently) {
+      skipped += 1;
+      await prisma.reminder.update({
+        where: { id: reminder.id },
+        data: {
+          status: "TAMAMLANDI",
+          nextAttemptAt: null,
+          lastError: "Bilgilendirme mesajı yakın zamanda gittiği için ayrıca hatırlatma gönderilmedi.",
+        },
+      });
+      continue;
+    }
+
     let context = institutionCache.get(institutionId);
     if (!context) {
       context = await loadInstitutionContext(institutionId);
@@ -146,7 +193,9 @@ export async function runAppointmentReminderSweep(options: SweepOptions = {}) {
       continue;
     }
 
-    const dateText = appointmentDateText(appointment.startAt);
+    // Bilgilendirme, değişiklik ve iptal mesajlarıyla aynı biçim ("12 Ağustos 2026 14:30");
+    // önceden saniyeli "12.08.2026 14:30:00" gidiyordu.
+    const dateText = formatAppointmentDateTime(appointment.startAt);
     const institutionName = context.settings?.institutionName || context.institution.name;
     const institutionPhone = context.settings?.institutionPhone || context.institution.phone || "";
     const fallbackMessage = `${institutionName}: Sayın ${appointment.patient.fullName}, ${dateText} tarihindeki randevunuzu hatırlatırız. Hekim: ${appointment.doctor.fullName}.`;
@@ -210,6 +259,7 @@ export async function runAppointmentReminderSweep(options: SweepOptions = {}) {
     sentSms,
     skipped,
     failed,
+    outsideSendWindow: false,
   };
 }
 

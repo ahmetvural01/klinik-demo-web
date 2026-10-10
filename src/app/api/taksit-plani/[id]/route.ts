@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
-import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
+import { shouldHidePatientPhoneForUser } from "@/lib/patient-visibility-server";
 import { turkeyTodayStartUtc } from "@/lib/tz";
 import { requireActiveBranch } from "@/lib/branch-context";
 
@@ -52,7 +52,8 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
       ),
     };
 
-    const hidePhone = await shouldHidePatientPhoneForRole(user.role);
+    // KVKK: telefon maskesi kişinin etkin iznine (rol + şube daraltması) bakar.
+    const hidePhone = await shouldHidePatientPhoneForUser(user);
     const result = hidePhone
       ? {
           ...planWithLiveStatus,
@@ -90,6 +91,13 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     }
     if (status === undefined && notes === undefined) {
       return NextResponse.json({ error: "Güncellenecek alan bulunamadı" }, { status: 400 });
+    }
+    // Plan iptali DELETE ile aynı izni ister ("Taksit planı — İptal etme"):
+    // önceden PATCH status=IPTAL yalnız installments:write ile planı iptal
+    // edebiliyordu (iptal izni olmayan rol bu yoldan izni atlıyordu).
+    if (status === "IPTAL") {
+      const cancelAuth = await requireAuth("installments:delete");
+      if (cancelAuth.error) return cancelAuth.error;
     }
 
     const existing = await (prisma as any).taksitPlan.findFirst({

@@ -24,6 +24,10 @@ type SearchableListboxProps = {
   loading?: boolean;
   disabled?: boolean;
   onOpen?: () => void;
+  /** Açıcı düğmenin kimliği: `<FormField as="div" htmlFor={id}>` etiketi düğmeye bağlanır. */
+  id?: string;
+  /** Görünür etiket yoksa ekran okuyucu adı. */
+  ariaLabel?: string;
 };
 
 function normalizeSearch(value: string) {
@@ -43,11 +47,14 @@ export function SearchableListbox({
   loading = false,
   disabled = false,
   onOpen,
+  id,
+  ariaLabel,
 }: SearchableListboxProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const listboxId = useId();
   useOutsideClick(rootRef, () => setOpen(false), open);
 
@@ -83,10 +90,17 @@ export function SearchableListbox({
           ? selectedOptions[0].label
           : `${selectedOptions.length} ${selectedLabel}`;
 
+  // Liste kapanınca odak açan düğmeye döner; yoksa gövdeye düşüyor, pencere
+  // içinde Tab arkadaki sayfaya geçiyordu.
+  const closeAndFocus = () => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
+
   const toggleOption = (optionId: string) => {
     if (!multiple) {
       onChange([optionId]);
-      setOpen(false);
+      closeAndFocus();
       return;
     }
     onChange(selectedIds.has(optionId) ? value.filter((id) => id !== optionId) : [...value, optionId]);
@@ -95,8 +109,11 @@ export function SearchableListbox({
   return (
     <div ref={rootRef} className="relative min-w-0">
       <button
+        ref={triggerRef}
+        id={id}
         type="button"
         role="combobox"
+        aria-label={ariaLabel}
         aria-expanded={open}
         aria-controls={listboxId}
         aria-haspopup="listbox"
@@ -105,14 +122,25 @@ export function SearchableListbox({
           if (!current) onOpen?.();
           return !current;
         })}
-        className="flex h-10 w-full min-w-0 items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 text-left text-sm text-slate-700 outline-none transition-colors hover:border-slate-300 focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60"
+        className="flex h-10 w-full min-w-0 items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 text-left text-sm text-slate-700 outline-none transition-colors hover:border-slate-300 focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        <span className={`truncate ${selectedOptions.length === 0 ? "text-slate-400" : "font-medium text-slate-800"}`}>{summary}</span>
+        <span className={`truncate ${selectedOptions.length === 0 ? "text-slate-500" : "font-medium text-slate-800"}`}>{summary}</span>
         <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? "rotate-180" : ""}`} aria-hidden="true" />
       </button>
 
       {open && (
-        <div className="ui-popover absolute left-0 top-full z-50 mt-1 w-full min-w-[260px] overflow-hidden p-0 shadow-xl">
+        // Esc listenin her yerinde (arama kutusu, seçenek, "Tümünü seç") yalnız
+        // listeyi kapatır: önceden yalnız arama kutusu dinliyordu; seçenekteyken
+        // basılan Esc içinde bulunduğu görev penceresini kapatıyordu.
+        <div
+          className="ui-popover absolute left-0 top-full z-50 mt-1 w-full min-w-[260px] overflow-hidden p-0 shadow-xl"
+          onKeyDown={(event) => {
+            if (event.key !== "Escape") return;
+            event.preventDefault();
+            event.stopPropagation();
+            closeAndFocus();
+          }}
+        >
           <div className="border-b border-slate-100 p-2">
             <div className="relative">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden="true" />
@@ -122,14 +150,12 @@ export function SearchableListbox({
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Escape") {
-                    event.stopPropagation();
-                    setOpen(false);
-                  }
-                  if (event.key === "Enter" && !multiple && filteredOptions.length === 1) {
-                    event.preventDefault();
-                    toggleOption(filteredOptions[0].id);
-                  }
+                  if (event.key !== "Enter") return;
+                  // Arama kutusundaki Enter içinde bulunduğu formu hiçbir zaman
+                  // göndermez (kişi ararken görev yarım kaydediliyordu, canlı H8).
+                  // Tek eşleşme varsa tek seçimli listede onu seçer.
+                  event.preventDefault();
+                  if (!multiple && filteredOptions.length === 1) toggleOption(filteredOptions[0].id);
                 }}
                 placeholder={searchPlaceholder}
                 aria-label={searchPlaceholder}
@@ -139,11 +165,11 @@ export function SearchableListbox({
             </div>
             {multiple && options.length > 0 && (
               <div className="mt-2 flex items-center justify-between gap-2">
-                <button type="button" onClick={() => onChange(options.map((option) => option.id))} disabled={allSelected} className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:text-primary-dark disabled:cursor-default disabled:opacity-45">
+                <button type="button" onClick={() => onChange(options.map((option) => option.id))} disabled={allSelected} className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:text-primary-dark disabled:cursor-default disabled:opacity-50">
                   <CheckCheck className="h-3.5 w-3.5" aria-hidden="true" />
                   Tümünü seç
                 </button>
-                <button type="button" onClick={() => onChange([])} disabled={value.length === 0} className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-700 disabled:cursor-default disabled:opacity-45">
+                <button type="button" onClick={() => onChange([])} disabled={value.length === 0} className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-700 disabled:cursor-default disabled:opacity-50">
                   <X className="h-3.5 w-3.5" aria-hidden="true" />
                   Temizle
                 </button>
@@ -153,7 +179,7 @@ export function SearchableListbox({
 
           <div id={listboxId} role="listbox" aria-multiselectable={multiple || undefined} className="max-h-56 overflow-y-auto py-1">
             {filteredOptions.length === 0 ? (
-              <p className="px-3 py-5 text-center text-xs text-slate-400">{emptyText}</p>
+              <p className="px-3 py-5 text-center text-xs text-slate-500">{emptyText}</p>
             ) : filteredOptions.map((option) => {
               const selected = selectedIds.has(option.id);
               return (
@@ -170,7 +196,7 @@ export function SearchableListbox({
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium text-slate-800">{option.label}</span>
-                    {option.meta && <span className="block truncate text-xs text-slate-400">{option.meta}</span>}
+                    {option.meta && <span className="block truncate text-xs text-slate-500">{option.meta}</span>}
                   </span>
                 </button>
               );

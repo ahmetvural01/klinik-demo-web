@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { bumpRealtimeInstitution, requireAuth, writeAudit, withApiTiming } from "@/lib/api";
+import { requireAuth, writeAudit, withApiTiming } from "@/lib/api";
 import { applyLabInvoiceFirmaIntegration } from "@/lib/lab-firma-integration";
-import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
+import { shouldHidePatientPhoneForUser } from "@/lib/patient-visibility-server";
 import { formatZodError, labInvoiceCreateSchema } from "@/lib/validators";
 import { requireActiveBranch } from "@/lib/branch-context";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
-import { toPublicLabOrder } from "@/app/api/lab-orders/lab-order-api";
+import { LAB_ORDER_INCLUDE, toPublicLabOrder } from "@/app/api/lab-orders/lab-order-api";
 import { summarizeLabOrders } from "@/lib/lab-workflow";
 
 export const dynamic = "force-dynamic";
@@ -34,8 +34,13 @@ export const GET = withApiTiming("lab-orders", async function GET(req: NextReque
   const { searchParams } = new URL(req.url);
   const status = searchParams.get("status");
   const limit = Number(searchParams.get("limit") || searchParams.get("take") || 0);
+  // İsteğe bağlı: tek hastanın işleri (yeni lab işi formunda hekim önerisi için son iş).
+  const patientId = (searchParams.get("patientId") || "").trim();
   if (status && !new Set(["BEKLIYOR", "DEVAM_EDIYOR", "HASTAYA_TAKILDI", "IPTAL"]).has(status)) {
     return NextResponse.json({ message: "Geçersiz laboratuvar durumu" }, { status: 400 });
+  }
+  if (patientId.length > 100) {
+    return NextResponse.json({ message: "Geçersiz hasta seçimi" }, { status: 400 });
   }
 
   // Yeni iş formlarında laboratuvar kaynağı geçmiş sipariş isimleri değil,
@@ -96,6 +101,7 @@ export const GET = withApiTiming("lab-orders", async function GET(req: NextReque
       where: {
         ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
         branchId: branch.branchId,
+        ...(patientId ? { patientId } : {}),
         ...(status === "BEKLIYOR"
           ? {
               status: { notIn: ["HASTAYA_TAKILDI", "IPTAL"] },
@@ -104,12 +110,7 @@ export const GET = withApiTiming("lab-orders", async function GET(req: NextReque
           : {}),
         ...(status && status !== "BEKLIYOR" ? { status } : {}),
       },
-      include: {
-        invoices: { where: { status: "ACTIVE" }, orderBy: { issuedAt: "asc" } },
-        patient: { select: { id: true, fullName: true, phone: true } },
-        doctor:  { select: { id: true, fullName: true } },
-        trips:   { orderBy: { order: "asc" } },
-      },
+      include: LAB_ORDER_INCLUDE,
       orderBy: { createdAt: "desc" },
       // limit verilmezse de tek istek tüm laboratuvar geçmişini döndürmesin diye varsayılan sınır.
       // Açık işler (DEVAM_EDIYOR) listeden sessizce düşmesin diye daha yüksek sınır.
@@ -123,7 +124,7 @@ export const GET = withApiTiming("lab-orders", async function GET(req: NextReque
     );
   }
 
-  const hidePhone = await shouldHidePatientPhoneForRole(user.role);
+  const hidePhone = await shouldHidePatientPhoneForUser(user);
   const publicOrders = orders.map(toPublicOrder);
   const masked = hidePhone
     ? publicOrders.map((o: any) => ({ ...o, patient: o.patient ? { ...o.patient, phone: "***" } : o.patient }))
@@ -223,15 +224,10 @@ export async function POST(req: NextRequest) {
         institutionId: auth.user.institutionId,
         branchId: branch.branchId,
       },
-      include: {
-        invoices: { where: { status: "ACTIVE" }, orderBy: { issuedAt: "asc" } },
-        patient: { select: { id: true, fullName: true, phone: true } },
-        doctor: { select: { id: true, fullName: true } },
-        trips: { orderBy: { order: "asc" } },
-      },
+      include: LAB_ORDER_INCLUDE,
     });
     if (existingOrder) {
-      return NextResponse.json({ ...(await toPublicLabOrder(existingOrder, auth.user.role)), duplicateRequest: true }, { status: 200 });
+      return NextResponse.json({ ...(await toPublicLabOrder(existingOrder, auth.user)), duplicateRequest: true }, { status: 200 });
     }
   }
 
@@ -301,12 +297,7 @@ export async function POST(req: NextRequest) {
             }],
           } : undefined,
         },
-        include: {
-          invoices: { where: { status: "ACTIVE" }, orderBy: { issuedAt: "asc" } },
-          patient: { select: { id: true, fullName: true, phone: true } },
-          doctor:  { select: { id: true, fullName: true } },
-          trips:   { orderBy: { order: "asc" } },
-        },
+        include: LAB_ORDER_INCLUDE,
       });
 
       let integration: { firmaId: string; firmaName: string; error?: string } | null = null;
@@ -350,22 +341,18 @@ export async function POST(req: NextRequest) {
           institutionId: auth.user.institutionId,
           branchId: branch.branchId,
         },
-        include: {
-          invoices: { where: { status: "ACTIVE" }, orderBy: { issuedAt: "asc" } },
-          patient: { select: { id: true, fullName: true, phone: true } },
-          doctor: { select: { id: true, fullName: true } },
-          trips: { orderBy: { order: "asc" } },
-        },
+        include: LAB_ORDER_INCLUDE,
       });
       if (existingOrder) {
-        return NextResponse.json({ ...(await toPublicLabOrder(existingOrder, auth.user.role)), duplicateRequest: true }, { status: 200 });
+        return NextResponse.json({ ...(await toPublicLabOrder(existingOrder, auth.user)), duplicateRequest: true }, { status: 200 });
       }
     }
     console.error("[lab-orders POST] fallback:", error);
     return NextResponse.json({ error: "Laboratuvar kaydı oluşturulamadı" }, { status: 503 });
   }
 
+  // writeAudit gerçek zamanlı sürümü zaten artırır; ayrıca bump çağırmak her
+  // işlemde ikinci bir yenileme dalgası üretiyordu (hız raporu SV2/KI4).
   await writeAudit(auth.user.id, "LAB_ORDER_CREATE", `${normalizedLabName} (${normalizedLabType}) laboratuvar siparişi oluşturuldu`);
-  await bumpRealtimeInstitution(auth.user.institutionId || null);
-  return NextResponse.json({ ...(await toPublicLabOrder(order, auth.user.role)), firmaIntegration }, { status: 201 });
+  return NextResponse.json({ ...(await toPublicLabOrder(order, auth.user)), firmaIntegration }, { status: 201 });
 }

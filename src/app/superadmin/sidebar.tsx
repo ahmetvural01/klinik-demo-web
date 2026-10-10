@@ -1,78 +1,65 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
-import { X } from "lucide-react";
-import LogoutButton from "./logout-button";
+import { ShieldCheck } from "lucide-react";
+import { ModuleIcon, type ModuleKey } from "@/components/ui/ModuleIcon";
+import { CountBadge } from "@/components/ui/CountBadge";
+import { Drawer } from "@/components/ui/Drawer";
 
-type NavItem = { href: string; icon: string; label: string; countKey?: "openSupport" | "overdueInvoices" };
-type NavGroup = { label: string; items: NavItem[] };
-type NavCounts = { openSupport: number; overdueInvoices: number };
-
+type CountKey = "openSupport" | "overdueInvoices";
 /**
- * Klinik panelindeki `ModuleIcon` sistemiyle aynı hazır görsel kaynağı
- * (Microsoft Fluent Emoji Flat, MIT — bkz. ModuleIcon.tsx) kullanır. Bazı
- * ikonlar klinik panelindeki dosyalarla paylaşılır, bazıları platform
- * yönetimine özgüdür (public/icons/modules/superadmin-*.svg).
+ * Menü ikonları ortak ModuleIcon sözlüğündendir; platforma özgü bölümler
+ * `sa-*` anahtarlarını kullanır. Her sayfanın başlığı (PageHeader) aynı
+ * anahtarı alır: menü ve başlık ikonu aynı görünür.
  */
-const ICON_SRC: Record<string, string> = {
-  dashboard: "/icons/modules/chart.svg",
-  institutions: "/icons/modules/superadmin-institutions.svg",
-  reports: "/icons/modules/rapor.svg",
-  invoices: "/icons/modules/hakedis.svg",
-  sms: "/icons/modules/sms.svg",
-  announcements: "/icons/modules/superadmin-announcements.svg",
-  support: "/icons/modules/support.svg",
-  roles: "/icons/modules/superadmin-roles.svg",
-  admins: "/icons/modules/superadmin-admins.svg",
-  settings: "/icons/modules/settings.svg",
-  audit: "/icons/modules/superadmin-audit.svg",
-};
+type NavItem = { href: string; icon: ModuleKey; label: string; countKey?: CountKey };
+type NavGroup = { label: string; items: NavItem[] };
+type NavCounts = Record<CountKey, number>;
 
-// Dört grup, 11 öğe: 1440×900 ekranda menü kaydırmadan sığar. Menü adı her
-// sayfanın başlığıyla aynıdır. E-posta (SMTP) ayarları "Sistem Ayarları"
-// içinde bir sekmedir. Reklamlar menüde yok: klinik panelinde reklam
+// Üç grup, 11 öğe; menü adı her sayfanın başlığıyla aynıdır. Tek öğeli
+// "Ayarlar" grubu "Yönetim"e katıldı. Reklamlar menüde yok: klinik panelinde reklam
 // gösterilen bir alan bulunmadığı için orada yapılan ayar hiçbir kliniğe
-// ulaşmıyordu (sayfa adresiyle hâlâ açılabilir).
+// ulaşmıyor (sayfa adresiyle hâlâ açılabilir).
 const NAV_GROUPS: NavGroup[] = [
   {
     label: "Genel",
     items: [
-      { href: "/superadmin/panel", icon: "dashboard", label: "Kontrol Paneli" },
+      { href: "/superadmin/panel", icon: "chart", label: "Kontrol Paneli" },
       { href: "/superadmin/institutions", icon: "institutions", label: "Klinikler" },
-      { href: "/superadmin/invoices", icon: "invoices", label: "Faturalar", countKey: "overdueInvoices" },
-      { href: "/superadmin/reports", icon: "reports", label: "Raporlar" },
+      { href: "/superadmin/invoices", icon: "hakediş", label: "Faturalar", countKey: "overdueInvoices" },
+      { href: "/superadmin/reports", icon: "rapor", label: "Raporlar" },
     ],
   },
   {
     label: "İletişim",
     items: [
       { href: "/superadmin/sms", icon: "sms", label: "SMS Yönetimi" },
-      { href: "/superadmin/announcements", icon: "announcements", label: "Duyurular" },
+      { href: "/superadmin/announcements", icon: "sa-announcements", label: "Duyurular" },
       { href: "/superadmin/support", icon: "support", label: "Destek Talepleri", countKey: "openSupport" },
     ],
   },
   {
     label: "Yönetim",
     items: [
-      { href: "/superadmin/role-permissions", icon: "roles", label: "Rol Yetkileri" },
-      { href: "/superadmin/admins", icon: "admins", label: "Platform Yöneticileri" },
-      { href: "/superadmin/audit", icon: "audit", label: "Denetim Günlüğü" },
-    ],
-  },
-  {
-    label: "Ayarlar",
-    items: [
+      { href: "/superadmin/role-permissions", icon: "sa-roles", label: "Rol Yetkileri" },
+      { href: "/superadmin/admins", icon: "sa-admins", label: "Platform Yöneticileri" },
+      { href: "/superadmin/audit", icon: "sa-audit", label: "Denetim Günlüğü" },
       { href: "/superadmin/sistem", icon: "settings", label: "Sistem Ayarları" },
     ],
   },
 ];
 
-const COUNT_TITLE: Record<NonNullable<NavItem["countKey"]>, string> = {
-  overdueInvoices: "gecikmiş fatura",
-  openSupport: "yanıt bekleyen talep",
+const COUNT_META: Record<CountKey, { label: string; tone: "critical" | "warning" }> = {
+  overdueInvoices: { label: "gecikmiş fatura", tone: "critical" },
+  openSupport: { label: "yanıt bekleyen talep", tone: "warning" },
 };
+
+// Sayaçlar en çok bu sıklıkta tazelenir. Önceden her sayfa geçişinde ayrı
+// istek atılıyordu (canlıda 3-10 sn süren nav-counts, H12); aynı dış IP'yi
+// paylaşan ofiste gereksiz istek hız sınırına da yaklaştırır.
+const COUNTS_MIN_INTERVAL_MS = 60_000;
 
 function isActivePath(pathname: string, href: string) {
   if (pathname === href || pathname.startsWith(`${href}/`)) return true;
@@ -80,130 +67,154 @@ function isActivePath(pathname: string, href: string) {
   return href === "/superadmin/sistem" && pathname.startsWith("/superadmin/smtp");
 }
 
-function SidebarNav({ pathname, counts, onNavigate }: { pathname: string; counts: NavCounts | null; onNavigate?: () => void }) {
+/** Masaüstü ve telefon menüsünün TEK çizimi — klinik menüsüyle aynı ölçü ve rozet. */
+function NavList({ pathname, counts, onNavigate }: { pathname: string; counts: NavCounts | null; onNavigate?: () => void }) {
   return (
-    <nav aria-label="Platform yönetimi menüsü" className="flex-1 overflow-y-auto px-3 py-2">
-      {NAV_GROUPS.map((group, gi) => (
-        <div key={group.label} className={gi > 0 ? "mt-1 border-t border-slate-100 pt-1" : ""}>
-          <p className="px-3 pb-1 pt-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">{group.label}</p>
-          <div className="flex flex-col gap-0.5">
+    <>
+      {NAV_GROUPS.map((group, groupIndex) => (
+        <div key={group.label} className={groupIndex > 0 ? "mt-1.5 border-t border-slate-100 pt-1.5" : ""}>
+          <p className="px-3 pb-1 pt-1 text-xs font-semibold text-slate-500">{group.label}</p>
+          <ul className="space-y-0.5">
             {group.items.map((item) => {
-              const isActive = isActivePath(pathname, item.href);
-              const src = ICON_SRC[item.icon];
+              const active = isActivePath(pathname, item.href);
               const badge = item.countKey && counts ? counts[item.countKey] : 0;
+              const meta = item.countKey ? COUNT_META[item.countKey] : null;
               return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  onClick={onNavigate}
-                  aria-current={isActive ? "page" : undefined}
-                  className={`group grid h-10 grid-cols-[32px_minmax(0,1fr)_auto] items-center gap-x-2.5 rounded-lg px-3 text-sm transition-colors duration-150 ${
-                    isActive
-                      ? "bg-primary-50/80 font-bold text-primary shadow-[inset_3px_0_0_rgb(var(--app-primary))]"
-                      : "font-semibold text-slate-700 hover:bg-slate-100/70 hover:text-slate-950"
-                  }`}
-                >
-                  <span className="module-icon" data-active={isActive ? "true" : "false"} aria-hidden="true">
-                    {src && (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={src} alt="" width={26} height={26} draggable={false} className="module-icon-img" />
-                    )}
-                  </span>
-                  <span className="truncate">{item.label}</span>
-                  {badge > 0 && item.countKey ? (
-                    <span
-                      className="min-w-[1.25rem] rounded-full bg-red-600 px-1.5 text-center text-[11px] font-bold leading-5 text-white"
-                      title={`${badge} ${COUNT_TITLE[item.countKey]}`}
-                      aria-label={`${badge} ${COUNT_TITLE[item.countKey]}`}
-                    >
-                      {badge > 99 ? "99+" : badge}
-                    </span>
-                  ) : <span />}
-                </Link>
+                <li key={item.href}>
+                  <Link
+                    href={item.href}
+                    onClick={onNavigate}
+                    aria-current={active ? "page" : undefined}
+                    className={[
+                      "relative flex h-11 items-center gap-3 rounded-lg px-3 text-sm transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 focus-visible:ring-offset-1",
+                      active
+                        ? "bg-primary-50/80 font-bold text-primary shadow-[inset_3px_0_0_rgb(var(--app-primary))]"
+                        : "font-semibold text-slate-700 hover:bg-slate-100/70 hover:text-slate-950",
+                    ].join(" ")}
+                  >
+                    <ModuleIcon module={item.icon} active={active} />
+                    <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                    {meta && <CountBadge count={badge} tone={meta.tone} label={meta.label} />}
+                  </Link>
+                </li>
               );
             })}
-          </div>
+          </ul>
         </div>
       ))}
-    </nav>
+    </>
   );
 }
 
-function Brand({ compact = false }: { compact?: boolean }) {
+function Brand() {
   return (
-    <div>
-      <p className={`font-display font-black tracking-tight text-slate-900 ${compact ? "text-base" : "text-lg"}`}>Platform Yönetimi</p>
-      <p className="mt-0.5 text-xs font-semibold text-slate-500">CepKlinik sahibi paneli</p>
-    </div>
+    <span className="flex min-w-0 items-center gap-2.5">
+      <span aria-hidden="true" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-white">
+        <ShieldCheck className="h-[18px] w-[18px]" strokeWidth={2.2} />
+      </span>
+      <span className="truncate text-[13px] font-black tracking-tight text-slate-900">CepKlinik · Platform</span>
+    </span>
   );
 }
 
+/**
+ * Platform yönetimi sol menüsü — klinik menüsüyle aynı görsel dil: modül
+ * ikonu, 44px satır, cümle düzeninde grup adı, ortak sayaç rozeti. Geniş
+ * ekranda (≥1024px) sabit; telefon ve tablette ☰ ile soldan çekmece (ortak
+ * Drawer: Esc ve karartılmış alan kapatır, odak içeride kalır). Oturumu
+ * kapatma üst çubuktaki hesap menüsünde (klinik paneliyle aynı yer).
+ */
 export default function Sidebar() {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [counts, setCounts] = useState<NavCounts | null>(null);
+  const lastFetchRef = useRef(0);
+  const inFlightRef = useRef(false);
 
   useEffect(() => {
-    const h = () => setMobileOpen((v) => !v);
-    window.addEventListener("toggle-mobile-sidebar", h as EventListener);
-    return () => window.removeEventListener("toggle-mobile-sidebar", h as EventListener);
+    const toggle = () => setMobileOpen((value) => !value);
+    window.addEventListener("toggle-mobile-sidebar", toggle);
+    return () => window.removeEventListener("toggle-mobile-sidebar", toggle);
   }, []);
 
   useEffect(() => {
     setMobileOpen(false);
   }, [pathname]);
 
-  // İş kuyruğu sayaçları (gecikmiş fatura, yanıt bekleyen destek) her sayfa
-  // değişiminde tazelenir; böylece bir işi bitirince menüdeki sayı da düşer.
-  useEffect(() => {
-    let cancelled = false;
+  const refreshCounts = useCallback((force = false) => {
+    if (inFlightRef.current) return;
+    if (!force && Date.now() - lastFetchRef.current < COUNTS_MIN_INTERVAL_MS) return;
+    inFlightRef.current = true;
+    lastFetchRef.current = Date.now();
     fetch("/api/superadmin/nav-counts", { cache: "no-store" })
       .then((res) => (res.ok ? res.json() : null))
       .then((data: NavCounts | null) => {
-        if (!cancelled && data) setCounts(data);
+        if (data) setCounts(data);
       })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
+      .catch(() => undefined)
+      .finally(() => {
+        inFlightRef.current = false;
+      });
+  }, []);
+
+  // İş kuyruğu sayaçları: açılışta bir kez; sonra sayfa değişince ya da
+  // sekmeye dönülünce, ama en çok dakikada bir. Fatura tahsil edilip destek
+  // yanıtlanınca ilgili sayfa olayıyla hemen tazelenir.
+  useEffect(() => {
+    refreshCounts();
+  }, [pathname, refreshCounts]);
+
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refreshCounts();
     };
-  }, [pathname]);
+    const onChanged = () => refreshCounts(true);
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("superadmin-counts-changed", onChanged);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("superadmin-counts-changed", onChanged);
+    };
+  }, [refreshCounts]);
+
+  // Çekmece yalnız dar ekranda anlamlıdır; pencere genişleyince kapanır.
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const query = window.matchMedia("(min-width: 1024px)");
+    const onChange = () => { if (query.matches) setMobileOpen(false); };
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, [mobileOpen]);
 
   return (
     <>
-      {/* Masaüstü — her zaman görünür sabit menü */}
-      <aside className="hidden h-full w-64 flex-col overflow-hidden border-r border-slate-200/80 bg-[rgb(var(--app-surface))] md:flex">
-        <div className="border-b border-slate-100 px-5 py-4">
-          <Brand />
-        </div>
-        <SidebarNav pathname={pathname} counts={counts} />
-        <div className="border-t border-slate-100 p-3">
-          <LogoutButton />
-        </div>
-      </aside>
+      <Drawer
+        id="platform-mobil-menu"
+        open={mobileOpen}
+        onClose={() => setMobileOpen(false)}
+        side="left"
+        size="sm"
+        padding="none"
+        title={<Brand />}
+      >
+        <nav aria-label="Platform yönetimi menüsü" className="px-2 py-2">
+          <NavList pathname={pathname} counts={counts} onNavigate={() => setMobileOpen(false)} />
+        </nav>
+      </Drawer>
 
-      {/* Mobil — hamburger ile açılan kayan çekmece (klinik panelindeki
-          aynı `toggle-mobile-sidebar` olayını dinler) */}
-      {mobileOpen && (
-        <div
-          className="fixed inset-0 z-[170] bg-black/40 md:hidden"
-          onPointerDown={(event) => {
-            if (event.target === event.currentTarget) setMobileOpen(false);
-          }}
-        >
-          <div className="flex h-dvh max-h-dvh w-[min(86vw,288px)] flex-col overflow-hidden border-r border-slate-200 bg-white shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-100 p-4">
-              <Brand compact />
-              <button onClick={() => setMobileOpen(false)} aria-label="Menüyü kapat" className="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900">
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <SidebarNav pathname={pathname} counts={counts} onNavigate={() => setMobileOpen(false)} />
-            <div className="border-t border-slate-100 p-3">
-              <LogoutButton />
-            </div>
-          </div>
+      {/* Ad içerideki nav'da: aside ile nav aynı etiketi taşıyınca ekran okuyucu menüyü iki kez okuyordu. */}
+      <aside
+        className="hidden h-full w-[264px] shrink-0 flex-col overflow-hidden border-r border-slate-200/80 bg-white shadow-[4px_0_18px_rgb(15_23_42/0.045),1px_0_0_rgb(15_23_42/0.03)] lg:flex"
+      >
+        <div className="flex h-14 shrink-0 items-center border-b border-slate-100 px-4">
+          <Link href="/superadmin/panel" className="flex min-w-0 items-center rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70" aria-label="Platform yönetimi — Kontrol Paneli">
+            <Brand />
+          </Link>
         </div>
-      )}
+        <nav aria-label="Platform yönetimi menüsü" className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2 py-2">
+          <NavList pathname={pathname} counts={counts} />
+        </nav>
+      </aside>
     </>
   );
 }

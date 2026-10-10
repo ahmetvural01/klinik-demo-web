@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Modal } from "@/components/ui/Modal";
+import { FormModal } from "@/components/ui/FormModal";
 import { Button } from "@/components/ui/Button";
+import { Callout } from "@/components/ui/Callout";
 import { Input, Select, Textarea } from "@/components/ui/Input";
-import { FormErrorBanner, FormField } from "@/components/ui/FormField";
-import { clientMutation } from "@/lib/client-mutation";
+import { FormField } from "@/components/ui/FormField";
+import { errorMessage, saSend } from "./sa-fetch";
 import { showToastSafe } from "@/lib/toast-client";
 import { turkeyDateTimeLocalValue, turkeyLocalDateTimeToUtc } from "@/lib/tz";
 import { SUBSCRIPTION_PLANS, type BillingCycleId, type SubscriptionPlanId } from "@/lib/subscription-plans";
@@ -78,7 +79,8 @@ function toForm(i: EditableInstitution): FormState {
   };
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+// Ortak ui/Section (başlıklı kart) ile karışmasın diye ayrı ad: form içi alan grubu.
+function FieldGroup({ title, children }: { title: string; children: ReactNode }) {
   return (
     <fieldset className="space-y-3 border-t border-slate-100 pt-4 first:border-t-0 first:pt-0">
       <legend className="mb-1 text-sm font-bold text-slate-900">{title}</legend>
@@ -89,8 +91,8 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 
 /**
  * Klinik dosyası › Düzenle. Bölümler kart içinde kart değil, sade başlıklı
- * gruplar. "Klinik aktif" kutusu burada YOK: kapatma/açma tek yerde (Özet ›
- * Diğer işlemler), onaylı yapılır. Servis modu kod adları yerine Türkçe ve
+ * gruplar. "Klinik aktif" kutusu burada YOK: kapatma/açma tek yerde (klinik
+ * dosyası başlığındaki "…" menüsü), onaylı yapılır. Servis modu kod adları yerine Türkçe ve
  * ne yaptığını anlatan seçenekler. WhatsApp erişimi tek yerden (SMS Yönetimi
  * › WhatsApp) onaylı açılıp kapatılır; reklam ayarı klinik panelinde reklam
  * gösterilen bir alan olmadığı için burada sunulmaz (etkisizdi).
@@ -128,6 +130,15 @@ export function InstitutionEditModal({
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => setForm((current) => ({ ...current, [key]: value }));
   const plan = SUBSCRIPTION_PLANS[form.subscriptionPlan];
   const accessHint = ACCESS_OPTIONS.find((option) => option.value === form.access)?.hint;
+  // Plan sınırı varken alan boşsa sınır hiç uygulanmıyordu ("Plan sınırı: 5
+  // doktor" yazarken klinik sınırsız açabiliyordu — canlı test H8). Uyarı +
+  // tek tıkla plan varsayılanını doldurma; kaydedilene kadar hiçbir şey değişmez.
+  const limitsMissing = (plan.maxUsers != null && !form.maxActiveUsers) || (plan.maxDoctors != null && !form.maxActiveDoctors);
+  const applyPlanLimits = () => setForm((current) => ({
+    ...current,
+    maxActiveUsers: current.maxActiveUsers || (plan.maxUsers != null ? String(plan.maxUsers) : ""),
+    maxActiveDoctors: current.maxActiveDoctors || (plan.maxDoctors != null ? String(plan.maxDoctors) : ""),
+  }));
 
   const save = async () => {
     if (!form.name.trim()) return setError("Klinik adı boş olamaz.");
@@ -161,39 +172,31 @@ export function InstitutionEditModal({
     setSaving(true);
     setError(null);
     try {
-      await clientMutation(
-        `/api/superadmin/institutions/${institution.id}`,
-        { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
-        "Klinik bilgileri kaydedilemedi.",
-      );
+      await saSend(`/api/superadmin/institutions/${institution.id}`, "PUT", body, "Klinik bilgileri kaydedilemedi.");
       showToastSafe({ type: "success", message: `${form.name.trim()} kaydedildi.`, icon: "institutions" });
       onClose();
       onSaved();
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : "Klinik bilgileri kaydedilemedi.");
+      setError(errorMessage(failure, "Klinik bilgileri kaydedilemedi."));
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Modal
+    <FormModal
       open={open}
       onClose={onClose}
       title="Klinik bilgilerini düzenle"
       description={institution.name}
       size="lg"
-      footer={
-        <>
-          <Button variant="secondary" onClick={onClose}>Vazgeç</Button>
-          <Button loading={saving} onClick={() => void save()}>Kaydet</Button>
-        </>
-      }
+      onSubmit={() => save()}
+      submitting={saving}
+      error={error}
     >
       <div className="space-y-4">
-        <FormErrorBanner message={error} />
 
-        <Section title="Klinik bilgileri">
+        <FieldGroup title="Klinik bilgileri">
           <div className="grid gap-3 md:grid-cols-2">
             <FormField label="Klinik adı" htmlFor="edit-name" required hint="Klinik kullanıcıları girişte bu adı yazar">
               <Input id="edit-name" value={form.name} onChange={(event) => set("name", event.target.value)} />
@@ -214,9 +217,9 @@ export function InstitutionEditModal({
               <Input id="edit-address" value={form.address} onChange={(event) => set("address", event.target.value)} />
             </FormField>
           </div>
-        </Section>
+        </FieldGroup>
 
-        <Section title="Abonelik">
+        <FieldGroup title="Abonelik">
           <div className="grid gap-3 md:grid-cols-2">
             <FormField label="Plan" htmlFor="edit-plan" hint={`Plan sınırı: ${plan.maxDoctors ?? "sınırsız"} doktor, ${plan.maxUsers ?? "sınırsız"} kullanıcı`}>
               <Select
@@ -250,9 +253,19 @@ export function InstitutionEditModal({
               <Input id="edit-max-doctors" type="number" inputMode="numeric" min="1" value={form.maxActiveDoctors} onChange={(event) => set("maxActiveDoctors", event.target.value)} />
             </FormField>
           </div>
-        </Section>
+          {limitsMissing && (
+            <Callout
+              tone="warning"
+              compact
+              title="Plan sınırı uygulanmıyor"
+              action={<Button size="sm" variant="secondary" onClick={applyPlanLimits}>Plan sınırlarını uygula</Button>}
+            >
+              Alan boş olduğu için klinik plandan fazla kullanıcı/doktor açabilir.
+            </Callout>
+          )}
+        </FieldGroup>
 
-        <Section title="Hizmet durumu">
+        <FieldGroup title="Hizmet durumu">
           <div className="grid gap-3 md:grid-cols-2">
             <FormField label="Klinik ne yapabilsin?" htmlFor="edit-access" hint={accessHint}>
               <Select
@@ -281,9 +294,9 @@ export function InstitutionEditModal({
               </FormField>
             </div>
           </div>
-        </Section>
+        </FieldGroup>
 
       </div>
-    </Modal>
+    </FormModal>
   );
 }

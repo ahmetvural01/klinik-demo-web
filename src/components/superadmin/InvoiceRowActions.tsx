@@ -2,15 +2,16 @@
 
 import { useState } from "react";
 import { Ban, BellRing, CheckCircle2 } from "lucide-react";
-import { Button, IconButton } from "@/components/ui/Button";
-import { Modal } from "@/components/ui/Modal";
+import { Button } from "@/components/ui/Button";
+import { ActionMenu } from "@/components/ui/ActionMenu";
+import { FormModal } from "@/components/ui/FormModal";
 import { Input, Textarea } from "@/components/ui/Input";
-import { FormErrorBanner, FormField } from "@/components/ui/FormField";
-import { clientMutation } from "@/lib/client-mutation";
+import { FormField } from "@/components/ui/FormField";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
 import type { InvoiceViewStatus } from "./invoice-status";
-import { dateTime, money, todayKey } from "./sa-format";
+import { errorMessage, notifyCountsChanged, saSend } from "./sa-fetch";
+import { dateTime, money, shortDate, todayKey } from "./sa-format";
 
 export type InvoiceActionTarget = {
   id: string;
@@ -19,16 +20,36 @@ export type InvoiceActionTarget = {
   status: InvoiceViewStatus;
   institutionName?: string | null;
   lastReminderAt?: string | null;
+  /** Son hatırlatma denemesinin sonucu ("SENT" / "FAILED"). */
+  lastReminderStatus?: string | null;
+  /** Kliniğe ULAŞAN hatırlatma sayısı (başarısız denemeler sayılmaz). */
   reminderCount?: number;
 };
 
 /**
+ * Fatura satırının hatırlatma notu: kaç hatırlatma ULAŞTI ve son denemenin
+ * sonucu. Önceden başarısız denemeler de sayılıyordu: SMTP kapalıyken 24
+ * başarısız deneme "24 hatırlatma" görünüyor, kliniğe hiç ulaşmamış
+ * hatırlatma ulaşmış sanılıyordu (canlı test H3).
+ */
+export function InvoiceReminderNote({ invoice }: { invoice: InvoiceActionTarget }) {
+  const isOpen = invoice.status === "PENDING" || invoice.status === "OVERDUE";
+  if (!isOpen || !invoice.lastReminderAt) return null;
+  const sent = invoice.reminderCount ?? 0;
+  const failedLast = invoice.lastReminderStatus === "FAILED";
+  return (
+    <p className={`mt-0.5 text-xs ${failedLast ? "font-medium text-amber-700" : "text-slate-500"}`}>
+      {sent > 0 ? `${sent} hatırlatma ulaştı · ` : ""}
+      {failedLast ? `son deneme ulaşmadı (${shortDate(invoice.lastReminderAt)})` : `son ${shortDate(invoice.lastReminderAt)}`}
+    </p>
+  );
+}
+
+/**
  * Fatura satırı eylemleri — Faturalar sayfası ve klinik dosyası AYNI bileşeni
- * kullanır. Eylemler türetilmiş durumdan üretilir: yalnız açık (bekleyen /
- * gecikmiş) faturada "Tahsil edildi", "Hatırlat" ve "İptal et" görünür.
- * Önceden iptal edilmiş faturada da "Ödendi İşaretle" çıkıyor, onaylanınca
- * sunucu 409 dönüyordu; hatalı kesilen faturayı iptal etmenin yolu yoktu
- * (tek çıkış tahsil edilmemiş parayı "ödendi" saymaktı).
+ * kullanır. Yalnız açık (bekleyen / gecikmiş) faturada görünür: en sık iş
+ * "Tahsil et" yazılı düğme, hatırlatma ve iptal "…" menüsünde. Önceden üç
+ * yalnız-ikon düğme vardı; anlamı ancak üzerine gelince anlaşılıyordu.
  */
 export function InvoiceRowActions({ invoice, onChanged }: { invoice: InvoiceActionTarget; onChanged: () => void }) {
   const [paidOpen, setPaidOpen] = useState(false);
@@ -39,32 +60,35 @@ export function InvoiceRowActions({ invoice, onChanged }: { invoice: InvoiceActi
 
   const remind = async () => {
     const last = invoice.lastReminderAt ? dateTime(invoice.lastReminderAt) : null;
+    const sent = invoice.reminderCount ?? 0;
+    const history = last
+      ? ` Son deneme: ${last}${invoice.lastReminderStatus === "FAILED" ? " (ulaşmadı)" : ""}. Kliniğe ulaşan hatırlatma: ${sent}.`
+      : " Bu fatura için daha önce hatırlatma gönderilmedi.";
     const ok = await confirmDialog({
       title: "Hatırlatma gönderilsin mi?",
-      message: `${invoice.institutionName ? `${invoice.institutionName} kliniğine` : "Kliniğe"} ${invoice.invoiceNo} numaralı ${money(invoice.amount)} tutarındaki fatura için e-posta ve SMS ile hatırlatma gönderilecek.${last ? ` Son hatırlatma: ${last} (toplam ${invoice.reminderCount ?? 1}).` : " Bu fatura için daha önce hatırlatma gönderilmedi."}`,
+      message: `${invoice.institutionName ? `${invoice.institutionName} kliniğine` : "Kliniğe"} ${invoice.invoiceNo} numaralı ${money(invoice.amount)} tutarındaki fatura için e-posta ve SMS ile hatırlatma gönderilecek.${history}`,
       confirmText: "Gönder",
       cancelText: "Vazgeç",
     });
     if (!ok) return;
     setReminding(true);
     try {
-      const res = await fetch("/api/superadmin/invoices/remind", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ invoiceId: invoice.id, channels: ["EMAIL", "SMS"] }),
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(data?.message || "Hatırlatma gönderilemedi.");
-      const results: Array<{ channel: string; success: boolean }> = Array.isArray(data?.results) ? data.results : [];
-      const sent = results.filter((item) => item.success).map((item) => (item.channel === "EMAIL" ? "e-posta" : "SMS"));
-      if (results.length > 0 && sent.length === 0) {
-        showToastSafe({ type: "error", message: "Hatırlatma gönderilemedi. Kliniğin e-posta ve telefon bilgisini kontrol edin." });
+      const data = await saSend<{ results?: Array<{ channel: string; success: boolean }> }>(
+        "/api/superadmin/invoices/remind",
+        "POST",
+        { invoiceId: invoice.id, channels: ["EMAIL", "SMS"] },
+        "Hatırlatma gönderilemedi.",
+      );
+      const results = Array.isArray(data?.results) ? data.results : [];
+      const delivered = results.filter((item) => item.success).map((item) => (item.channel === "EMAIL" ? "e-posta" : "SMS"));
+      if (results.length > 0 && delivered.length === 0) {
+        showToastSafe({ type: "error", message: "Hatırlatma gönderilemedi. Kliniğin e-posta ve telefon bilgisini, Sistem Ayarları › E-posta ayarını kontrol edin." });
       } else {
-        showToastSafe({ type: sent.length === results.length ? "success" : "info", message: `Hatırlatma gönderildi: ${sent.join(" ve ") || "—"}.` });
+        showToastSafe({ type: delivered.length === results.length ? "success" : "info", message: `Hatırlatma gönderildi: ${delivered.join(" ve ") || "—"}.` });
       }
       onChanged();
     } catch (error) {
-      showToastSafe({ type: "error", message: error instanceof Error ? error.message : "Hatırlatma gönderilemedi." });
+      showToastSafe({ type: "error", message: errorMessage(error, "Hatırlatma gönderilemedi.") });
     } finally {
       setReminding(false);
     }
@@ -72,9 +96,14 @@ export function InvoiceRowActions({ invoice, onChanged }: { invoice: InvoiceActi
 
   return (
     <div className="flex items-center justify-end gap-1.5">
-      <IconButton icon={CheckCircle2} title="Tahsil edildi olarak işaretle" tone="primary" size="sm" onClick={() => setPaidOpen(true)} />
-      <IconButton icon={BellRing} title={reminding ? "Gönderiliyor…" : "Hatırlatma gönder"} size="sm" disabled={reminding} onClick={() => void remind()} />
-      <IconButton icon={Ban} title="Faturayı iptal et" tone="danger" size="sm" onClick={() => setCancelOpen(true)} />
+      <Button size="sm" variant="secondary" icon={CheckCircle2} onClick={() => setPaidOpen(true)}>Tahsil et</Button>
+      <ActionMenu
+        label={`${invoice.invoiceNo} için diğer işlemler`}
+        items={[
+          { key: "remind", label: reminding ? "Gönderiliyor…" : "Hatırlatma gönder", icon: BellRing, disabled: reminding, onSelect: () => void remind() },
+          { key: "cancel", label: "Faturayı iptal et", icon: Ban, danger: true, separatorBefore: true, onSelect: () => setCancelOpen(true) },
+        ]}
+      />
       <InvoicePaidModal invoice={paidOpen ? invoice : null} onClose={() => setPaidOpen(false)} onDone={onChanged} />
       <InvoiceCancelModal invoice={cancelOpen ? invoice : null} onClose={() => setCancelOpen(false)} onDone={onChanged} />
     </div>
@@ -96,47 +125,39 @@ function InvoicePaidModal({ invoice, onClose, onDone }: { invoice: InvoiceAction
     setSaving(true);
     setError(null);
     try {
-      await clientMutation(
-        `/api/superadmin/invoices/${invoice.id}`,
-        { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "PAID", paidDate, note: note.trim() || undefined }) },
-        "Tahsilat kaydedilemedi.",
-      );
+      await saSend(`/api/superadmin/invoices/${invoice.id}`, "PATCH", { status: "PAID", paidDate, note: note.trim() || undefined }, "Tahsilat kaydedilemedi.");
       showToastSafe({ type: "success", message: `${invoice.invoiceNo} tahsil edildi olarak kaydedildi.`, icon: "finance" });
       setNote("");
+      notifyCountsChanged();
       onClose();
       onDone();
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : "Tahsilat kaydedilemedi.");
+      setError(errorMessage(failure, "Tahsilat kaydedilemedi."));
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Modal
+    <FormModal
       open={Boolean(invoice)}
       onClose={onClose}
       title="Tahsilatı kaydet"
       description={invoice ? `${invoice.invoiceNo} · ${money(invoice.amount)}${invoice.institutionName ? ` · ${invoice.institutionName}` : ""}` : undefined}
       size="sm"
-      footer={
-        <>
-          <Button variant="secondary" onClick={onClose}>Vazgeç</Button>
-          <Button loading={saving} onClick={() => void save()}>Kaydet</Button>
-        </>
-      }
+      onSubmit={() => save()}
+      submitting={saving}
+      error={error}
+      formClassName="space-y-3"
     >
-      <div className="space-y-3">
-        <FormErrorBanner message={error} />
-        <p className="text-xs leading-5 text-slate-500">Yalnız para gerçekten geldiyse kaydedin. Kliniğin ödeme kilidi varsa kendiliğinden kalkar.</p>
-        <FormField label="Ödeme tarihi" htmlFor="invoice-paid-date" required>
-          <Input id="invoice-paid-date" type="date" max={todayKey()} value={paidDate} onChange={(event) => setPaidDate(event.target.value)} />
-        </FormField>
-        <FormField label="Not" htmlFor="invoice-paid-note" hint="Ör. Havale — dekont no 12345 (Denetim Günlüğü'ne yazılır)">
-          <Input id="invoice-paid-note" value={note} maxLength={300} onChange={(event) => setNote(event.target.value)} />
-        </FormField>
-      </div>
-    </Modal>
+      <p className="text-xs leading-5 text-slate-500">Yalnız para gerçekten geldiyse kaydedin. Kliniğin ödeme kilidi varsa kendiliğinden kalkar.</p>
+      <FormField label="Ödeme tarihi" htmlFor="invoice-paid-date" required>
+        <Input id="invoice-paid-date" type="date" max={todayKey()} value={paidDate} onChange={(event) => setPaidDate(event.target.value)} />
+      </FormField>
+      <FormField label="Not" htmlFor="invoice-paid-note" hint="Ör. Havale — dekont no 12345 (Denetim Günlüğü'ne yazılır)">
+        <Input id="invoice-paid-note" value={note} maxLength={300} onChange={(event) => setNote(event.target.value)} />
+      </FormField>
+    </FormModal>
   );
 }
 
@@ -154,43 +175,37 @@ function InvoiceCancelModal({ invoice, onClose, onDone }: { invoice: InvoiceActi
     setSaving(true);
     setError(null);
     try {
-      await clientMutation(
-        `/api/superadmin/invoices/${invoice.id}`,
-        { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "CANCELLED", reason: reason.trim() }) },
-        "Fatura iptal edilemedi.",
-      );
+      await saSend(`/api/superadmin/invoices/${invoice.id}`, "PATCH", { status: "CANCELLED", reason: reason.trim() }, "Fatura iptal edilemedi.");
       showToastSafe({ type: "success", message: `${invoice.invoiceNo} iptal edildi.`, icon: "finance" });
       setReason("");
+      notifyCountsChanged();
       onClose();
       onDone();
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : "Fatura iptal edilemedi.");
+      setError(errorMessage(failure, "Fatura iptal edilemedi."));
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Modal
+    <FormModal
       open={Boolean(invoice)}
       onClose={onClose}
       title="Faturayı iptal et"
       description={invoice ? `${invoice.invoiceNo} · ${money(invoice.amount)}${invoice.institutionName ? ` · ${invoice.institutionName}` : ""}` : undefined}
       size="sm"
-      footer={
-        <>
-          <Button variant="secondary" onClick={onClose}>Vazgeç</Button>
-          <Button variant="danger" loading={saving} onClick={() => void save()}>Faturayı iptal et</Button>
-        </>
-      }
+      onSubmit={() => save()}
+      submitting={saving}
+      submitLabel="Faturayı iptal et"
+      submitVariant="danger"
+      error={error}
+      formClassName="space-y-3"
     >
-      <div className="space-y-3">
-        <FormErrorBanner message={error} />
-        <p className="text-xs leading-5 text-slate-500">İptal edilen fatura borç toplamlarından çıkar ve geri alınamaz. Para tahsil edildiyse iptal etmeyin, &quot;Tahsil edildi&quot; olarak kaydedin.</p>
-        <FormField label="İptal nedeni" htmlFor="invoice-cancel-reason" required>
-          <Textarea id="invoice-cancel-reason" rows={3} value={reason} maxLength={300} onChange={(event) => setReason(event.target.value)} placeholder="Ör. Aynı dönem için iki kez kesildi" />
-        </FormField>
-      </div>
-    </Modal>
+      <p className="text-xs leading-5 text-slate-500">İptal edilen fatura borç toplamlarından çıkar ve geri alınamaz. Para tahsil edildiyse iptal etmeyin, &quot;Tahsil et&quot; ile kaydedin.</p>
+      <FormField label="İptal nedeni" htmlFor="invoice-cancel-reason" required>
+        <Textarea id="invoice-cancel-reason" rows={3} value={reason} maxLength={300} onChange={(event) => setReason(event.target.value)} placeholder="Ör. Aynı dönem için iki kez kesildi" />
+      </FormField>
+    </FormModal>
   );
 }

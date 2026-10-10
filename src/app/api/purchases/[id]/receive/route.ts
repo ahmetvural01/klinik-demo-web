@@ -8,6 +8,7 @@ import { rebuildFirmaPaymentAllocations } from "@/lib/firma-payment-allocation";
 import { purchasePaymentToken } from "@/lib/purchase-payment-links";
 import { requireActiveBranch } from "@/lib/branch-context";
 import { BusinessRuleError, publicErrorResponse } from "@/lib/public-error";
+import { BUSY_MESSAGE, PURCHASE_TX_OPTIONS, isTransientDbError } from "../../transaction-errors";
 
 function toPublicPurchase(purchase: any) {
   if (!purchase) return purchase;
@@ -210,7 +211,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
           : undefined,
       });
       return { duplicate: false, paymentIslem };
-    });
+    }, PURCHASE_TX_OPTIONS);
 
     const fresh = await loadPurchase(purchase.id, auth.user.institutionId, branch.branchId);
     if (!result.duplicate) {
@@ -238,6 +239,8 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       }
     }
     console.error("[purchases/:id/receive POST]", error);
+    // İşlem geri alındı; aynı istek anahtarıyla yeniden denemek çift teslim yazmaz.
+    if (isTransientDbError(error)) return NextResponse.json({ error: BUSY_MESSAGE }, { status: 503 });
     const publicError = publicErrorResponse(error, "Sipariş teslim alınamadı. Lütfen tekrar deneyin.");
     return NextResponse.json({ error: publicError.message }, { status: publicError.status });
   }

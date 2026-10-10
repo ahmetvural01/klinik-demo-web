@@ -17,6 +17,7 @@ function reminderTenantWhere(id: string, institutionId: string | null | undefine
   };
 }
 
+// Yetki installments:write (bkz. ../route.ts: uçların tek ekranı Muhasebe › Taksitler).
 const USER_REMINDER_TRANSITIONS: Record<string, ReadonlySet<string>> = {
   AKTIF: new Set(["AKTIF", "TAMAMLANDI"]),
   BASARISIZ: new Set(["BASARISIZ", "AKTIF"]),
@@ -28,7 +29,7 @@ const USER_REMINDER_TRANSITIONS: Record<string, ReadonlySet<string>> = {
 export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   try {
-    const auth = await requireAuth("appointments:write");
+    const auth = await requireAuth("installments:write");
     if (auth.error) return auth.error;
     if (auth.user.role !== "SUPERADMIN" && !auth.user.institutionId) {
       return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
@@ -92,7 +93,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
 export async function DELETE(req: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   try {
-    const auth = await requireAuth("appointments:write");
+    const auth = await requireAuth("installments:write");
     if (auth.error) return auth.error;
     if (auth.user.role !== "SUPERADMIN" && !auth.user.institutionId) {
       return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });

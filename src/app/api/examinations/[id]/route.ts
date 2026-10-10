@@ -13,7 +13,7 @@ import {
   isDiagnosisExamStatus,
 } from "@/lib/examination-status";
 import { requireAuth, writeAudit } from "@/lib/api";
-import { effectiveDoctorWhere, isDoctorPeriodSettled } from "@/lib/hakedis";
+import { effectiveDoctorWhere, isChargeableForHakedis, isDoctorMonthOnLegacyRule, isDoctorPeriodSettled } from "@/lib/hakedis";
 import { requireActiveBranch } from "@/lib/branch-context";
 import { turkeyYearMonth } from "@/lib/tz";
 
@@ -117,6 +117,17 @@ export async function PUT(request: NextRequest, props: Params) {
   if (!canTransition(existing.status, parsed.data.status)) {
     return NextResponse.json({ message: "Bu muayene durum geçişine izin verilmiyor" }, { status: 409 });
   }
+  // Doktor yalnız kendi tedavi kaydını değiştirir ve kaydı başka hekime
+  // taşıyamaz (görünmez destek oturumu hariç); hakediş ve borç başka hekim
+  // adına değişmesin.
+  if (auth.user.role === "DOKTOR" && !auth.user.ghost) {
+    if (existing.doctorId !== auth.user.id) {
+      return NextResponse.json({ message: "Yalnız kendi tedavi kayıtlarınızı değiştirebilirsiniz." }, { status: 403 });
+    }
+    if (parsed.data.doctorId !== auth.user.id) {
+      return NextResponse.json({ message: "Tedavi kaydını başka hekime aktaramazsınız." }, { status: 403 });
+    }
+  }
 
   // POST'ta yeni patientId/doctorId kurum kapsamına göre doğrulanıyordu, ama
   // burada (PUT) hiç doğrulanmıyordu — body.patientId/doctorId değiştirilerek
@@ -150,24 +161,51 @@ export async function PUT(request: NextRequest, props: Params) {
   const amountChanged = Number(existing.amount) !== parsed.data.amount;
   const dateChanged = existing.diagnosedAt.toISOString() !== parsed.data.diagnosedAt;
   const doctorChangedForPeriod = existing.doctorId !== parsed.data.doctorId;
+  // İki hesap var (src/lib/hakedis.ts). Yeni kural planlanan (PLANLANDI) ve
+  // iptal edilen (IPTAL) tedaviyi saymaz (chargeable). Kural değişmeden önce
+  // eski hesapla ödenmiş ay ise eski kuralla kalır: ön teşhis dışındaki her
+  // kayıt sayılır (counted). Önceden kilit yalnız eski kurala bakıyordu:
+  // ödenmiş ayda PLANLANDI → TAMAMLANDI ya da DEVAM → IPTAL geçişi kilide
+  // takılmadan hakedişi değiştiriyordu; planlanan tedaviyi "Yapıldı" ile
+  // bugüne taşımak ise yeni kuralla hesaplanan ödenmiş ayda hiçbir şeyi
+  // değiştirmediği halde reddediliyordu.
   const wasCounted = !isDiagnosisExamStatus(existing.status);
   const willBeCounted = !isDiagnosisExamStatus(parsed.data.status);
-  const countChanged = wasCounted !== willBeCounted;
+  const wasChargeable = wasCounted && isChargeableForHakedis(existing.status);
+  const willBeChargeable = willBeCounted && isChargeableForHakedis(parsed.data.status);
+  const countChanged = wasCounted !== willBeCounted || wasChargeable !== willBeChargeable;
   let periodLockOverridden = false;
   if (existing.doctorId && (amountChanged || dateChanged || doctorChangedForPeriod || countChanged)) {
+    const lockInstitutionId = auth.user.institutionId ?? null;
     const sourcePeriod = turkeyYearMonth(existing.diagnosedAt);
-    const sourceSettled = wasCounted
-      ? await isDoctorPeriodSettled(existing.doctorId, auth.user.institutionId ?? null, branch.branchId, sourcePeriod.year, sourcePeriod.month)
-      : false;
     const targetPeriod = turkeyYearMonth(new Date(parsed.data.diagnosedAt));
     const targetChanged = doctorChangedForPeriod || targetPeriod.year !== sourcePeriod.year || targetPeriod.month !== sourcePeriod.month;
-    const targetSettled = willBeCounted && (targetChanged || !wasCounted) && parsed.data.doctorId
-      ? await isDoctorPeriodSettled(parsed.data.doctorId, auth.user.institutionId ?? null, branch.branchId, targetPeriod.year, targetPeriod.month)
+    const valueChanged = amountChanged || dateChanged;
+    // Kaynak ay (eski doktor ve ay): kayıt oradan çıkıyor ya da aynı ayda
+    // tutarı/tarihi veya sayılma durumu değişiyor. Hedef ay yalnız farklıysa
+    // aranır: kayıt oraya giriyor.
+    const sourceChargeableChange = targetChanged
+      ? wasChargeable
+      : wasChargeable !== willBeChargeable || (wasChargeable && valueChanged);
+    const sourceCountedChange = targetChanged
+      ? wasCounted
+      : wasCounted !== willBeCounted || (wasCounted && valueChanged);
+    const isMonthLocked = async (doctorId: string, period: { year: number; month: number }, chargeableChange: boolean, countedChange: boolean) => {
+      if (!chargeableChange && !countedChange) return false;
+      if (!(await isDoctorPeriodSettled(doctorId, lockInstitutionId, branch.branchId, period.year, period.month))) return false;
+      if (chargeableChange) return true;
+      // Yalnız eski hesabı etkileyen düzeltme (planlanan/iptal tedavi): ay yeni
+      // kuralla hesaplanıyorsa ödenmiş hakediş değişmez.
+      return !lockInstitutionId || await isDoctorMonthOnLegacyRule({ doctorId, institutionId: lockInstitutionId, branchId: branch.branchId, ...period });
+    };
+    const sourceSettled = await isMonthLocked(existing.doctorId, sourcePeriod, sourceChargeableChange, sourceCountedChange);
+    const targetSettled = targetChanged && parsed.data.doctorId
+      ? await isMonthLocked(parsed.data.doctorId, targetPeriod, willBeChargeable, willBeCounted)
       : false;
     if (sourceSettled || targetSettled) {
       if (!auth.user.ghost && auth.user.role !== "SUPERADMIN") {
         return NextResponse.json(
-          { message: "Bu muayenenin ait olduğu dönem için doktora zaten hakediş ödemesi yapılmış; tutar/tarih/doktor değiştirilemez." },
+          { message: "Bu muayenenin ait olduğu dönem için doktora zaten hakediş ödemesi yapılmış; hakedişi değiştiren tutar, tarih, doktor ya da durum düzeltmesi yapılamaz." },
           { status: 400 },
         );
       }
@@ -247,12 +285,18 @@ export async function DELETE(_: NextRequest, props: Params) {
   if (!existing) {
     return NextResponse.json({ message: "Muayene kaydı bulunamadı" }, { status: 404 });
   }
+  if (auth.user.role === "DOKTOR" && !auth.user.ghost && existing.doctorId !== auth.user.id) {
+    return NextResponse.json({ message: "Yalnız kendi tedavi kayıtlarınızı iptal edebilirsiniz." }, { status: 403 });
+  }
 
   let periodLockOverridden = false;
   // Ön teşhis (muayene listesi) kaydı hakedişe hiç girmediği için onu
   // listeden çıkarmak ödenmiş bir dönemi değiştirmez; kilit yalnız hakedişe
-  // sayılan kayıtlar için aranır.
-  if (existing.doctorId && !isDiagnosisExamStatus(existing.status) && existing.status !== EXAM_STATUS_CANCELLED) {
+  // sayılan kayıtlar için aranır. İptal kaydı silmez, durumu IPTAL yapar:
+  // planlanan tedavi (PLANLANDI) yeni kuralda zaten sayılmaz, eski kuralda
+  // IPTAL olarak da sayılmaya devam eder; ödenmiş ayda iptali hakedişi
+  // değiştirmez (PUT ucundaki kilitle aynı kural).
+  if (existing.doctorId && !isDiagnosisExamStatus(existing.status) && isChargeableForHakedis(existing.status)) {
     const { year, month } = turkeyYearMonth(existing.diagnosedAt);
     const settled = await isDoctorPeriodSettled(existing.doctorId, auth.user.institutionId ?? null, branch.branchId, year, month);
     if (settled) {

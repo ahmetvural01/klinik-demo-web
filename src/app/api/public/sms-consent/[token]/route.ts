@@ -20,9 +20,24 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
   const result = await validateConsentToken(token);
   if (!result.ok) {
-    return NextResponse.json({ message: STATUS_MESSAGES[result.status] }, { status: 410 });
+    // Alan ekleme: `status` sayfanın duruma özel başlığı için; klinik adı ve
+    // telefonu (bulunamayan bağlantı hariç) "Kliniği ara" düğmesi için.
+    return NextResponse.json({
+      message: STATUS_MESSAGES[result.status],
+      status: result.status,
+      ...(result.status === "NOT_FOUND" ? {} : {
+        institutionName: result.institutionName || null,
+        institutionPhone: result.institutionPhone || null,
+        logoUrl: result.logoUrl || null,
+      }),
+    }, { status: 410 });
   }
-  return NextResponse.json({ institutionName: result.institutionName, patientInitial: result.patientInitial });
+  return NextResponse.json({
+    institutionName: result.institutionName,
+    patientInitial: result.patientInitial,
+    institutionPhone: result.institutionPhone,
+    logoUrl: result.logoUrl,
+  });
 }
 
 const decisionSchema = z.object({ decision: z.enum(["ENABLED", "DISABLED"]) });
@@ -49,7 +64,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   });
 
   if (!result.ok) {
-    return NextResponse.json({ message: STATUS_MESSAGES[result.status] }, { status: 410 });
+    return NextResponse.json({ message: STATUS_MESSAGES[result.status], status: result.status }, { status: 410 });
   }
   return NextResponse.json({ ok: true });
 }

@@ -34,11 +34,33 @@ export async function POST(request: NextRequest) {
   const branch = requireActiveBranch(auth.user.branchContext);
   if (!branch.ok || !auth.user.institutionId) return NextResponse.json({ message: branch.ok ? "Kurum bilgisi bulunamadı" : branch.message }, { status: 403 });
 
-  const body = await request.json();
+  const rawRequestKey = request.headers.get("Idempotency-Key")?.trim() || null;
+  if (rawRequestKey && (rawRequestKey.length < 8 || rawRequestKey.length > 180)) {
+    return NextResponse.json({ message: "İşlem anahtarı geçersiz" }, { status: 400 });
+  }
+  const requestKey = rawRequestKey;
+
+  const body = await request.json().catch(() => null);
   const parsed = prescriptionSchema.safeParse(body);
 
   if (!parsed.success) {
     return NextResponse.json({ message: "Geçersiz reçete verisi" }, { status: 400 });
+  }
+  // Ortak şemada uzunluk sınırı yok; tek istekle sınırsız metin yazılamasın.
+  if (parsed.data.drugs.length > 20_000 || (parsed.data.note?.length ?? 0) > 5_000) {
+    return NextResponse.json({ message: "Reçete metni çok uzun" }, { status: 400 });
+  }
+
+  // Aynı işlem anahtarıyla tekrar gelen istek (çift tıklama, ağ yeniden denemesi)
+  // ikinci reçete açmaz; ilk kayıt döner. Anahtar gönderilmezse eski davranış.
+  if (requestKey) {
+    const existing = await prisma.prescription.findFirst({
+      where: { requestKey, institutionId: auth.user.institutionId, branchId: branch.branchId },
+    });
+    if (existing) {
+      const { requestKey: _existingKey, ...publicPrescription } = existing;
+      return NextResponse.json({ ...publicPrescription, duplicateRequest: true }, { status: 200 });
+    }
   }
 
   const patient = await prisma.patient.findFirst({
@@ -49,7 +71,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Hasta bu şubede bulunamadı" }, { status: 404 });
   }
 
-  const resolvedDoctorId = parsed.data.doctorId || auth.user.id;
+  // Reçete yasal belgedir ve imza satırına seçilen hekim basılır: doktor
+  // reçeteyi yalnız kendi adına yazar (görünmez destek oturumu hariç).
+  // Yönetici, asistan ve banko hekim seçerek yazabilir.
+  const doctorSelf = auth.user.role === "DOKTOR" && !auth.user.ghost;
+  if (doctorSelf && parsed.data.doctorId && parsed.data.doctorId !== auth.user.id) {
+    return NextResponse.json({ message: "Yalnız kendi adınıza reçete yazabilirsiniz." }, { status: 403 });
+  }
+  const resolvedDoctorId = doctorSelf ? auth.user.id : parsed.data.doctorId || auth.user.id;
   const doctor = await prisma.user.findFirst({
     where: { id: resolvedDoctorId, ...effectiveDoctorWhere(auth.user.institutionId, branch.branchId) },
     select: { id: true },
@@ -58,15 +87,32 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Doktor bu şubenin kapsamı dışında" }, { status: 403 });
   }
 
-  const prescription = await prisma.prescription.create({
-    data: {
-      ...parsed.data,
-      institutionId: auth.user.institutionId,
-      branchId: branch.branchId,
-      doctorId: resolvedDoctorId
+  let prescription;
+  try {
+    prescription = await prisma.prescription.create({
+      data: {
+        ...parsed.data,
+        institutionId: auth.user.institutionId,
+        branchId: branch.branchId,
+        doctorId: resolvedDoctorId,
+        requestKey,
+      }
+    });
+  } catch (error) {
+    // Aynı anahtarla eşzamanlı iki istek: benzersiz kısıt ikinciyi reddeder, ilk kayıt döner.
+    if (requestKey && error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2002") {
+      const existing = await prisma.prescription.findFirst({
+        where: { requestKey, institutionId: auth.user.institutionId, branchId: branch.branchId },
+      });
+      if (existing) {
+        const { requestKey: _existingKey, ...publicPrescription } = existing;
+        return NextResponse.json({ ...publicPrescription, duplicateRequest: true }, { status: 200 });
+      }
     }
-  });
+    throw error;
+  }
 
   await writeAudit(auth.user.id, "PRESCRIPTION_CREATE", `Reçete oluşturuldu`);
-  return NextResponse.json(prescription, { status: 201 });
+  const { requestKey: _createdKey, ...publicPrescription } = prescription;
+  return NextResponse.json(publicPrescription, { status: 201 });
 }

@@ -1,16 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Plus, UserCheck, UserX, Wand2 } from "lucide-react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Plus, UserCheck, UserX } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
-import { Modal } from "@/components/ui/Modal";
+import { Callout } from "@/components/ui/Callout";
+import { FormModal } from "@/components/ui/FormModal";
 import { Input } from "@/components/ui/Input";
-import { FormErrorBanner, FormField } from "@/components/ui/FormField";
+import { FormField } from "@/components/ui/FormField";
 import { EmptyValue, ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
+import { isValidTurkishIdentityNumber } from "@/lib/tc-kimlik";
+import { TempPasswordField } from "@/components/superadmin/TempPasswordField";
 import { dateTime, shortDate } from "@/components/superadmin/sa-format";
 import { errorMessage, isAbort, saGet, saSend } from "@/components/superadmin/sa-fetch";
 
@@ -28,19 +32,17 @@ type Admin = {
 
 const EMPTY = { fullName: "", identityNo: "", email: "", password: "" };
 
-function generatePassword(): string {
-  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
-  const values = new Uint32Array(12);
-  crypto.getRandomValues(values);
-  return Array.from(values, (value) => alphabet[value % alphabet.length]).join("");
-}
-
 /**
  * Platform yöneticileri — bu paneli kullanabilen hesaplar. Her satırda sabit
  * "Tam erişim" rozeti (bilgi değeri yoktu) yerine son giriş ve iki adımlı
  * doğrulama durumu; pasife alma satırdan, onaylı. TC kimlik no maskeli.
+ * Kendi iki adımlı doğrulaması kapalı yöneticiye Profilim'e giden yol
+ * gösterilir (önceden "Kapalı" uyarısı vardı ama açmanın yolu yoktu).
  */
 export default function AdminsPage() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [admins, setAdmins] = useState<Admin[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -52,6 +54,20 @@ export default function AdminsPage() {
   const [saving, setSaving] = useState(false);
 
   const reload = useCallback(() => setReloadKey((value) => value + 1), []);
+
+  const openCreate = useCallback(() => {
+    setFormError(null);
+    setOpen(true);
+  }, []);
+
+  // Derin bağlantı: /superadmin/admins?yeni=1 formu açar (Klinikler/Faturalar ile aynı).
+  useEffect(() => {
+    if (searchParams.get("yeni") !== "1") return;
+    openCreate();
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("yeni");
+    router.replace(`${pathname}${params.toString() ? `?${params.toString()}` : ""}`, { scroll: false });
+  }, [openCreate, pathname, router, searchParams]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -97,7 +113,7 @@ export default function AdminsPage() {
 
   const create = async () => {
     if (!form.fullName.trim()) return setFormError("Ad soyad yazın.");
-    if (!/^\d{11}$/.test(form.identityNo.trim())) return setFormError("TC kimlik numarası 11 rakam olmalı.");
+    if (!isValidTurkishIdentityNumber(form.identityNo)) return setFormError("Geçerli bir TC kimlik numarası yazın (11 rakam).");
     if (form.email.trim() && !/^\S+@\S+\.\S+$/.test(form.email.trim())) return setFormError("Geçerli bir e-posta yazın.");
     if (form.password.length < 8 || form.password.length > 72) return setFormError("Şifre 8-72 karakter olmalı.");
     setSaving(true);
@@ -120,6 +136,7 @@ export default function AdminsPage() {
     }
   };
 
+  const self = admins.find((admin) => admin.isSelf) || null;
   const statusBadge = (admin: Admin) => <Badge tone={admin.isActive ? "success" : "neutral"}>{admin.isActive ? "Aktif" : "Pasif"}</Badge>;
   const twoFactor = (admin: Admin) => (admin.twoFactorEnabled ? <Badge tone="success">Açık</Badge> : <Badge tone="warning">Kapalı</Badge>);
   const action = (admin: Admin) => (
@@ -154,18 +171,30 @@ export default function AdminsPage() {
   return (
     <section className="space-y-4">
       <PageHeader
-        icon="person"
+        icon="sa-admins"
         title="Platform Yöneticileri"
         description="Bu paneli kullanabilen hesaplar. Her yönetici tüm bölümlere erişir."
-        actions={<Button icon={Plus} onClick={() => { setFormError(null); setOpen(true); }}>Yeni yönetici</Button>}
+        actions={<Button icon={Plus} onClick={openCreate}>Yeni yönetici</Button>}
       />
+
+      {self && !self.twoFactorEnabled && (
+        <Callout
+          tone="warning"
+          title="İki adımlı doğrulamanız kapalı"
+          action={<Button size="sm" variant="secondary" href="/profil">Profilim</Button>}
+        >
+          Tüm kliniklere tam yetkiyle girebilen bir hesap; Profilim ekranından açın.
+        </Callout>
+      )}
 
       <ListTable<Admin>
         columns={columns}
         rows={admins}
         rowKey={(admin) => admin.id}
         loading={loading}
-        error={loadError}
+        // Veri varken yenileme hatası listeyi silmez; üstte şerit olarak görünür.
+        error={admins.length > 0 ? null : loadError}
+        staleError={admins.length > 0 ? loadError : null}
         onRetry={reload}
         rowClassName={(admin) => (admin.isActive ? "" : "opacity-60")}
         emptyText="Platform yöneticisi yok"
@@ -181,23 +210,19 @@ export default function AdminsPage() {
         )}
       />
 
-      <Modal
+      <FormModal
         open={open}
         onClose={() => setOpen(false)}
         title="Yeni platform yöneticisi"
         description="Bu kişi tüm klinikleri, faturaları ve platform ayarlarını yönetebilir."
         size="md"
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => setOpen(false)}>Vazgeç</Button>
-            <Button loading={saving} onClick={() => void create()}>Kaydet</Button>
-          </>
-        }
+        onSubmit={() => create()}
+        submitting={saving}
+        error={formError}
+        formClassName="space-y-3"
       >
-        <div className="space-y-3">
-          <FormErrorBanner message={formError} />
           <FormField label="Ad soyad" htmlFor="admin-name" required>
-            <Input id="admin-name" value={form.fullName} onChange={(event) => setForm((current) => ({ ...current, fullName: event.target.value }))} />
+            <Input id="admin-name" autoFocus value={form.fullName} onChange={(event) => setForm((current) => ({ ...current, fullName: event.target.value }))} />
           </FormField>
           <FormField label="TC kimlik no" htmlFor="admin-tc" required hint="Girişte kullanılır">
             <Input id="admin-tc" inputMode="numeric" maxLength={11} value={form.identityNo} onChange={(event) => setForm((current) => ({ ...current, identityNo: event.target.value.replace(/\D/g, "") }))} />
@@ -205,14 +230,8 @@ export default function AdminsPage() {
           <FormField label="E-posta" htmlFor="admin-email">
             <Input id="admin-email" type="email" value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} />
           </FormField>
-          <FormField label="Geçici şifre" htmlFor="admin-password" required hint="En az 8 karakter. Kişiye güvenli yoldan iletin.">
-            <div className="flex gap-1.5">
-              <Input id="admin-password" value={form.password} autoComplete="new-password" onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} />
-              <IconButton icon={Wand2} title="Şifre üret" onClick={() => setForm((current) => ({ ...current, password: generatePassword() }))} />
-            </div>
-          </FormField>
-        </div>
-      </Modal>
+          <TempPasswordField id="admin-password" length={12} value={form.password} onChange={(password) => setForm((current) => ({ ...current, password }))} />
+      </FormModal>
     </section>
   );
 }

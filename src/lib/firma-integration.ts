@@ -165,6 +165,8 @@ export function buildFirmaIntegrationMessage(summary: IntegrationSummary) {
   return `İşlem kaydedildi, ${summary.notes.join(" ve ")}.`;
 }
 
+const FIRMA_ISLEM_AUDIT_LABELS: Record<string, string> = { ALIM: "alış", HIZMET: "hizmet", ODEME: "ödeme" };
+
 export async function writeFirmaIntegrationAudit(
   userId: string,
   action: string,
@@ -173,8 +175,10 @@ export async function writeFirmaIntegrationAudit(
   tutar: number,
   summary?: IntegrationSummary,
 ) {
+  // İşlem türü kodu (ALIM, ODEME...) okunur Türkçe adla yazılır (önceden "odeme işlemi").
+  const typeLabel = FIRMA_ISLEM_AUDIT_LABELS[islemTipi] || islemTipi.toLocaleLowerCase("tr-TR");
   const detailParts = [
-    `${firmaName} için ${islemTipi.toLowerCase()} işlemi kaydedildi.`,
+    `${firmaName} için ${typeLabel} işlemi kaydedildi.`,
     `Tutar: ${tutar.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} TL`,
   ];
 

@@ -28,7 +28,8 @@ export function selectDoctors<T extends StaffLike>(staff: readonly T[] | null | 
 }
 
 export const ROLE_LABELS: Record<string, string> = {
-  YONETICI: "Klinik yöneticisi",
+  // Sözlük (tasarım sözleşmesi §3): rol adları "Yönetici" ve "Doktor".
+  YONETICI: "Yönetici",
   DOKTOR: "Doktor",
   ASISTAN: "Asistan",
   BANKO: "Banko",

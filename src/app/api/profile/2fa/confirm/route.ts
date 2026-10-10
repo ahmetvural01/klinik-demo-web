@@ -29,8 +29,9 @@ export async function POST(req: NextRequest) {
   }
 
   const isValid = verifyTwoFactorToken(code, user.twoFactorSecret);
+  // Yanlış kod bir alan hatasıdır; 401 "oturum yok" anlamına gelir.
   if (!isValid) {
-    return NextResponse.json({ error: "Kod hatalı veya süresi dolmuş" }, { status: 401 });
+    return NextResponse.json({ error: "Kod hatalı veya süresi dolmuş", message: "Kod hatalı veya süresi dolmuş.", field: "code" }, { status: 400 });
   }
 
   const { plain, hashed } = generateBackupCodes();

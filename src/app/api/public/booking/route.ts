@@ -9,6 +9,31 @@ import { turkeyDateKey } from "@/lib/tz";
 import { maskPatientName, maskPatientPhone } from "@/lib/audit-mask";
 import { verifyPublicBookingOtp } from "@/lib/public-booking-otp";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
+import { normalizeLocalPhone } from "@/lib/phone-number";
+import { can } from "@/lib/rbac";
+
+/**
+ * Kurum sahibi hesabı yoksa talebin kaydını (ve kliniğin açık ekranlarına
+ * giden "yeni talep" sinyalini) yazacak personel: talepleri onaylayabilen
+ * (appointments:approve) aktif biri. Önceden roller koda sabitti (Yönetici,
+ * Banko); matriste talepleri onaylayan Asistan olan klinikte kayıt ve sinyal
+ * hiç yazılmıyordu. İzin rol başına bir kez çözülür. Kimse yoksa herhangi bir
+ * aktif personel (sinyal yine gitsin).
+ */
+async function findRequestReviewerId(institutionId: string): Promise<string | undefined> {
+  const staff = await prisma.user.findMany({
+    where: { institutionId, isActive: true },
+    select: { id: true, role: true },
+    orderBy: { createdAt: "asc" },
+    take: 200,
+  });
+  const allowedByRole = new Map<string, boolean>();
+  for (const member of staff) {
+    if (!allowedByRole.has(member.role)) allowedByRole.set(member.role, await can(member.role, "appointments:approve"));
+    if (allowedByRole.get(member.role)) return member.id;
+  }
+  return staff[0]?.id;
+}
 
 export async function POST(req: NextRequest) {
   const ip = getClientIpFromHeaders(req.headers);
@@ -19,7 +44,11 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const parsed = publicBookingSchema.safeParse(body);
+    // Kod gönderme ucuyla aynı kanonik telefon (bkz. send-code/route.ts).
+    const parsed = publicBookingSchema.safeParse({
+      ...(body && typeof body === "object" ? body : {}),
+      phone: normalizeLocalPhone(String((body as { phone?: unknown })?.phone ?? ""), "+90"),
+    });
     if (!parsed.success) {
       return NextResponse.json({ error: formatZodError(parsed.error)[0] || "Geçersiz veri" }, { status: 400 });
     }
@@ -92,12 +121,9 @@ export async function POST(req: NextRequest) {
         note,
       },
     });
-    const auditUserId = institution.ownerId || (await prisma.user.findFirst({
-      where: { institutionId: institution.id, isActive: true, role: { in: ["YONETICI", "BANKO", "SUPERADMIN"] } },
-      select: { id: true },
-    }))?.id;
+    const auditUserId = institution.ownerId || await findRequestReviewerId(institution.id);
     if (auditUserId) {
-      await writeAudit(auditUserId, "PUBLIC_BOOKING_REQUEST_CREATE", `Online randevu talebi: ${maskPatientName(fullName)} / ${maskPatientPhone(phone)} / ${preferredDate.toLocaleString("tr-TR")}`);
+      await writeAudit(auditUserId, "PUBLIC_BOOKING_REQUEST_CREATE", `Online randevu talebi: ${maskPatientName(fullName)} / ${maskPatientPhone(phone)} / ${preferredDate.toLocaleString("tr-TR", { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Europe/Istanbul" })}`);
     }
 
     return NextResponse.json({ ok: true, id: request.id }, { status: 201 });

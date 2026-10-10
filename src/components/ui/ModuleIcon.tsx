@@ -24,7 +24,9 @@ export type ModuleKey =
   | "home" | "calendar" | "users" | "clipboard" | "follow" | "sms"
   | "flask" | "finance" | "rapor" | "box" | "person" | "settings"
   | "logout" | "profile" | "support" | "log" | "firma" | "hakediş" | "chart"
-  | "tedavi" | "institutions";
+  | "tedavi" | "institutions"
+  // Süperadmin sayfaları: menü ve sayfa başlığı aynı görseli kullansın (canlı H16).
+  | "sa-announcements" | "sa-roles" | "sa-admins" | "sa-audit" | "sa-ads" | "sa-smtp";
 
 const MODULE_ICON_SRC: Partial<Record<ModuleKey, string>> = {
   home: "/icons/modules/home.svg",
@@ -47,6 +49,12 @@ const MODULE_ICON_SRC: Partial<Record<ModuleKey, string>> = {
   chart: "/icons/modules/chart.svg",
   tedavi: "/icons/modules/tedavi.svg",
   institutions: "/icons/modules/superadmin-institutions.svg",
+  "sa-announcements": "/icons/modules/superadmin-announcements.svg",
+  "sa-roles": "/icons/modules/superadmin-roles.svg",
+  "sa-admins": "/icons/modules/superadmin-admins.svg",
+  "sa-audit": "/icons/modules/superadmin-audit.svg",
+  "sa-ads": "/icons/modules/superadmin-ads.svg",
+  "sa-smtp": "/icons/modules/superadmin-smtp.svg",
 };
 
 const FRAME_SIZE = { sm: 24, md: 29, lg: 36 };

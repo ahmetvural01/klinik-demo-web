@@ -1,12 +1,62 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { maskPatientName } from "@/lib/audit-mask";
 import type { BookingRequestStatus } from "@prisma/client";
+
+import { requireActiveBranch } from "@/lib/branch-context";
+import { shouldHidePatientPhoneForUser } from "@/lib/patient-visibility-server";
 
 function comparablePhone(value: string | null | undefined) {
   return String(value || "").replace(/\D/g, "").slice(-10);
 }
-import { requireActiveBranch } from "@/lib/branch-context";
+
+/**
+ * Online talebin kayıtlı hastayla eşleşmesi (TC ya da cep telefonu) — onay
+ * (PATCH) sırasındaki kimlik kuralının aynısı. Önceden eşleştirme tarayıcıda
+ * hasta aramasıyla yapılıyordu; telefon görme yetkisi olmayan rollerde arama
+ * telefonu/TC'yi maskelediği için hasta hiç bulunamıyor ve aynı kişiye ikinci
+ * kayıt açılıyordu (denetim G7). Yanıtta yalnız hastanın kimliği ve adı döner.
+ */
+export async function GET(_req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
+  const auth = await requireAuth("appointments:write");
+  if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
+
+  try {
+    const request = await prisma.bookingRequest.findFirst({
+      where: {
+        id: params.id,
+        ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        branchId: branch.branchId,
+      },
+      select: { institutionId: true, phone: true, tcNo: true },
+    });
+    if (!request) return NextResponse.json({ error: "Talep bulunamadı" }, { status: 404 });
+
+    const phoneCore = comparablePhone(request.phone);
+    const identity = [
+      ...(request.tcNo ? [{ tcNo: request.tcNo }] : []),
+      ...(phoneCore.length === 10 ? [{ phone: { endsWith: phoneCore } }] : []),
+    ];
+    if (identity.length === 0) return NextResponse.json({ patient: null });
+
+    const candidates = await prisma.patient.findMany({
+      where: { institutionId: request.institutionId, homeBranchId: branch.branchId, archivedAt: null, OR: identity },
+      select: { id: true, fullName: true, tcNo: true, phone: true },
+      take: 5,
+    });
+    // TC eşleşmesi telefondan önce gelir (telefon aile içinde ortak olabilir).
+    const match = candidates.find((patient) => request.tcNo && patient.tcNo === request.tcNo)
+      || candidates.find((patient) => comparablePhone(patient.phone) === phoneCore);
+    return NextResponse.json({ patient: match ? { id: match.id, fullName: match.fullName } : null });
+  } catch (error) {
+    console.error("[booking-requests GET match]", error);
+    return NextResponse.json({ error: "Kayıtlı hasta aranamadı" }, { status: 503 });
+  }
+}
 
 export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
@@ -42,6 +92,10 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     if (!existing) return NextResponse.json({ error: "Talep bulunamadı" }, { status: 404 });
     if (existing.status !== "BEKLIYOR") {
       if (existing.status === status && existing.createdAppointmentId === appointmentId) {
+        // Tekrarlanan istek: yanıt aşağıdaki başarılı yanıtla aynı maskeyle döner.
+        if (await shouldHidePatientPhoneForUser(auth.user)) {
+          return NextResponse.json({ ...existing, phone: "", tcNo: existing.tcNo ? "***" : existing.tcNo });
+        }
         return NextResponse.json(existing);
       }
       return NextResponse.json({ error: "Bu talep daha önce sonuçlandırılmış" }, { status: 409 });
@@ -107,7 +161,12 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
       include: { doctor: { select: { id: true, fullName: true } } },
     });
 
-    await writeAudit(auth.user.id, "BOOKING_REQUEST_UPDATE", `${existing.fullName} → ${status}${doctorChangeNote}${reason ? ` · Neden: ${reason}` : ""}`);
+    await writeAudit(auth.user.id, "BOOKING_REQUEST_UPDATE", `${maskPatientName(existing.fullName)} → ${status}${doctorChangeNote}${reason ? ` · Neden: ${reason}` : ""}`);
+    // Liste ucuyla (GET /api/booking-requests) aynı kural: telefon görme yetkisi
+    // olmayan kişiye talep sahibinin telefonu/TC'si işlem yanıtında da gönderilmez.
+    if (await shouldHidePatientPhoneForUser(auth.user)) {
+      return NextResponse.json({ ...updated, phone: "", tcNo: updated.tcNo ? "***" : updated.tcNo });
+    }
     return NextResponse.json(updated);
   } catch (error) {
     console.error("[booking-requests PATCH]", error);

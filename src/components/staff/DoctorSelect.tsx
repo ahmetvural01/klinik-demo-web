@@ -39,17 +39,19 @@ export function DoctorSelect({
   const [loadedDoctors, setLoadedDoctors] = useState<StaffLike[]>([]);
   const [loading, setLoading] = useState(!providedDoctors);
   const [failed, setFailed] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
 
+  // Varsayılan /api/staff yanıtı TC ve fotoğraf taşımaz (yalnız ad, rol, mesai).
   useEffect(() => {
     if (providedDoctors) return;
     let active = true;
     setLoading(true);
-    cachedGet<StaffLike[]>("/api/staff", 60_000, { throwOnError: true })
+    cachedGet<StaffLike[]>("/api/staff", 60_000, { throwOnError: true, force: retryKey > 0 })
       .then((staff) => { if (active) { setLoadedDoctors(selectDoctors(staff)); setFailed(false); } })
       .catch(() => { if (active) setFailed(true); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [providedDoctors]);
+  }, [providedDoctors, retryKey]);
 
   const doctors = providedDoctors ? selectDoctors(providedDoctors) : loadedDoctors;
 
@@ -61,17 +63,20 @@ export function DoctorSelect({
       required={required}
       disabled={disabled || loading}
       aria-label={ariaLabel}
+      // Liste yüklenemediyse (geçici ağ hatası) kutuya dokununca yeniden denenir;
+      // önceden sayfa yenilenene kadar "yüklenemedi" olarak kalıyordu.
+      onFocus={failed ? () => setRetryKey((key) => key + 1) : undefined}
       onChange={(event) => onChange(event.target.value, doctors.find((doctor) => doctor.id === event.target.value) || null)}
       className={className}
     >
       {loading ? (
         <option value={value}>Doktorlar yükleniyor…</option>
       ) : failed ? (
-        <option value="">Doktor listesi yüklenemedi</option>
+        <option value="">Doktor listesi yüklenemedi — yeniden denemek için dokunun</option>
       ) : (
         <>
           {emptyLabel !== undefined && <option value="">{emptyLabel}</option>}
-          {emptyLabel === undefined && !value && <option value="" disabled>Doktor seçin</option>}
+          {emptyLabel === undefined && !value && <option value="" disabled>Hekim seçin</option>}
           {doctors.map((doctor) => (
             <option key={doctor.id} value={doctor.id}>{doctor.fullName}</option>
           ))}

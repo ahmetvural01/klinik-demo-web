@@ -1,168 +1,154 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState, type FormEvent, type KeyboardEvent } from "react";
 import { usePathname } from "next/navigation";
 import { Check, ExternalLink, Pencil, Plus, RotateCcw, Trash2, X } from "lucide-react";
 import { showToastSafe } from "@/lib/toast-client";
 import { confirmDialog } from "@/lib/confirm-client";
 import { formatCurrency } from "@/lib/format";
+import { moneyInputError, parseTurkishMoney, toMoneyValue } from "@/lib/money-input";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { Tabs, useTabParam } from "@/components/ui/Tabs";
-import { Toolbar, ActiveFilters } from "@/components/ui/Toolbar";
+import { Toolbar } from "@/components/ui/Toolbar";
 import { SearchInput } from "@/components/ui/SearchInput";
-import { Modal } from "@/components/ui/Modal";
-import { FormErrorBanner, FormField } from "@/components/ui/FormField";
-import { Input, Select } from "@/components/ui/Input";
+import { ChoiceCards } from "@/components/ui/ChoiceCards";
+import { Callout } from "@/components/ui/Callout";
+import { SettingsList, SettingsRow } from "@/components/ui/SettingsList";
+import { FormModal } from "@/components/ui/FormModal";
+import { FormField } from "@/components/ui/FormField";
+import { Input } from "@/components/ui/Input";
+import { MoneyInput } from "@/components/ui/MoneyInput";
+import { ActionMenu, type ActionMenuItem } from "@/components/ui/ActionMenu";
 import { ListTable, EmptyValue, type ListTableColumn } from "@/components/ui/ListTable";
 import { Money } from "@/components/ui/Money";
 import { usePermissions } from "@/components/auth/PermissionProvider";
-import { activePriceListStorageKey } from "@/lib/dental-treatment-catalog";
 import { matchesSearch } from "@/components/stock/stock-shared";
 
 type Price = { id: string; code: string; treatment: string; amount: number | string; isCustom: boolean; isTemplate?: boolean; catalogYear?: number };
 type PriceMeta = { activeCatalogYear: number; latestPublishedYear: number; updateAvailable: boolean; officialPdfUrl: string };
 type ListKey = "standard" | "custom";
-type ViewKey = "tdb" | "ozel";
+type ShowKey = "all" | "changed" | "custom";
+/** Satırın türü: TDB kalemi (klinik ücreti = TDB), klinikte değiştirilmiş TDB kalemi, kliniğe özel kalem. */
+type RowKind = "tdb" | "override" | "own";
+type Row = { price: Price; kind: RowKind; tdb: number | null };
 
-const VIEW_KEYS = ["tdb", "ozel"] as const;
-const VIEW_TO_LIST: Record<ViewKey, ListKey> = { tdb: "standard", ozel: "custom" };
-const LIST_LABEL: Record<ListKey, string> = { standard: "TDB tarifesi", custom: "Özel fiyatlar" };
-const PAGE_SIZE = 20;
-
+const PAGE_SIZE = 25;
 const priceKey = (code: string, treatment: string) => `${code.trim()}::${treatment.trim().toLocaleLowerCase("tr-TR")}`;
 
-async function readJsonArray(response: Response) {
-  const body = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(body?.message || "Fiyat listesi yüklenemedi.");
-  return Array.isArray(body) ? body : [];
+/** Kliniğe özel kalemlere sıradaki "Ö-00n" kodu (kod alanı boş bırakılınca). */
+function nextOwnCode(prices: Price[]) {
+  const max = prices.reduce((current, price) => {
+    const match = /^Ö-(\d+)$/i.exec(price.code.trim());
+    return match ? Math.max(current, Number(match[1])) : current;
+  }, 0);
+  return `Ö-${String(max + 1).padStart(3, "0")}`;
 }
 
+/**
+ * Fiyat listesi — TEK tablo: her tedavinin TDB ücreti ve kliniğin ücreti yan
+ * yana. Önceden iki sekme aynı ~300 kalemi iki kez gösteriyor, TDB sekmesinde
+ * düzenleme olmadığı için kullanıcı sekme değiştirip kalemi yeniden arıyordu;
+ * "hasta dosyasında hangi liste kullanılsın" kurum ayarı da sekmeye göre
+ * beliren bir düğmede gizliydi. Ayar artık listenin üstünde tek anahtar.
+ */
 function FiyatManagement() {
   const pathname = usePathname();
-  // Ayarlar > Fiyat Listesi sekmesine gömülüyken sayfanın kendi başlığı
-  // çizilmez (Ayarlar başlığı + sekme adı zaten "Fiyat Listesi" diyor).
+  // Ayarlar > Fiyat listesi sekmesine gömülüyken sayfanın kendi başlığı çizilmez.
   const embedded = !pathname?.startsWith("/fiyat");
-  const { can, scopeKey } = usePermissions();
+  const { can } = usePermissions();
   const canWritePrices = can("prices:write");
 
-  const [view, setViewParam] = useTabParam<ViewKey>(VIEW_KEYS, "tdb", "liste");
-  const userPickedViewRef = useRef(false);
   const [standardPrices, setStandardPrices] = useState<Price[]>([]);
   const [customPrices, setCustomPrices] = useState<Price[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [activeList, setActiveList] = useState<ListKey | null>(null);
   const [savingActive, setSavingActive] = useState(false);
   const [priceMeta, setPriceMeta] = useState<PriceMeta | null>(null);
   const [search, setSearch] = useState("");
-  const [onlyChanged, setOnlyChanged] = useState(false);
+  const [show, setShow] = useState<ShowKey>("all");
   const [page, setPage] = useState(1);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editAmount, setEditAmount] = useState("");
+  const [editError, setEditError] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
 
-  const [showNew, setShowNew] = useState(false);
+  const [newOpen, setNewOpen] = useState(false);
   const [newForm, setNewForm] = useState({ code: "", treatment: "", amount: "" });
   const [newErrors, setNewErrors] = useState<{ code?: string; treatment?: string; amount?: string }>({});
   const [newFormError, setNewFormError] = useState<string | null>(null);
   const [savingNew, setSavingNew] = useState(false);
 
-  // Ayar yanıtı geç gelirse en güncel adres çubuğu güncelleyicisi kullanılır.
-  const setViewParamRef = useRef(setViewParam);
-  useEffect(() => { setViewParamRef.current = setViewParam; });
-
-  const setView = (next: ViewKey) => {
-    userPickedViewRef.current = true;
-    setViewParam(next);
-  };
-
-  const rememberActive = useCallback((value: ListKey) => {
-    // Hasta kartı ilk açılışta bu değeri okur; yalnız kurum ayarı değişince yazılır
-    // (önceden sekmeye bakmak bile bu değeri değiştiriyordu).
-    try { window.localStorage.setItem(activePriceListStorageKey(scopeKey), value); } catch { /* depolama kapalı */ }
-  }, [scopeKey]);
-
-  const loadSettings = useCallback(async () => {
-    try {
-      const response = await fetch("/api/prices/active-list", { cache: "no-store" });
-      const body = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(body?.message || "Kullanılan fiyat listesi okunamadı.");
-      const value: ListKey = body?.activePriceList === "custom" ? "custom" : "standard";
-      setActiveList(value);
-      rememberActive(value);
-      // Kullanıcı henüz sekme seçmediyse ve adreste ?liste= yoksa klinikte kullanılan listeyi göster.
-      if (!userPickedViewRef.current && !new URLSearchParams(window.location.search).get("liste") && value === "custom") {
-        setViewParamRef.current("ozel");
-      }
-    } catch (error) {
-      showToastSafe({ title: "Fiyat ayarı okunamadı", message: error instanceof Error ? error.message : "Tekrar deneyin.", type: "error" });
-    }
-  }, [rememberActive]);
-
+  // İki liste ve kullanılan liste tek istekte gelir (önceden üç ayrı istekti).
   const loadAll = useCallback(async () => {
-    setLoading(true);
-    setLoadError(null);
     try {
-      const [standard, custom] = await Promise.all([
-        fetch("/api/prices?type=standard", { cache: "no-store" }).then(readJsonArray),
-        fetch("/api/prices?type=custom", { cache: "no-store" }).then(readJsonArray),
-      ]);
-      setStandardPrices(standard as Price[]);
-      setCustomPrices(custom as Price[]);
+      const response = await fetch("/api/prices?bundle=1", { cache: "no-store" });
+      const body = await response.json().catch(() => null);
+      if (!response.ok || !body) throw new Error(body?.message || "Fiyat listesi yüklenemedi.");
+      setStandardPrices(Array.isArray(body.standard) ? (body.standard as Price[]) : []);
+      setCustomPrices(Array.isArray(body.custom) ? (body.custom as Price[]) : []);
+      setActiveList(body.activePriceList === "custom" ? "custom" : "standard");
+      setLoadError(null);
+      setLoaded(true);
     } catch (error) {
-      setLoadError(error instanceof Error ? error.message : "Fiyat listeleri yüklenemedi.");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const loadMeta = useCallback(async () => {
-    try {
-      const response = await fetch("/api/prices?meta=1", { cache: "no-store" });
-      if (!response.ok) return;
-      setPriceMeta(await response.json());
-    } catch {
-      // Tarife yılı bilgisi yalnız bilgilendirme içindir.
+      setLoadError(error instanceof Error ? error.message : "Fiyat listesi yüklenemedi.");
     }
   }, []);
 
   useEffect(() => {
-    void loadSettings();
+    let active = true;
     void loadAll();
-    void loadMeta();
-    // Yalnız ilk açılışta; sekme değişimi yeniden yükleme gerektirmez.
-  }, [loadSettings, loadAll, loadMeta]);
+    // Yeni tarife kontrolü yalnız bilgi içindir; listeyi bekletmez.
+    fetch("/api/prices?meta=1", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((meta) => { if (active && meta) setPriceMeta(meta as PriceMeta); })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [loadAll]);
 
-  useEffect(() => { setPage(1); setEditingId(null); }, [view, search, onlyChanged]);
+  useEffect(() => { setPage(1); setEditingId(null); }, [show, search]);
 
   const tdbByKey = useMemo(() => new Map(standardPrices.map((price) => [priceKey(price.code, price.treatment), Number(price.amount)])), [standardPrices]);
-  const isOverride = useCallback((price: Price) => !price.isTemplate && tdbByKey.has(priceKey(price.code, price.treatment)), [tdbByKey]);
-  const changedCount = useMemo(
-    () => customPrices.filter((price) => !price.isTemplate && Number(price.amount) !== tdbByKey.get(priceKey(price.code, price.treatment))).length,
-    [customPrices, tdbByKey],
-  );
 
-  const listKey = VIEW_TO_LIST[view];
-  const rows = useMemo(() => {
-    const source = listKey === "custom" ? customPrices : standardPrices;
-    return source.filter((price) => {
-      if (listKey === "custom" && onlyChanged && (price.isTemplate || Number(price.amount) === tdbByKey.get(priceKey(price.code, price.treatment)))) return false;
-      return matchesSearch(search, price.treatment, price.code);
+  const allRows = useMemo<Row[]>(() => {
+    const rows: Row[] = customPrices.map((price) => {
+      const tdb = tdbByKey.get(priceKey(price.code, price.treatment));
+      const kind: RowKind = price.isTemplate ? "tdb" : tdb === undefined ? "own" : "override";
+      return { price, kind, tdb: tdb ?? null };
     });
-  }, [listKey, customPrices, standardPrices, onlyChanged, search, tdbByKey]);
-  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
-  const pageRows = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+    // TDB tarifesinde olmayan ama kurumun "standart" listesinde duran kayıtlar
+    // (ör. demo kurulumunun "İlk Muayene / Kompozit Dolgu" kalemleri): hasta
+    // dosyasında önerilmeye devam ediyor ve eski ekranda "TDB tarifesi"
+    // sekmesinde görünüyordu. Tek tabloda kaybolmasınlar — kliniğin kendi
+    // kalemi olarak gösterilir (ücreti düzeltilebilir, silinebilir).
+    const customKeys = new Set(customPrices.map((price) => priceKey(price.code, price.treatment)));
+    const standardOnly = standardPrices.filter((price) => !customKeys.has(priceKey(price.code, price.treatment)));
+    if (standardOnly.length === 0) return rows;
+    // Sunucunun sıralamasıyla aynı: koda göre (sayısal), sonra ada göre.
+    return [...rows, ...standardOnly.map((price): Row => ({ price, kind: "own", tdb: null }))].sort((a, b) =>
+      a.price.code.localeCompare(b.price.code, "tr", { numeric: true }) || a.price.treatment.localeCompare(b.price.treatment, "tr"));
+  }, [customPrices, standardPrices, tdbByKey]);
 
-  const changeActiveList = async () => {
+  const changedCount = allRows.filter((row) => row.kind === "override" && Number(row.price.amount) !== row.tdb).length;
+  const ownCount = allRows.filter((row) => row.kind === "own").length;
+
+  const rows = useMemo(() => allRows.filter((row) => {
+    if (show === "changed" && !(row.kind === "override" && Number(row.price.amount) !== row.tdb)) return false;
+    if (show === "custom" && row.kind !== "own") return false;
+    return matchesSearch(search, row.price.treatment, row.price.code);
+  }), [allRows, search, show]);
+  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const pageRows = rows.slice((Math.min(page, pageCount) - 1) * PAGE_SIZE, Math.min(page, pageCount) * PAGE_SIZE);
+
+  const changeActiveList = async (useClinic: boolean) => {
     if (!canWritePrices || savingActive) return;
-    const next = listKey;
+    const next: ListKey = useClinic ? "custom" : "standard";
     const confirmed = await confirmDialog({
-      title: "Hasta kartında bu liste kullanılsın mı?",
-      message: `Tüm personel hasta kartında tedavi eklerken ${LIST_LABEL[next].toLocaleLowerCase("tr-TR")} ücretlerini görecek. Daha önce eklenmiş tedavilerin ücreti değişmez.`,
-      confirmText: `${LIST_LABEL[next]} kullan`,
+      title: useClinic ? "Klinik fiyatları önerilsin mi?" : "TDB tarifesi önerilsin mi?",
+      message: `Tüm personel hasta dosyasında tedavi eklerken ${useClinic ? "kliniğin ücretlerini" : "TDB tarifesini"} görecek. Daha önce eklenmiş tedavilerin ücreti değişmez.`,
+      confirmText: "Değiştir",
       cancelText: "Vazgeç",
     });
     if (!confirmed) return;
@@ -176,8 +162,7 @@ function FiyatManagement() {
       const body = await response.json().catch(() => null);
       if (!response.ok) throw new Error(body?.message || "Ayar kaydedilemedi.");
       setActiveList(next);
-      rememberActive(next);
-      showToastSafe({ title: "Kullanılan liste değişti", message: `Hasta kartında artık ${LIST_LABEL[next].toLocaleLowerCase("tr-TR")} kullanılıyor.`, type: "success" });
+      showToastSafe({ title: "Ayar kaydedildi", message: useClinic ? "Hasta dosyasında klinik fiyatları önerilecek." : "Hasta dosyasında TDB tarifesi önerilecek.", type: "success" });
     } catch (error) {
       showToastSafe({ title: "Değiştirilemedi", message: error instanceof Error ? error.message : "Tekrar deneyin.", type: "error" });
     } finally {
@@ -187,19 +172,21 @@ function FiyatManagement() {
 
   const startEdit = (price: Price) => {
     setEditingId(price.id);
-    setEditAmount(String(Number(price.amount)));
+    setEditAmount(toMoneyValue(price.amount) ?? "");
+    setEditError("");
   };
 
   const saveEdit = async (price: Price) => {
     if (savingEdit) return;
-    const amount = Number(editAmount.replace(",", "."));
-    if (editAmount.trim() === "" || !Number.isFinite(amount) || amount < 0) {
-      showToastSafe({ title: "Geçerli bir ücret girin", message: "Ör. 1500 ya da 1500,50", type: "error" });
+    const error = moneyInputError(editAmount, { required: true, allowZero: true });
+    if (error) {
+      setEditError(error);
       return;
     }
+    const amount = parseTurkishMoney(editAmount);
     setSavingEdit(true);
     try {
-      // TDB kopyası satırı düzenlenince kliniğe özel kayıt oluşturulur.
+      // TDB kalemi düzenlenince kliniğe özel kayıt oluşturulur (aynı kod + ad).
       const response = price.isTemplate || price.id.startsWith("custom-template-") || price.id.startsWith("tdb-")
         ? await fetch("/api/prices", {
             method: "POST",
@@ -214,23 +201,24 @@ function FiyatManagement() {
       const body = await response.json().catch(() => null);
       if (!response.ok) throw new Error(body?.message || "Ücret kaydedilemedi.");
       setEditingId(null);
-      showToastSafe({ title: "Ücret kaydedildi", message: `${price.treatment}: ${formatCurrency(amount)}`, type: "success" });
+      showToastSafe({ title: "Ücret kaydedildi", message: `${price.treatment}: ${formatCurrency(Number(amount))}`, type: "success" });
       await loadAll();
-    } catch (error) {
-      showToastSafe({ title: "Kaydedilemedi", message: error instanceof Error ? error.message : "Bağlantı kurulamadı.", type: "error" });
+    } catch (saveError) {
+      setEditError(saveError instanceof Error ? saveError.message : "Bağlantı kurulamadı.");
     } finally {
       setSavingEdit(false);
     }
   };
 
-  const removePrice = async (price: Price) => {
-    const override = isOverride(price);
+  const removePrice = async (row: Row) => {
+    const { price } = row;
+    const override = row.kind === "override";
     const confirmed = await confirmDialog({
-      title: override ? "TDB fiyatına dönülsün mü?" : "Özel fiyat silinsin mi?",
+      title: override ? "TDB ücretine dönülsün mü?" : "Kalem silinsin mi?",
       message: override
-        ? `${price.treatment} için kliniğe özel ücret silinir; TDB ücreti (${formatCurrency(tdbByKey.get(priceKey(price.code, price.treatment)) || 0)}) kullanılır.`
-        : `${price.treatment} özel fiyat listesinden kaldırılır. Daha önce eklenmiş tedaviler etkilenmez.`,
-      confirmText: override ? "TDB fiyatına dön" : "Sil",
+        ? `${price.treatment} için kliniğin ücreti silinir; TDB ücreti (${formatCurrency(row.tdb || 0)}) kullanılır.`
+        : `${price.treatment} fiyat listesinden kaldırılır. Daha önce eklenmiş tedaviler etkilenmez.`,
+      confirmText: override ? "TDB ücretine dön" : "Sil",
       cancelText: "Vazgeç",
       danger: !override,
     });
@@ -238,8 +226,8 @@ function FiyatManagement() {
     try {
       const response = await fetch(`/api/prices/${price.id}`, { method: "DELETE" });
       const body = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(body?.message || "Fiyat silinemedi.");
-      showToastSafe({ title: override ? "TDB fiyatına dönüldü" : "Fiyat silindi", message: price.treatment, type: "success" });
+      if (!response.ok) throw new Error(body?.message || "Kalem silinemedi.");
+      showToastSafe({ title: override ? "TDB ücretine dönüldü" : "Kalem silindi", message: price.treatment, type: "success" });
       await loadAll();
     } catch (error) {
       showToastSafe({ title: "Silinemedi", message: error instanceof Error ? error.message : "Bağlantı kurulamadı.", type: "error" });
@@ -250,31 +238,35 @@ function FiyatManagement() {
     setNewForm({ code: "", treatment: "", amount: "" });
     setNewErrors({});
     setNewFormError(null);
-    setShowNew(true);
+    setNewOpen(true);
   };
 
-  const submitNew = async () => {
+  const submitNew = async (event?: FormEvent) => {
+    event?.preventDefault();
     if (savingNew) return;
-    const amount = Number(newForm.amount.replace(",", "."));
     const errors: typeof newErrors = {};
-    if (!newForm.code.trim()) errors.code = "Kod girin (ör. D-001).";
     if (!newForm.treatment.trim()) errors.treatment = "Tedavi adını yazın.";
-    if (newForm.amount.trim() === "" || !Number.isFinite(amount) || amount < 0) errors.amount = "Ücreti girin.";
+    const amountError = moneyInputError(newForm.amount, { required: true, allowZero: true });
+    if (amountError) errors.amount = amountError;
+    if (newForm.code.trim().length > 50) errors.code = "Kod en fazla 50 karakter olabilir.";
     setNewErrors(errors);
     if (Object.values(errors).some(Boolean)) return;
+    const code = newForm.code.trim() || nextOwnCode(customPrices);
     setSavingNew(true);
     setNewFormError(null);
     try {
       const response = await fetch("/api/prices", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: newForm.code.trim(), treatment: newForm.treatment.trim(), amount, isCustom: true }),
+        // createOnly: aynı kod/ad varsa sunucu üzerine yazmaz, nedenini söyler.
+        body: JSON.stringify({ code, treatment: newForm.treatment.trim(), amount: parseTurkishMoney(newForm.amount), isCustom: true, createOnly: true }),
       });
       const body = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(body?.message || "Fiyat eklenemedi.");
-      setShowNew(false);
-      showToastSafe({ title: "Özel fiyat eklendi", message: `${newForm.treatment.trim()}: ${formatCurrency(amount)}`, type: "success" });
-      setView("ozel");
+      if (!response.ok) throw new Error(body?.message || "Kalem eklenemedi.");
+      setNewOpen(false);
+      showToastSafe({ title: "Kalem eklendi", message: `${newForm.treatment.trim()} (${code}): ${formatCurrency(Number(parseTurkishMoney(newForm.amount)))}`, type: "success" });
+      setShow("custom");
+      setSearch("");
       await loadAll();
     } catch (error) {
       setNewFormError(error instanceof Error ? error.message : "Bağlantı kurulamadı. Bilgiler korundu, tekrar deneyin.");
@@ -283,145 +275,135 @@ function FiyatManagement() {
     }
   };
 
-  const amountCell = (price: Price) => {
-    if (editingId !== price.id) return <Money value={Number(price.amount)} className="font-semibold text-slate-900" />;
+  const kindBadge = (row: Row) => (row.kind === "override"
+    ? <Badge tone="info">Değiştirildi</Badge>
+    : row.kind === "own" ? <Badge tone="neutral">Kliniğe özel</Badge> : null);
+
+  const clinicCell = (row: Row) => {
+    const { price } = row;
+    if (editingId !== price.id) {
+      return <Money value={Number(price.amount)} className={row.kind === "tdb" ? "text-slate-600" : "font-semibold text-slate-900"} />;
+    }
     const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
       if (event.key === "Enter") { event.preventDefault(); void saveEdit(price); }
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setEditingId(null); }
     };
     return (
-      <div className="flex items-center justify-end gap-1.5">
-        <div className="w-28">
-          <Input
-            size="sm"
-            type="number"
-            inputMode="decimal"
-            min="0"
-            step="0.01"
-            value={editAmount}
-            onChange={(event) => setEditAmount(event.target.value)}
-            onKeyDown={onKeyDown}
-            aria-label={`${price.treatment} ücreti`}
-            className="text-right"
-            autoFocus
-          />
+      <div className="flex flex-col items-end gap-1">
+        <div className="flex items-center justify-end gap-1.5">
+          <div className="w-32">
+            <MoneyInput
+              size="sm"
+              value={editAmount}
+              onChange={(value) => { setEditAmount(value); setEditError(""); }}
+              onKeyDown={onKeyDown}
+              aria-label={`${price.treatment} klinik ücreti`}
+              aria-invalid={editError ? true : undefined}
+              className="text-right"
+              autoFocus
+            />
+          </div>
+          <IconButton icon={Check} title="Kaydet" tone="primary" size="sm" onClick={() => void saveEdit(price)} disabled={savingEdit} />
+          <IconButton icon={X} title="Vazgeç" size="sm" onClick={() => setEditingId(null)} />
         </div>
-        <IconButton icon={Check} title="Kaydet" tone="primary" size="sm" onClick={() => void saveEdit(price)} disabled={savingEdit} />
-        <IconButton icon={X} title="Vazgeç" size="sm" onClick={() => setEditingId(null)} />
+        {editError && <p role="alert" className="text-xs font-medium text-red-600">{editError}</p>}
       </div>
     );
   };
 
-  const columns: ListTableColumn<Price>[] = [
-    { key: "code", header: "Kod", render: (price) => <span className="font-mono text-xs text-slate-500">{price.code}</span> },
+  const rowActions = (row: Row): ActionMenuItem[] => [
+    { key: "edit", label: "Ücreti değiştir", icon: Pencil, onSelect: () => startEdit(row.price) },
+    ...(row.kind === "override" ? [{ key: "reset", label: "TDB ücretine dön", icon: RotateCcw, onSelect: () => void removePrice(row) }] : []),
+    ...(row.kind === "own" ? [{ key: "delete", label: "Kalemi sil", icon: Trash2, danger: true, onSelect: () => void removePrice(row) }] : []),
+  ];
+
+  const columns: ListTableColumn<Row>[] = [
+    { key: "code", header: "Kod", render: (row) => <span className="font-mono text-xs text-slate-500">{row.price.code}</span> },
     {
       key: "treatment",
       header: "Tedavi",
-      render: (price) => (
-        <span className="flex items-center gap-2">
-          <span className="font-medium text-slate-800">{price.treatment}</span>
-          {listKey === "custom" && !price.isTemplate && (
-            <Badge tone="info">{isOverride(price) ? "Değiştirildi" : "Kliniğe özel"}</Badge>
-          )}
+      render: (row) => (
+        <span className="flex flex-wrap items-center gap-2">
+          <span className="font-medium text-slate-800">{row.price.treatment}</span>
+          {kindBadge(row)}
         </span>
       ),
     },
-    { key: "amount", header: "Ücret", align: "right", render: amountCell },
-    ...(listKey === "custom" ? [
-      {
-        key: "tdb",
-        header: "TDB ücreti",
-        align: "right" as const,
-        render: (price: Price) => {
-          const tdb = tdbByKey.get(priceKey(price.code, price.treatment));
-          return tdb === undefined ? <EmptyValue /> : <Money value={tdb} className="text-slate-500" />;
-        },
+    { key: "tdb", header: "TDB ücreti", align: "right", render: (row) => (row.tdb === null ? <EmptyValue /> : <Money value={row.tdb} className="text-slate-500" />) },
+    { key: "clinic", header: "Klinik ücreti", align: "right", headerHint: "Değiştirilmemiş kalemde TDB ücreti geçerlidir.", render: clinicCell },
+    {
+      key: "fark",
+      header: "Fark",
+      align: "right",
+      render: (row) => {
+        if (row.tdb === null || row.kind === "tdb") return <EmptyValue />;
+        const diff = Math.round((Number(row.price.amount) - row.tdb) * 100) / 100;
+        if (diff === 0) return <EmptyValue />;
+        return <span className={`tabular-nums font-semibold ${diff > 0 ? "text-emerald-700" : "text-amber-700"}`}>{diff > 0 ? "+" : "−"}{formatCurrency(Math.abs(diff))}</span>;
       },
-      {
-        key: "fark",
-        header: "Fark",
-        align: "right" as const,
-        render: (price: Price) => {
-          const tdb = tdbByKey.get(priceKey(price.code, price.treatment));
-          if (tdb === undefined) return <EmptyValue />;
-          const diff = Math.round((Number(price.amount) - tdb) * 100) / 100;
-          if (diff === 0) return <EmptyValue />;
-          return <span className={`tabular-nums font-semibold ${diff > 0 ? "text-emerald-700" : "text-amber-700"}`}>{diff > 0 ? "+" : "−"}{formatCurrency(Math.abs(diff))}</span>;
-        },
-      },
-    ] : []),
-    ...(listKey === "custom" && canWritePrices ? [{
+    },
+    ...(canWritePrices ? [{
       key: "actions",
       header: "",
       align: "right" as const,
-      render: (price: Price) => editingId === price.id ? null : (
+      render: (row: Row) => editingId === row.price.id ? null : (
         <div className="flex justify-end gap-1.5">
-          <IconButton icon={Pencil} title={`${price.treatment} ücretini değiştir`} size="sm" onClick={() => startEdit(price)} />
-          {!price.isTemplate && (
-            isOverride(price)
-              ? <IconButton icon={RotateCcw} title="TDB fiyatına dön" size="sm" onClick={() => void removePrice(price)} />
-              : <IconButton icon={Trash2} title="Özel fiyatı sil" tone="danger" size="sm" onClick={() => void removePrice(price)} />
-          )}
+          <IconButton icon={Pencil} title={`${row.price.treatment} ücretini değiştir`} size="sm" onClick={() => startEdit(row.price)} />
+          {row.kind === "override" && <IconButton icon={RotateCcw} title="TDB ücretine dön" size="sm" onClick={() => void removePrice(row)} />}
+          {row.kind === "own" && <IconButton icon={Trash2} title="Kalemi sil" tone="danger" size="sm" onClick={() => void removePrice(row)} />}
         </div>
       ),
     }] : []),
   ];
 
-  const activeLabel = activeList ? LIST_LABEL[activeList] : "…";
-  const filters = [
-    ...(search.trim() ? [{ key: "search", label: `Arama: ${search.trim()}`, onRemove: () => setSearch("") }] : []),
-    ...(listKey === "custom" && onlyChanged ? [{ key: "changed", label: "Yalnız değiştirdiklerim", onRemove: () => setOnlyChanged(false) }] : []),
-  ];
+  const tdbYear = priceMeta?.activeCatalogYear || standardPrices[0]?.catalogYear || 2026;
+  const newButton = canWritePrices ? <Button icon={Plus} variant={embedded ? "secondary" : "primary"} size={embedded ? "sm" : "md"} onClick={openNew}>Yeni özel fiyat</Button> : undefined;
+  const filtered = Boolean(search.trim()) || show !== "all";
 
   return (
     <section className="space-y-3">
       {!embedded && (
         <PageHeader
           icon="finance"
-          title="Fiyat Listesi"
-          description="Hasta kartında tedavi eklerken önerilen ücretler."
-          actions={canWritePrices ? <Button icon={Plus} onClick={openNew}>Yeni Özel Fiyat</Button> : undefined}
+          title="Fiyat listesi"
+          description="Hasta dosyasında tedavi eklerken önerilen ücretler."
+          actions={newButton}
         />
       )}
 
-      <Tabs<ViewKey>
-        ariaLabel="Fiyat listeleri"
-        size={embedded ? "sm" : "md"}
-        value={view}
-        onChange={setView}
-        items={[
-          { key: "tdb", label: "TDB tarifesi" },
-          { key: "ozel", label: "Özel fiyatlar", count: changedCount },
-        ]}
-      />
-
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-[rgb(var(--app-surface))] px-3 py-2.5 text-sm">
-        <p className="text-slate-700">
-          Hasta kartında kullanılan: <strong className="text-slate-900">{activeLabel}</strong>
-          {activeList && activeList === listKey && <Badge tone="success" className="ml-2">Bu liste</Badge>}
-        </p>
-        <div className="flex flex-wrap items-center gap-2">
-          {canWritePrices && activeList && activeList !== listKey && (
-            <Button size="sm" variant="secondary" loading={savingActive} onClick={() => void changeActiveList()}>
-              Hasta kartında bu listeyi kullan
-            </Button>
-          )}
-          {embedded && canWritePrices && <Button size="sm" variant="secondary" icon={Plus} onClick={openNew}>Yeni Özel Fiyat</Button>}
-        </div>
+      <div className="ui-surface overflow-hidden">
+        <SettingsList aria-label="Fiyat ayarı">
+          <SettingsRow
+            title="Hasta dosyasında klinik fiyatlarını öner"
+            description={activeList === null
+              ? "Ayar okunuyor…"
+              : activeList === "custom"
+                ? "Açık: kliniğin ücretleri önerilir (değiştirilmemiş kalemde TDB ücreti)."
+                : `Kapalı: TDB ${tdbYear} tarifesi önerilir; kliniğin ücretleri kullanılmaz.`}
+            status={!canWritePrices && activeList !== null ? <Badge tone={activeList === "custom" ? "success" : "neutral"}>{activeList === "custom" ? "Açık" : "Kapalı"}</Badge> : undefined}
+            toggle={canWritePrices ? {
+              checked: activeList === "custom",
+              onChange: (checked) => void changeActiveList(checked),
+              label: "Hasta dosyasında klinik fiyatlarını öner",
+              disabled: activeList === null || savingActive,
+            } : undefined}
+          />
+        </SettingsList>
       </div>
 
-      {priceMeta?.updateAvailable && view === "tdb" && (
-        <p className="text-xs leading-5 text-slate-600">
-          TDB {priceMeta.latestPublishedYear} tarifesi yayımlandı; sistemdeki liste {priceMeta.activeCatalogYear} yılına ait. Katalog güncellemesini sistem sağlayıcınız yapar; o zamana kadar değişen ücretleri “Özel fiyatlar”dan girebilirsiniz.{" "}
-          {priceMeta.officialPdfUrl && (
-            <a href={priceMeta.officialPdfUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-semibold text-primary hover:underline">
-              TDB {priceMeta.latestPublishedYear} tarifesini aç <ExternalLink className="h-3 w-3" aria-hidden="true" />
-            </a>
-          )}
-        </p>
+      {priceMeta?.updateAvailable && (
+        <Callout
+          tone="info"
+          compact
+          action={priceMeta.officialPdfUrl ? (
+            <Button size="sm" variant="secondary" icon={ExternalLink} href={priceMeta.officialPdfUrl} target="_blank">Tarifeyi aç</Button>
+          ) : undefined}
+        >
+          TDB {priceMeta.latestPublishedYear} tarifesi yayımlandı; sistemdeki liste {priceMeta.activeCatalogYear}. Değişen ücretleri satırdan girebilirsiniz.
+        </Callout>
       )}
 
-      <Toolbar>
+      <Toolbar actions={embedded ? newButton : undefined}>
         <SearchInput
           value={search}
           onChange={setSearch}
@@ -429,74 +411,80 @@ function FiyatManagement() {
           slashShortcut={!embedded}
           wrapperClassName="flex-1 min-w-[220px]"
         />
-        {listKey === "custom" && (
-          <div className="sm:w-60">
-            <Select aria-label="Gösterilen fiyatlar" value={onlyChanged ? "changed" : "all"} onChange={(event) => setOnlyChanged(event.target.value === "changed")}>
-              <option value="all">Tüm tedaviler</option>
-              <option value="changed">Yalnız değiştirdiklerim ({changedCount})</option>
-            </Select>
-          </div>
-        )}
+        <ChoiceCards<ShowKey>
+          label="Gösterilen kalemler"
+          labelHidden
+          variant="pills"
+          value={show}
+          onChange={setShow}
+          options={[
+            { value: "all", label: "Tümü" },
+            { value: "changed", label: "Değiştirilenler", count: changedCount },
+            { value: "custom", label: "Kliniğe özel", count: ownCount },
+          ]}
+        />
       </Toolbar>
-      <ActiveFilters filters={filters} onClearAll={() => { setSearch(""); setOnlyChanged(false); }} />
 
-      <ListTable<Price>
+      <ListTable<Row>
         columns={columns}
         rows={pageRows}
-        rowKey={(price) => price.id}
-        loading={loading}
-        error={loadError}
+        rowKey={(row) => row.price.id}
+        loading={!loaded && !loadError}
+        error={loaded ? null : loadError}
+        staleError={loaded ? loadError : null}
         onRetry={() => void loadAll()}
-        emptyText={filters.length > 0 ? "Bu aramaya uyan tedavi yok" : "Liste boş"}
-        emptyDescription={listKey === "custom" && onlyChanged ? "Henüz TDB'den farklı ücret girilmemiş. Bir satırdaki kalem simgesiyle ücreti değiştirin." : undefined}
-        pager={rows.length > PAGE_SIZE ? { page, pageCount, pageSize: PAGE_SIZE, total: rows.length, onPageChange: setPage } : undefined}
-        mobileCard={(price) => (
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="font-medium text-slate-800">{price.treatment}</p>
-              <p className="font-mono text-xs text-slate-500">
-                {price.code}
-                {listKey === "custom" && !price.isTemplate ? ` · ${isOverride(price) ? "Değiştirildi" : "Kliniğe özel"}` : ""}
-              </p>
-            </div>
-            <div className="flex shrink-0 items-center gap-1.5">
-              {amountCell(price)}
-              {listKey === "custom" && canWritePrices && editingId !== price.id && (
-                <IconButton icon={Pencil} title={`${price.treatment} ücretini değiştir`} size="sm" onClick={() => startEdit(price)} />
+        emptyText={filtered ? "Bu seçime uyan kalem yok" : "Liste boş"}
+        emptyDescription={show === "changed" && !search.trim()
+          ? "Henüz TDB'den farklı ücret girilmemiş. Bir satırdaki kalem simgesiyle ücreti değiştirin."
+          : show === "custom" && !search.trim() ? "TDB'de olmayan tedaviler için “Yeni özel fiyat” ekleyin." : undefined}
+        pager={rows.length > PAGE_SIZE ? { page: Math.min(page, pageCount), pageCount, pageSize: PAGE_SIZE, total: rows.length, onPageChange: setPage } : undefined}
+        mobileCard={(row) => (
+          <div className="space-y-1.5">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="font-medium text-slate-800">{row.price.treatment}</p>
+                <p className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
+                  <span className="font-mono">{row.price.code}</span>
+                  {kindBadge(row)}
+                </p>
+              </div>
+              {editingId !== row.price.id && (
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <Money value={Number(row.price.amount)} className={row.kind === "tdb" ? "text-slate-600" : "font-semibold text-slate-900"} />
+                  {canWritePrices && <ActionMenu label={`${row.price.treatment} için işlemler`} items={rowActions(row)} />}
+                </div>
               )}
             </div>
+            {row.kind === "override" && row.tdb !== null && editingId !== row.price.id && (
+              <p className="text-xs text-slate-500">TDB ücreti {formatCurrency(row.tdb)}</p>
+            )}
+            {editingId === row.price.id && clinicCell(row)}
           </div>
         )}
       />
 
-      <Modal
-        open={showNew}
-        onClose={() => setShowNew(false)}
+      <FormModal
+        open={newOpen}
+        onClose={() => setNewOpen(false)}
+        onSubmit={(event) => submitNew(event)}
+        submitting={savingNew}
+        error={newFormError}
         module="finance"
-        title="Yeni Özel Fiyat"
-        description="TDB'de olmayan bir tedavi için ücret. TDB'deki bir tedavinin ücretini değiştirmek için “Özel fiyatlar”da satırdaki kalem simgesini kullanın."
-        footer={(
-          <>
-            <Button variant="secondary" onClick={() => setShowNew(false)} disabled={savingNew}>Vazgeç</Button>
-            <Button onClick={() => void submitNew()} loading={savingNew}>Kaydet</Button>
-          </>
-        )}
+        title="Yeni özel fiyat"
+        description="TDB'de olmayan bir tedavi için ücret."
       >
-        <div className="space-y-4">
-          <FormErrorBanner message={newFormError} />
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-[120px_minmax(0,1fr)]">
-            <FormField label="Kod" htmlFor="price-code" required error={newErrors.code}>
-              <Input id="price-code" value={newForm.code} onChange={(event) => { setNewForm((form) => ({ ...form, code: event.target.value })); setNewErrors((current) => ({ ...current, code: undefined })); }} className="font-mono" data-autofocus />
-            </FormField>
-            <FormField label="Tedavi adı" htmlFor="price-treatment" required error={newErrors.treatment}>
-              <Input id="price-treatment" value={newForm.treatment} onChange={(event) => { setNewForm((form) => ({ ...form, treatment: event.target.value })); setNewErrors((current) => ({ ...current, treatment: undefined })); }} />
-            </FormField>
-          </div>
-          <FormField label="Ücret (₺)" htmlFor="price-amount" required error={newErrors.amount}>
-            <Input id="price-amount" type="number" inputMode="decimal" min="0" step="0.01" value={newForm.amount} onChange={(event) => { setNewForm((form) => ({ ...form, amount: event.target.value })); setNewErrors((current) => ({ ...current, amount: undefined })); }} />
+        <FormField label="Tedavi adı" htmlFor="price-treatment" required error={newErrors.treatment}>
+          <Input id="price-treatment" value={newForm.treatment} maxLength={200} data-autofocus onChange={(event) => { setNewForm((form) => ({ ...form, treatment: event.target.value })); setNewErrors((current) => ({ ...current, treatment: undefined })); }} />
+        </FormField>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <FormField label="Ücret" htmlFor="price-amount" required error={newErrors.amount}>
+            <MoneyInput id="price-amount" value={newForm.amount} onChange={(amount) => { setNewForm((form) => ({ ...form, amount })); setNewErrors((current) => ({ ...current, amount: undefined })); }} />
+          </FormField>
+          <FormField label="Kod" htmlFor="price-code" error={newErrors.code} hint={`Boş bırakılırsa ${nextOwnCode(customPrices)} verilir.`}>
+            <Input id="price-code" value={newForm.code} maxLength={50} onChange={(event) => { setNewForm((form) => ({ ...form, code: event.target.value })); setNewErrors((current) => ({ ...current, code: undefined })); }} className="font-mono" />
           </FormField>
         </div>
-      </Modal>
+      </FormModal>
     </section>
   );
 }

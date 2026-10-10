@@ -1,118 +1,133 @@
-/* eslint-disable no-console */
 /**
- * DOKTOR/ASISTAN/BANKO/MUHASEBE için DB tabanlı yetki matrisinin (Rol
- * Yetkileri ekranı → role-permission-store.ts → rbac.can()) gerçekten
- * uygulandığını ve bir izin AÇILIP KAPATILDIĞINDA (kısa TTL cache sonrası,
- * yeniden giriş GEREKMEDEN) davranışın değiştiğini doğrular.
+ * UYARI: YALNIZ TEST VERİTABANINDA ÇALIŞTIRIN. Test, Rol Yetkileri matrisine
+ * geçici olarak yazar; sonunda RolePermissionConfig satırını (sürüm ve
+ * "kaydeden" dahil) ilk haline geri yükler — kurulum koddaki varsayılanı
+ * izliyorsa izlemeye devam eder.
  *
- * Kullanım: npx tsx scripts/role-permission-enforcement-test.ts
- * Test sonunda RolePermissionConfig satırı orijinal haline geri yüklenir.
+ * DOKTOR/ASISTAN/BANKO/MUHASEBE için DB tabanlı yetki matrisinin (Rol
+ * Yetkileri ekranı → role-permission-store.ts → rbac.can()) güncel varsayılan
+ * matrisle uygulandığını ve bir izin AÇILIP KAPATILDIĞINDA (süreç içi önbellek
+ * kayıtta anında silinir; yeniden giriş GEREKMEDEN) davranışın değiştiğini doğrular.
+ *
+ * Kullanım: DATABASE_URL=<test veritabanı> npx tsx scripts/role-permission-enforcement-test.ts
  */
-import { PrismaClient } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { can } from "../src/lib/rbac";
 import { getRolePermissionState, saveRolePermissionMap } from "../src/lib/role-permission-store";
 import { DEFAULT_ROLE_PERMISSIONS } from "../src/lib/role-permissions";
+import { prisma } from "../src/lib/prisma";
 
-const prisma = new PrismaClient();
+type ClinicRole = "DOKTOR" | "ASISTAN" | "BANKO" | "MUHASEBE";
+
+function log(message: string) {
+  process.stdout.write(`${message}\n`);
+}
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
 
 async function main() {
+  // Ham satır: geri yüklemede sürüm ve "kaydeden" de korunur (kaydetme sürümü
+  // artırıp kurulumu varsayılan güncellemelerinden koparırdı).
+  const originalRow = await prisma.rolePermissionConfig.findUnique({ where: { id: 1 } });
   const original = await getRolePermissionState();
-  console.log(`Mevcut yetki matrisi sürümü: ${original.version} (yedeklendi, test sonunda geri yüklenecek)`);
+  log(`Mevcut yetki matrisi sürümü: ${original.version} (yedeklendi, test sonunda geri yüklenecek)`);
 
   try {
-    // ── DOKTOR, ASISTAN, BANKO, MUHASEBE için birer okuma + birer yazma senaryosu ──
-    const scenarios: { role: "DOKTOR" | "ASISTAN" | "BANKO" | "MUHASEBE"; allowedRead: string; allowedWrite: string; forbidden: string }[] = [
-      { role: "DOKTOR",   allowedRead: "appointments:read", allowedWrite: "examinations:write", forbidden: "settings:write" },
-      { role: "ASISTAN",  allowedRead: "patients:read",      allowedWrite: "appointments:write",  forbidden: "finance:write" },
-      { role: "BANKO",    allowedRead: "appointments:read",  allowedWrite: "payments:write",       forbidden: "staff:write" },
-      { role: "MUHASEBE", allowedRead: "appointments:read",  allowedWrite: "finance:write",        forbidden: "patients:write" },
+    // ── Her rol için günlük işinden bir okuma + bir yazma ve işine ait olmayan izinler ──
+    const scenarios: { role: ClinicRole; allowedRead: string; allowedWrite: string; forbidden: string[] }[] = [
+      { role: "DOKTOR",   allowedRead: "appointments:read", allowedWrite: "examinations:write", forbidden: ["settings:write", "payments:read", "finance:read", "patients:phone"] },
+      { role: "ASISTAN",  allowedRead: "patients:read",     allowedWrite: "appointments:write", forbidden: ["finance:write", "finance:center", "payments:refund", "installments:write", "examinations:write", "prescriptions:write"] },
+      { role: "BANKO",    allowedRead: "appointments:read", allowedWrite: "payments:write",     forbidden: ["staff:write", "payments:refund", "examinations:read", "finance:read"] },
+      { role: "MUHASEBE", allowedRead: "finance:read",      allowedWrite: "finance:write",      forbidden: ["patients:write", "patients:read", "appointments:read", "examinations:read"] },
     ];
 
     for (const s of scenarios) {
-      const readOk = await can(s.role as any, s.allowedRead);
-      assert(readOk, `${s.role}: varsayılan olarak sahip olması gereken "${s.allowedRead}" izni reddedildi.`);
-      const writeOk = await can(s.role as any, s.allowedWrite);
-      assert(writeOk, `${s.role}: varsayılan olarak sahip olması gereken "${s.allowedWrite}" izni reddedildi.`);
-      const forbiddenOk = await can(s.role as any, s.forbidden);
-      assert(!forbiddenOk, `${s.role}: sahip OLMAMASI gereken "${s.forbidden}" izni yanlışlıkla verildi.`);
-      console.log(`✓ ${s.role}: okuma (${s.allowedRead}) ve yazma (${s.allowedWrite}) izinli, "${s.forbidden}" izinsiz — beklendiği gibi.`);
+      assert(await can(s.role, s.allowedRead), `${s.role}: varsayılan olarak sahip olması gereken "${s.allowedRead}" izni reddedildi.`);
+      assert(await can(s.role, s.allowedWrite), `${s.role}: varsayılan olarak sahip olması gereken "${s.allowedWrite}" izni reddedildi.`);
+      for (const forbidden of s.forbidden) {
+        assert(!(await can(s.role, forbidden)), `${s.role}: sahip OLMAMASI gereken "${forbidden}" izni yanlışlıkla verildi.`);
+      }
+      log(`✓ ${s.role}: okuma (${s.allowedRead}) ve yazma (${s.allowedWrite}) izinli; ${s.forbidden.join(", ")} izinsiz.`);
     }
 
-    // ── İnce taneli izinler artık ilgili DELETE/istatistik route'larında gerçekten
-    // enforce ediliyor (appointments:delete, examinations:delete,
-    // installments:delete, dashboard:stats) — bkz. denetim raporu, bu izinler
-    // önceden Rol Yetkileri ekranında görünüp kapatılabiliyordu ama hiçbir
-    // route'ta ayrıca kontrol edilmiyordu. Varsayılan rollerin MEVCUT
-    // davranışı (aşağıdaki beklenen değerler) kaybolmamalı.
-    const fineGrainedExpectations: { role: "DOKTOR" | "ASISTAN" | "BANKO" | "MUHASEBE"; permission: string; expected: boolean }[] = [
-      { role: "DOKTOR", permission: "appointments:delete", expected: true },
+    // ── İnce taneli izinler (güncel matris) ──
+    const fineGrainedExpectations: { role: ClinicRole; permission: string; expected: boolean }[] = [
+      { role: "DOKTOR", permission: "appointments:delete", expected: false },
       { role: "ASISTAN", permission: "appointments:delete", expected: true },
       { role: "BANKO", permission: "appointments:delete", expected: true },
       { role: "MUHASEBE", permission: "appointments:delete", expected: false },
       { role: "DOKTOR", permission: "examinations:delete", expected: true },
       { role: "ASISTAN", permission: "examinations:delete", expected: false },
-      { role: "DOKTOR", permission: "installments:delete", expected: true },
-      { role: "ASISTAN", permission: "installments:delete", expected: true },
-      { role: "BANKO", permission: "installments:delete", expected: true },
+      { role: "DOKTOR", permission: "installments:delete", expected: false },
+      { role: "ASISTAN", permission: "installments:delete", expected: false },
+      { role: "BANKO", permission: "installments:delete", expected: false },
       { role: "MUHASEBE", permission: "installments:delete", expected: true },
-      { role: "DOKTOR", permission: "dashboard:stats", expected: true },
-      { role: "ASISTAN", permission: "dashboard:stats", expected: true },
-      { role: "BANKO", permission: "dashboard:stats", expected: true },
-      { role: "MUHASEBE", permission: "dashboard:stats", expected: true },
+      { role: "DOKTOR", permission: "dashboard:stats", expected: false },
+      { role: "ASISTAN", permission: "dashboard:stats", expected: false },
+      { role: "BANKO", permission: "dashboard:stats", expected: false },
+      { role: "MUHASEBE", permission: "dashboard:stats", expected: false },
+      { role: "BANKO", permission: "appointments:approve", expected: true },
+      { role: "DOKTOR", permission: "appointments:approve", expected: false },
+      { role: "MUHASEBE", permission: "earnings:read", expected: true },
+      { role: "DOKTOR", permission: "prices:read", expected: true },
+      { role: "ASISTAN", permission: "payments:write", expected: true },
+      { role: "ASISTAN", permission: "patients:phone", expected: true },
+      { role: "ASISTAN", permission: "finance:center", expected: false },
+      { role: "MUHASEBE", permission: "prices:write", expected: false },
+      { role: "MUHASEBE", permission: "stock:delete", expected: false },
+      { role: "MUHASEBE", permission: "patients:read", expected: false },
     ];
     for (const { role, permission, expected } of fineGrainedExpectations) {
-      const actual = await can(role as any, permission);
+      const actual = await can(role, permission);
       assert(actual === expected, `${role}: "${permission}" beklenen ${expected}, gerçek ${actual}.`);
     }
-    console.log("✓ İnce taneli izinler (appointments:delete, examinations:delete, installments:delete, dashboard:stats) beklenen roller için doğru.");
-
-    // ── MUHASEBE'nin appointments:read izni: middleware ARTIK bunu 403'lememeli ──
-    // (bu script doğrudan can() çağırıyor, requireAuth() aynı can() fonksiyonunu
-    // kullanıyor — middleware.ts bu path için artık hiçbir rol bazlı engel
-    // uygulamıyor, bkz. src/middleware.ts.)
-    assert(await can("MUHASEBE" as any, "appointments:read"), "MUHASEBE appointments:read izni beklenmedik şekilde false.");
-    console.log("✓ MUHASEBE appointments:read: can() true dönüyor (middleware artık bunu engellemiyor).");
+    log("✓ İnce taneli izinler (iptal, taksit iptali, kurum özeti, online talep, hakediş, fiyat, asistan tahsilatı) güncel matrisle uyumlu.");
 
     // ── Rol Yetkileri ekranından bir izin AÇILDIĞINDA/KAPATILDIĞINDA, yeniden ──
     // giriş yapılmadan (JWT'de rol dışında bir şey taşınmıyor) davranış değişmeli.
-    const beforeToggle = await can("MUHASEBE" as any, "appointments:write");
+    const beforeToggle = await can("MUHASEBE", "appointments:write");
     assert(!beforeToggle, "Ön koşul hatası: MUHASEBE zaten appointments:write iznine sahip (varsayılan değişmiş olabilir).");
 
     const grantedMap = { ...original.map, MUHASEBE: [...original.map.MUHASEBE, "appointments:write"] };
     const granted = await saveRolePermissionMap(grantedMap, "role-permission-test", original.version);
-    const afterGrant = await can("MUHASEBE" as any, "appointments:write");
-    assert(afterGrant, "İzin Rol Yetkileri ekranından (saveRolePermissionMap) açıldı ama can() hâlâ false dönüyor — cache yenilenmiyor.");
-    console.log("✓ İzin açıldıktan hemen sonra (yeniden giriş yapılmadan) can() = true.");
+    assert(await can("MUHASEBE", "appointments:write"), "İzin Rol Yetkileri ekranından (saveRolePermissionMap) açıldı ama can() hâlâ false dönüyor — önbellek silinmiyor.");
+    log("✓ İzin açıldıktan hemen sonra (yeniden giriş yapılmadan) can() = true.");
 
     await saveRolePermissionMap(original.map, "role-permission-test-revert", granted.version);
-    const afterRevert = await can("MUHASEBE" as any, "appointments:write");
-    assert(!afterRevert, "İzin geri alındı ama can() hâlâ true dönüyor — cache yenilenmiyor.");
-    console.log("✓ İzin kapatıldıktan hemen sonra can() = false.");
+    assert(!(await can("MUHASEBE", "appointments:write")), "İzin geri alındı ama can() hâlâ true dönüyor — önbellek silinmiyor.");
+    log("✓ İzin kapatıldıktan hemen sonra can() = false.");
 
-    // ── DEFAULT_ROLE_PERMISSIONS içindeki her rolün gerçekten normalizeRolePermissionMap'ten geçtiğini doğrula ──
     for (const role of Object.keys(DEFAULT_ROLE_PERMISSIONS)) {
       if (role === "SUPERADMIN" || role === "YONETICI") continue;
-      const hasWildcard = await can(role as any, "*");
+      const hasWildcard = await can(role as ClinicRole, "*");
       assert(!hasWildcard || DEFAULT_ROLE_PERMISSIONS[role as keyof typeof DEFAULT_ROLE_PERMISSIONS].includes("*"), `${role}: beklenmedik şekilde "*" (tüm yetkiler) sahibi.`);
     }
-    console.log("✓ Hiçbir klinik rolü (DOKTOR/ASISTAN/BANKO/MUHASEBE) yanlışlıkla '*' yetkisine sahip değil.");
+    log("✓ Hiçbir klinik rolü (DOKTOR/ASISTAN/BANKO/MUHASEBE) yanlışlıkla '*' yetkisine sahip değil.");
 
-    console.log("\nTüm yetki senaryoları doğrulandı.");
+    log("\nTüm yetki senaryoları doğrulandı.");
   } finally {
-    // Orijinal yetki matrisini birebir geri yükle.
-    const current = await getRolePermissionState();
-    await saveRolePermissionMap(original.map, original.updatedBy, current.version);
-    console.log("Yetki matrisi orijinal haline geri yüklendi.");
+    if (originalRow) {
+      await prisma.rolePermissionConfig.update({
+        where: { id: 1 },
+        data: {
+          version: originalRow.version,
+          updatedBy: originalRow.updatedBy,
+          map: originalRow.map as Prisma.InputJsonValue,
+        },
+      });
+    } else {
+      // Test başlarken satır yoktu (ilk okuma oluşturdu): kurulum varsayılanı izlesin diye silinir.
+      await prisma.rolePermissionConfig.deleteMany({ where: { id: 1 } });
+    }
+    log("Yetki matrisi satırı (sürüm ve kaydeden dahil) ilk haline geri yüklendi.");
   }
 }
 
 main()
   .catch((error) => {
-    console.error(error);
+    process.stderr.write(`${error instanceof Error ? error.stack || error.message : String(error)}\n`);
     process.exitCode = 1;
   })
   .finally(async () => {

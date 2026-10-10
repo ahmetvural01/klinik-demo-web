@@ -1,11 +1,21 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { canManageAllMessages } from "../message-rules";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
-function canManageAll(role: string) {
-  return role === "YONETICI" || role === "SUPERADMIN";
+// Mesaj kendi kurumundan aranır (kurum filtresi doğrudan mesajın kendi
+// alanından; önceden yazarın kurumuna bakılıyordu). Silinmiş mesaj
+// düzenlenemez/yeniden silinemez.
+function findMessage(id: string, user: { role: string; institutionId: string | null }) {
+  return prisma.message.findFirst({
+    where: {
+      id,
+      deletedAt: null,
+      ...(user.role !== "SUPERADMIN" ? { institutionId: user.institutionId as string } : {}),
+    },
+  });
 }
 
 export async function PATCH(req: Request, props: RouteContext) {
@@ -26,15 +36,10 @@ export async function PATCH(req: Request, props: RouteContext) {
     return NextResponse.json({ error: "Mesaj en fazla 1000 karakter olabilir" }, { status: 400 });
   }
 
-  const message = await prisma.message.findFirst({
-    where: {
-      id,
-      ...(auth.user.role !== "SUPERADMIN" ? { user: { institutionId: auth.user.institutionId } } : {}),
-    },
-  });
+  const message = await findMessage(id, auth.user);
   if (!message) return NextResponse.json({ error: "Mesaj bulunamadı" }, { status: 404 });
 
-  const canEdit = message.userId === auth.user.id || canManageAll(auth.user.role);
+  const canEdit = message.userId === auth.user.id || canManageAllMessages(auth.user.role);
   if (!canEdit) return NextResponse.json({ error: "Bu mesajı düzenleme yetkiniz yok" }, { status: 403 });
 
   const updated = await prisma.message.update({
@@ -44,7 +49,7 @@ export async function PATCH(req: Request, props: RouteContext) {
   });
 
   await writeAudit(auth.user.id, "MESSAGE_UPDATE", id);
-  return NextResponse.json(updated);
+  return NextResponse.json({ ...updated, canEdit: true });
 }
 
 export async function DELETE(_: Request, props: RouteContext) {
@@ -58,17 +63,14 @@ export async function DELETE(_: Request, props: RouteContext) {
   const id = params.id;
   if (!id) return NextResponse.json({ error: "Mesaj bulunamadı" }, { status: 404 });
 
-  const message = await prisma.message.findFirst({
-    where: {
-      id,
-      ...(auth.user.role !== "SUPERADMIN" ? { user: { institutionId: auth.user.institutionId } } : {}),
-    },
-  });
+  const message = await findMessage(id, auth.user);
   if (!message) return NextResponse.json({ error: "Mesaj bulunamadı" }, { status: 404 });
 
-  const canDelete = message.userId === auth.user.id || canManageAll(auth.user.role);
+  const canDelete = message.userId === auth.user.id || canManageAllMessages(auth.user.role);
   if (!canDelete) return NextResponse.json({ error: "Bu mesajı silme yetkiniz yok" }, { status: 403 });
 
+  // Kalıcı silme bilinçli: ekip mesajına yanlışlıkla yazılan hasta bilgisi
+  // (KVKK) veritabanında gizli olarak kalmasın. Denetim kaydı yalnız kimliği tutar.
   await prisma.message.delete({ where: { id } });
   await writeAudit(auth.user.id, "MESSAGE_DELETE", id);
   return NextResponse.json({ ok: true });

@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { maskPatientName } from "@/lib/audit-mask";
 import { requireActiveBranch } from "@/lib/branch-context";
+import { shouldHidePatientPhoneForUser } from "@/lib/patient-visibility-server";
 
 const VALID_WAITLIST_STATUSES = new Set(["BEKLIYOR", "ARANDI", "YERLESTIRILDI", "IPTAL"]);
 const WAITLIST_TRANSITIONS: Record<string, ReadonlySet<string>> = {
@@ -98,7 +100,11 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
       },
     });
 
-    await writeAudit(auth.user.id, "WAITLIST_UPDATE", `Bekleme listesi güncellendi: ${entry.patient.fullName} → ${entry.status}`);
+    await writeAudit(auth.user.id, "WAITLIST_UPDATE", `Bekleme listesi güncellendi: ${maskPatientName(entry.patient.fullName)} → ${entry.status}`);
+    // Liste ucuyla aynı kural: telefon görme yetkisi olmayan kişiye güncelleme yanıtında da telefon gönderilmez.
+    if (await shouldHidePatientPhoneForUser(auth.user)) {
+      return NextResponse.json({ ...entry, patient: { ...entry.patient, phone: null } });
+    }
     return NextResponse.json(entry);
   } catch (error) {
     console.error("[waitlist PATCH]", error);

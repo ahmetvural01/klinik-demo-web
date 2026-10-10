@@ -1,9 +1,27 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Callout } from "@/components/ui/Callout";
 
 const DISCONNECTED_BADGE_DELAY_MS = 3000;
+// Ard arda gelen değişiklikler (ör. bir kayıt + denetim izi + bakiye) tek
+// "ks:realtime-sync" olayında birleşir; en geç MAX_WAIT_MS içinde yayınlanır.
+const COALESCE_MS = 1200;
+const MAX_WAIT_MS = 3000;
 
+type ChangePayload = { key?: string; at?: string; initial?: boolean };
+
+/**
+ * Kurumdaki değişiklikleri (SSE) sayfalara "ks:realtime-sync" olayıyla duyurur.
+ *
+ * - Bağlantının İLK olayı (initial) yalnız taban çizgisidir: önceden her tam
+ *   açılışta "değişiklik var" sayılıp sayfa verisi ve kabuk rozetleri ikinci
+ *   kez yükleniyordu. Kopma sonrası anahtar değişmişse (kaçırılan değişiklik)
+ *   bir kez yayınlanır.
+ * - Olaylar 1,2 sn içinde birleştirilir (en fazla 3 sn bekleme).
+ * - Sekme gizliyken yayın yapılmaz; "bekleyen var" işaretlenir ve sekme
+ *   görünür olunca tek kez yayınlanır (arka plandaki sekmeler istek atmaz).
+ */
 export function PanelRealtimeSync() {
   const sourceRef = useRef<EventSource | null>(null);
   const lastKeyRef = useRef("");
@@ -12,6 +30,42 @@ export function PanelRealtimeSync() {
 
   useEffect(() => {
     let unmounted = false;
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+    let firstQueuedAt = 0;
+    let queued: ChangePayload | null = null;
+    let hiddenPending: ChangePayload | null = null;
+
+    const publish = (detail: ChangePayload) => {
+      window.dispatchEvent(new CustomEvent("ks:realtime-sync", { detail }));
+    };
+
+    const flush = () => {
+      flushTimer = null;
+      firstQueuedAt = 0;
+      const detail = queued;
+      queued = null;
+      if (!detail) return;
+      if (document.visibilityState === "hidden") {
+        hiddenPending = detail;
+        return;
+      }
+      publish(detail);
+    };
+
+    const enqueue = (detail: ChangePayload) => {
+      queued = detail;
+      const now = Date.now();
+      if (!firstQueuedAt) firstQueuedAt = now;
+      if (flushTimer) clearTimeout(flushTimer);
+      flushTimer = setTimeout(flush, Math.max(0, Math.min(COALESCE_MS, firstQueuedAt + MAX_WAIT_MS - now)));
+    };
+
+    const onVisibility = () => {
+      if (document.visibilityState !== "visible" || !hiddenPending) return;
+      const detail = hiddenPending;
+      hiddenPending = null;
+      publish(detail);
+    };
 
     const clearDisconnectedTimer = () => {
       if (disconnectedTimerRef.current) {
@@ -28,14 +82,19 @@ export function PanelRealtimeSync() {
 
       const onChange = (event: MessageEvent<string>) => {
         try {
-          const payload = JSON.parse(event.data) as { key?: string; at?: string };
+          const payload = JSON.parse(event.data) as ChangePayload;
           const key = payload?.key || "";
-          if (!key || key === lastKeyRef.current) return;
-
+          if (!key) return;
+          // İlk bağlantı: sayfa verisi zaten taze; yalnız taban çizgisi kaydedilir.
+          if (!lastKeyRef.current) {
+            lastKeyRef.current = key;
+            return;
+          }
+          if (key === lastKeyRef.current) return;
           lastKeyRef.current = key;
-          window.dispatchEvent(new CustomEvent("ks:realtime-sync", { detail: payload }));
+          enqueue(payload);
         } catch {
-          // ignore malformed event payloads
+          // bozuk olay yok sayılır
         }
       };
 
@@ -43,14 +102,12 @@ export function PanelRealtimeSync() {
       source.addEventListener("ping", (() => {}) as EventListener);
 
       source.onopen = () => {
-        // Bağlantı kurulduğunda (ilk kez veya kopma sonrası) rozet varsa kaldır.
         clearDisconnectedTimer();
         setShowDisconnected(false);
       };
 
       source.onerror = () => {
-        // EventSource kendi kendine yeniden dener; kısa kopmalarda titreşim
-        // olmasın diye rozeti sadece birkaç saniye sürerse gösteriyoruz.
+        // EventSource kendisi yeniden dener; kısa kopmalarda uyarı titreşmesin.
         if (!disconnectedTimerRef.current) {
           disconnectedTimerRef.current = setTimeout(() => {
             setShowDisconnected(true);
@@ -60,10 +117,13 @@ export function PanelRealtimeSync() {
     };
 
     connect();
+    document.addEventListener("visibilitychange", onVisibility);
 
     return () => {
       unmounted = true;
       clearDisconnectedTimer();
+      if (flushTimer) clearTimeout(flushTimer);
+      document.removeEventListener("visibilitychange", onVisibility);
       if (sourceRef.current) {
         sourceRef.current.close();
         sourceRef.current = null;
@@ -73,10 +133,10 @@ export function PanelRealtimeSync() {
 
   if (!showDisconnected) return null;
 
+  // Ortak uyarı bileşeni (elle yazılmış sarı kutu yerine); ekranın altında, içeriği itmeden.
   return (
-    <div className="fixed bottom-4 left-1/2 z-[240] -translate-x-1/2 rounded-full border border-amber-200 bg-amber-50 px-3.5 py-2 text-xs font-semibold text-amber-800 shadow-lg">
-      <span className="mr-1.5 inline-block h-2 w-2 animate-pulse rounded-full bg-amber-500 align-middle" />
-      Bağlantı kesildi, yeniden bağlanılıyor…
+    <div className="fixed bottom-4 left-1/2 z-[240] w-max max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-lg shadow-lg">
+      <Callout tone="warning" compact title="Bağlantı kesildi, yeniden bağlanılıyor…" />
     </div>
   );
 }

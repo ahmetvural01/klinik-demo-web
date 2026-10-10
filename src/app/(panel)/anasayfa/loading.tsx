@@ -1,5 +1,5 @@
-import PanelLoading from "@/components/ui/PanelLoading";
+import { HomeLoading } from "./_components/HomeLoading";
 
 export default function Loading() {
-  return <PanelLoading />;
+  return <HomeLoading />;
 }

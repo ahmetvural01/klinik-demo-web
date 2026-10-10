@@ -5,15 +5,28 @@ import { requireAuth, withApiTiming, writeAudit } from "@/lib/api";
 import { dispatchPatientMessage } from "@/lib/notification-dispatch";
 import { turkeyDayRangeUtc, turkeyDayBeforeStartUtc } from "@/lib/tz";
 import { findDoctorBlockConflict } from "@/lib/doctor-block-conflict";
-import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
+import { shouldHidePatientPhoneForUser } from "@/lib/patient-visibility-server";
 import { getDailySchedules, checkWorkingHoursInterval } from "@/lib/working-hours";
 import { checkDoctorWorkingHoursInterval } from "@/lib/working-hours-core";
 import { renderCommunicationTemplate, resolveSmsTemplate } from "@/lib/sms-templates";
 import { requireActiveBranch } from "@/lib/branch-context";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
 import { formatAppointmentDateTime } from "@/lib/appointment-change-notify";
+import { maskPatientName, maskPatientPhone } from "@/lib/audit-mask";
 
 const APPOINTMENT_LIST_LIMIT = 500;
+
+// Randevu yanıtlarında hastanın yalnız takvimin gösterdiği alanları döner.
+// Önceden oluşturma yanıtı tam hasta kaydını (notlar, sağlık geçmişi, adres)
+// randevu yazma yetkisiyle istemciye gönderiyordu (KVKK: veri en aza indirme).
+const APPOINTMENT_PATIENT_SELECT = {
+  id: true,
+  fullName: true,
+  phone: true,
+  tcNo: true,
+  hasContagiousDisease: true,
+  contagiousDiseaseNote: true,
+} as const;
 
 type AppointmentSmsStatus = {
   info: "sent" | "skipped" | "failed";
@@ -88,7 +101,7 @@ async function sendAppointmentInfoSms(params: {
     await writeAudit(
       params.createdByUserId,
       result.channel === "WHATSAPP" ? "WHATSAPP_BILGI_AUTO" : "SMS_BILGI_AUTO",
-      `Hasta: ${appointment.patient.id} - Kanal: ${result.channel} - ProviderMsgId: ${result.providerMessageId || "-"}`
+      `Hasta: ${maskPatientName(appointment.patient.fullName)} - Kanal: ${result.channel} - ProviderMsgId: ${result.providerMessageId || "-"}`
     );
     return {
       status: "sent",
@@ -103,7 +116,7 @@ async function sendAppointmentInfoSms(params: {
   await writeAudit(
       params.createdByUserId,
       "SMS_BILGI_AUTO_FAILED",
-      `${appointment.patient.fullName} (${appointment.patient.phone}) - ${result.error || "Bilinmeyen hata"}`
+      `${maskPatientName(appointment.patient.fullName)} (${maskPatientPhone(appointment.patient.phone)}) - ${result.error || "Bilinmeyen hata"}`
   );
   return { status: "failed", message: result.error || "Bilgilendirme SMS'i gönderilemedi." };
 }
@@ -193,7 +206,7 @@ export const GET = withApiTiming("appointments", async function GET(request: Nex
   const truncated = appointments.length > APPOINTMENT_LIST_LIMIT;
   if (truncated) appointments = appointments.slice(0, APPOINTMENT_LIST_LIMIT);
 
-  const hidePhone = await shouldHidePatientPhoneForRole(auth.user.role);
+  const hidePhone = await shouldHidePatientPhoneForUser(auth.user);
   const result = hidePhone
     ? appointments.map(a => ({
         ...a,
@@ -409,7 +422,7 @@ export async function POST(request: NextRequest) {
           endAt,
         },
         include: {
-          patient: true,
+          patient: { select: APPOINTMENT_PATIENT_SELECT },
           doctor: { select: { id: true, fullName: true } },
           clinicUnit: { select: { id: true, name: true, code: true } },
           branch: { select: { id: true, name: true, code: true, colorCode: true } },
@@ -449,9 +462,16 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    await writeAudit(auth.user.id, "APPOINTMENT_CREATE", `${appointment.patient.fullName} için randevu${appointment.clinicUnit ? ` · Tedavi alanı: ${appointment.clinicUnit.name}` : ""}${conflict && overrideDoctorConflict ? " · Doktor çakışması onaylanarak oluşturuldu" : ""}`);
+    // Denetim kaydı platform paneline de düşer: hasta adı maskeli, tarih Türkiye
+    // saatiyle okunur, hekim adıyla (H9/H11; sms ve online talep uçlarıyla aynı kural).
+    await writeAudit(auth.user.id, "APPOINTMENT_CREATE", `${maskPatientName(appointment.patient.fullName)} için randevu · ${formatAppointmentDateTime(appointment.startAt)} · ${appointment.doctor.fullName}${appointment.clinicUnit ? ` · Tedavi alanı: ${appointment.clinicUnit.name}` : ""}${conflict && overrideDoctorConflict ? " · Doktor çakışması onaylanarak oluşturuldu" : ""}`);
+    // Liste ucuyla aynı kural: telefon görme yetkisi olmayan role telefon/TC gönderilmez.
+    const hidePhone = await shouldHidePatientPhoneForUser(auth.user);
     return NextResponse.json({
       ...appointment,
+      patient: hidePhone
+        ? { ...appointment.patient, phone: null, tcNo: appointment.patient.tcNo ? "***" : appointment.patient.tcNo }
+        : appointment.patient,
       smsStatus: {
         info: infoSms.status,
         infoMessage: infoSms.message,

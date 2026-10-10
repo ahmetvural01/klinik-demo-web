@@ -1,15 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Modal } from "@/components/ui/Modal";
-import { Button } from "@/components/ui/Button";
+import { FormModal } from "@/components/ui/FormModal";
+import { Callout } from "@/components/ui/Callout";
 import { Input } from "@/components/ui/Input";
-import { FormErrorBanner, FormField } from "@/components/ui/FormField";
+import { FormField } from "@/components/ui/FormField";
 
 /**
  * Kliniğe gizli giriş (destek için klinik ekranını açma). Klinik listesi ve
  * klinik dosyası aynı pencereyi kullanır; önceden iki ayrı kopya vardı.
  * Giriş denetim günlüğüne "gizli giriş" olarak yazılır (bkz. impersonate API).
+ * İstek bilinçli olarak saSend ile değil düz fetch ile atılır: yanlış şifre
+ * 401 dönebilir ve saSend 401'de giriş ekranına yönlendirirdi.
  */
 export function GhostLoginModal({
   institution,
@@ -60,44 +62,37 @@ export function GhostLoginModal({
   };
 
   return (
-    <Modal
+    <FormModal
       open={Boolean(institution)}
       onClose={onClose}
       title="Kliniğe gir"
       description={institution ? `${institution.name} kliniği yeni sekmede tam yetkiyle açılır.` : undefined}
       size="sm"
       trackFormChanges={false}
-      footer={
-        <>
-          <Button variant="secondary" onClick={onClose}>Vazgeç</Button>
-          <Button loading={loading} disabled={!password} onClick={() => void enter()}>Giriş yap</Button>
-        </>
-      }
+      onSubmit={() => enter()}
+      submitting={loading}
+      submitDisabled={!password}
+      submitLabel="Giriş yap"
+      error={error}
+      formClassName="space-y-3"
     >
-      <form
-        className="space-y-3"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void enter();
-        }}
-      >
-        <ul className="list-disc space-y-1 rounded-lg border border-amber-200 bg-amber-50 py-2 pl-7 pr-3 text-xs leading-5 text-amber-900">
+      <Callout tone="warning" compact icon={null}>
+        <ul className="list-disc space-y-1 pl-4">
           <li>Klinik, yöneticisinin hesabıyla ve <strong>tam yetkiyle</strong> açılır; kayıt ekleyip silebilirsiniz.</li>
-          <li>Giriş anı ve klinikte yaptığınız işlemler Denetim Günlüğü&apos;ne &quot;gizli giriş&quot; işaretiyle, klinik yöneticisi hesabı adına yazılır.</li>
+          <li>Giriş anı ve klinikte yaptığınız işlemler Denetim Günlüğü&apos;ne sizin adınızla, &quot;gizli giriş&quot; işaretiyle yazılır.</li>
           <li>Başka bir kliniğe açık gizli oturumunuz varsa o sekme de bu kliniğe geçer; önce o sekmeyi kapatın.</li>
         </ul>
-        <FormErrorBanner message={error} />
-        <FormField label="Kendi şifreniz" htmlFor="ghost-password" required hint="Platform yöneticisi hesabınızın şifresi">
-          <Input
-            id="ghost-password"
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            data-autofocus
-          />
-        </FormField>
-      </form>
-    </Modal>
+      </Callout>
+      <FormField label="Kendi şifreniz" htmlFor="ghost-password" required hint="Platform yöneticisi hesabınızın şifresi">
+        <Input
+          id="ghost-password"
+          type="password"
+          autoComplete="current-password"
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+          data-autofocus
+        />
+      </FormField>
+    </FormModal>
   );
 }

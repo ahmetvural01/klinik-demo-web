@@ -1,17 +1,33 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { hasAnyPanelPermission, hasPanelPermission } from "@/lib/panel-permissions";
-import { showToastSafe } from "@/lib/toast-client";
+import { usePanelSummary } from "@/components/layout/use-panel-alerts";
 
 type PermissionContextValue = {
   role: string;
   permissions: string[];
   features: InstitutionFeatures;
   scopeKey: string;
+  /** Oturumdaki kullanıcının kimliği (layout verir; yoksa null). */
+  userId: string | null;
+  /**
+   * Süperadmin'in kliniğe görünmez (destek) oturumu mu (layout verir; yoksa false).
+   * Rol önizlemesinde de true kalır. Ekip mesajı / duyuru yazma gibi kliniğe
+   * kendi adıyla iz bırakan kutular özet gelmeden bu bilgiyle gizlenir.
+   */
+  ghost: boolean;
   can: (permission: string) => boolean;
   canAny: (...permissions: string[]) => boolean;
   hasFeature: (feature: keyof InstitutionFeatures) => boolean;
+  /**
+   * İzin listesi sunucudan doğrulandı mı (sayfa yüklenirken layout'tan ya da
+   * başarılı bir özet yanıtından). Geçici hatada liste SİLİNMEZ; son doğrulanmış
+   * liste korunur. Sayfa koruması yalnız doğrulanmış listeye göre yönlendirir.
+   */
+  permissionsVerified: boolean;
+  /** "degraded": son yoklamalar art arda başarısız (ekran son bilinen bilgiyle çalışıyor). */
+  accessStatus: "ok" | "degraded";
 };
 
 export type InstitutionFeatures = {
@@ -20,78 +36,73 @@ export type InstitutionFeatures = {
 
 const PermissionContext = createContext<PermissionContextValue | null>(null);
 
+function samePermissions(left: readonly string[], right: readonly string[]) {
+  if (left.length !== right.length) return false;
+  const a = [...left].sort();
+  const b = [...right].sort();
+  return a.every((value, index) => value === b[index]);
+}
+
 export function PermissionProvider({
   role,
   permissions,
   features,
   scopeKey,
+  userId = null,
+  ghost = false,
   children,
 }: {
   role: string;
   permissions: string[];
   features: InstitutionFeatures;
   scopeKey: string;
+  userId?: string | null;
+  ghost?: boolean;
   children: ReactNode;
 }) {
   const [activeFeatures, setActiveFeatures] = useState(features);
   const [activePermissions, setActivePermissions] = useState(permissions);
-  const accessFailureShown = useRef(false);
-  const refreshAccess = useCallback(async () => {
-    const [capabilityResponse, identityResponse] = await Promise.all([
-      fetch("/api/capabilities", { cache: "no-store" }).catch(() => null),
-      fetch("/api/auth/me", { cache: "no-store" }).catch(() => null),
-    ]);
-    const [capabilityData, identityData] = await Promise.all([
-      capabilityResponse?.json().catch(() => null),
-      identityResponse?.json().catch(() => null),
-    ]);
-    const accessUnavailable = !capabilityResponse?.ok || !identityResponse?.ok;
-    if (capabilityResponse?.ok && capabilityData?.features) {
-      setActiveFeatures({ whatsapp: Boolean(capabilityData.features.whatsapp) });
-    } else {
-      setActiveFeatures({ whatsapp: false });
-    }
-    if (identityResponse?.ok && Array.isArray(identityData?.permissions)) {
-      setActivePermissions(identityData.permissions.filter((item: unknown): item is string => typeof item === "string"));
-    } else {
-      setActivePermissions([]);
-    }
-    if (accessUnavailable && !accessFailureShown.current) {
-      accessFailureShown.current = true;
-      showToastSafe({
-        title: "Erişim bilgileri doğrulanamadı",
-        message: "Güvenlik nedeniyle işlemler geçici olarak kapatıldı. Bağlantınızı kontrol edip sayfayı yenileyin.",
-        type: "error",
-      });
-    } else if (!accessUnavailable) {
-      accessFailureShown.current = false;
-    }
-  }, []);
+  const summary = usePanelSummary();
 
-  useEffect(() => setActiveFeatures(features), [features]);
-  useEffect(() => setActivePermissions(permissions), [permissions]);
+  // Layout yeniden çizildiğinde (ör. router.refresh) gelen liste; içerik aynıysa
+  // durum değişmez — 28 dosyadaki usePermissions tüketicisi boşuna çizilmesin.
   useEffect(() => {
-    const onVisibility = () => { if (document.visibilityState === "visible") void refreshAccess(); };
-    const onFeatureChange = () => void refreshAccess();
-    const interval = window.setInterval(() => void refreshAccess(), 15_000);
-    window.addEventListener("institution-features-change", onFeatureChange);
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => {
-      window.clearInterval(interval);
-      window.removeEventListener("institution-features-change", onFeatureChange);
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [refreshAccess]);
+    setActivePermissions((current) => (samePermissions(current, permissions) ? current : permissions));
+  }, [permissions]);
+  useEffect(() => {
+    setActiveFeatures((current) => (current.whatsapp === features.whatsapp ? current : features));
+  }, [features]);
+
+  // Yetki yoklaması artık ayrı bir 15 sn'lik istek değil: kabuk özeti
+  // (/api/panel-summary) izin ve özellikleri de taşır. Önceden tek bir geçici
+  // hata (429, 5xx, ağ kopması) izinleri [] yapıyor, sayfa koruması kullanıcıyı
+  // /yetkisiz'e atıp açık formu siliyordu. Artık yalnız BAŞARILI yanıt listeyi
+  // değiştirir; hata durumunda son doğrulanmış liste geçerli kalır.
+  const verified = summary.data;
+  useEffect(() => {
+    if (!verified) return;
+    setActivePermissions((current) => (samePermissions(current, verified.permissions) ? current : verified.permissions));
+    setActiveFeatures((current) => (current.whatsapp === verified.features.whatsapp ? current : { whatsapp: verified.features.whatsapp }));
+  }, [verified]);
+
+  const can = useCallback((permission: string) => hasPanelPermission(activePermissions, permission), [activePermissions]);
+  const canAny = useCallback((...required: string[]) => hasAnyPanelPermission(activePermissions, required), [activePermissions]);
+  const hasFeature = useCallback((feature: keyof InstitutionFeatures) => Boolean(activeFeatures[feature]), [activeFeatures]);
+  const accessStatus: PermissionContextValue["accessStatus"] = summary.failures >= 3 ? "degraded" : "ok";
 
   const value = useMemo<PermissionContextValue>(() => ({
     role,
     permissions: activePermissions,
     features: activeFeatures,
     scopeKey,
-    can: (permission) => hasPanelPermission(activePermissions, permission),
-    canAny: (...required) => hasAnyPanelPermission(activePermissions, required),
-    hasFeature: (feature) => Boolean(activeFeatures[feature]),
-  }), [activeFeatures, activePermissions, role, scopeKey]);
+    userId,
+    ghost,
+    can,
+    canAny,
+    hasFeature,
+    permissionsVerified: true,
+    accessStatus,
+  }), [accessStatus, activeFeatures, activePermissions, can, canAny, hasFeature, ghost, role, scopeKey, userId]);
 
   return <PermissionContext.Provider value={value}>{children}</PermissionContext.Provider>;
 }

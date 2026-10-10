@@ -3,8 +3,9 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { clinicTaskCreateSchema } from "@/lib/validators";
 import { can } from "@/lib/rbac";
-import type { ClinicTaskStatus, Role } from "@prisma/client";
+import type { ClinicTaskStatus, Prisma, Role } from "@prisma/client";
 import { hasBranchPermission, requireActiveBranch } from "@/lib/branch-context";
+import { clinicTaskAuditDetail } from "@/app/api/clinic-tasks/task-audit";
 
 const TASK_STATUSES = new Set<string>(["ACIK", "BEKLEMEDE", "TAMAMLANDI", "IPTAL"]);
 const isTaskStatus = (value: string): value is ClinicTaskStatus => TASK_STATUSES.has(value);
@@ -27,6 +28,13 @@ export async function GET(request: NextRequest) {
     const status = sp.get("status") || undefined;
     const q = (sp.get("q") || "").trim();
     const take = Math.max(1, Math.min(500, Number(sp.get("take") || 100) || 100));
+    // Sayfalı kip (?paged=1&page=N): Yapılacaklar > Ekip görevleri'nin
+    // tamamlanan/iptal edilen listeleri. Önceden liste her açılışta kapanmış
+    // görevler dahil 500 kaydı çekiyordu (hız raporu TG3). Yanıt yalnız bu
+    // kipte { items, total, page, pageCount } olur; diğer çağıranlar (menü
+    // rozeti, hasta dosyası) eskisi gibi dizi alır.
+    const paged = sp.get("paged") === "1";
+    const page = Math.max(1, Math.min(10_000, Math.floor(Number(sp.get("page") || 1)) || 1));
     // "mine": bana atananlar (uyarı zili bunu sayar). "involved": bana atanan
     // YA DA benim açtığım görevler — Görevler sayfasındaki "Benim işlerim".
     // Önceden kimseye atanmadan açılan görev, açan kişi dahil kimsenin
@@ -50,48 +58,66 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ message: "Geçersiz görev durumu" }, { status: 400 });
     }
 
+    const where: Prisma.ClinicTaskWhereInput = {
+      institutionId: auth.user.institutionId,
+      branchId: branch.branchId,
+      patientId,
+      AND: [
+        ...(scope === "mine" ? [{
+          OR: [
+            { assignedToId: auth.user.id },
+            { assignees: { some: { userId: auth.user.id } } },
+          ],
+        }] : []),
+        ...(scope === "involved" ? [{
+          OR: [
+            { assignedToId: auth.user.id },
+            { assignees: { some: { userId: auth.user.id } } },
+            { createdById: auth.user.id },
+          ],
+        }] : []),
+        ...(assignedToId ? [{
+          OR: [
+            { assignedToId },
+            { assignees: { some: { userId: assignedToId } } },
+          ],
+        }] : []),
+      ],
+      status: statusValues.length > 0 ? { in: statusValues.filter(isTaskStatus) } : undefined,
+      OR: q
+        ? [
+            { title: { contains: q, mode: "insensitive" } },
+            { details: { contains: q, mode: "insensitive" } },
+            { vendorName: { contains: q, mode: "insensitive" } },
+            { patient: { fullName: { contains: q, mode: "insensitive" } } },
+          ]
+        : undefined,
+    };
+    const include = {
+      patient: { select: { id: true, fullName: true } },
+      assignedTo: { select: { id: true, fullName: true, isActive: true } },
+      assignees: { include: { user: { select: { id: true, fullName: true, role: true, isActive: true } } } },
+      createdBy: { select: { id: true, fullName: true } },
+    } satisfies Prisma.ClinicTaskInclude;
+
+    if (paged) {
+      // Kapanmış listelerde en son kapanan en üstte.
+      const [total, items] = await Promise.all([
+        prisma.clinicTask.count({ where }),
+        prisma.clinicTask.findMany({
+          where,
+          include,
+          orderBy: [{ completedAt: { sort: "desc", nulls: "last" } }, { updatedAt: "desc" }],
+          skip: (page - 1) * take,
+          take,
+        }),
+      ]);
+      return NextResponse.json({ items, total, page, pageCount: Math.max(1, Math.ceil(total / take)) });
+    }
+
     const tasks = await prisma.clinicTask.findMany({
-      where: {
-        institutionId: auth.user.institutionId,
-        branchId: branch.branchId,
-        patientId,
-        AND: [
-          ...(scope === "mine" ? [{
-            OR: [
-              { assignedToId: auth.user.id },
-              { assignees: { some: { userId: auth.user.id } } },
-            ],
-          }] : []),
-          ...(scope === "involved" ? [{
-            OR: [
-              { assignedToId: auth.user.id },
-              { assignees: { some: { userId: auth.user.id } } },
-              { createdById: auth.user.id },
-            ],
-          }] : []),
-          ...(assignedToId ? [{
-            OR: [
-              { assignedToId },
-              { assignees: { some: { userId: assignedToId } } },
-            ],
-          }] : []),
-        ],
-        status: statusValues.length > 0 ? { in: statusValues.filter(isTaskStatus) } : undefined,
-        OR: q
-          ? [
-              { title: { contains: q, mode: "insensitive" } },
-              { details: { contains: q, mode: "insensitive" } },
-              { vendorName: { contains: q, mode: "insensitive" } },
-              { patient: { fullName: { contains: q, mode: "insensitive" } } },
-            ]
-          : undefined,
-      },
-      include: {
-        patient: { select: { id: true, fullName: true } },
-        assignedTo: { select: { id: true, fullName: true, isActive: true } },
-        assignees: { include: { user: { select: { id: true, fullName: true, role: true, isActive: true } } } },
-        createdBy: { select: { id: true, fullName: true } },
-      },
+      where,
+      include,
       orderBy: [{ status: "asc" }, { priority: "desc" }, { dueAt: "asc" }, { createdAt: "desc" }],
       take,
     });
@@ -222,7 +248,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Görev oluşturulamadı" }, { status: 503 });
   }
 
-  await writeAudit(auth.user.id, "CLINIC_TASK_CREATE", `${task.title} (oncelik:${task.priority}, durum:${task.status})`);
+  await writeAudit(auth.user.id, "CLINIC_TASK_CREATE", clinicTaskAuditDetail(task));
 
   return NextResponse.json(task, { status: 201 });
 }

@@ -1,14 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { EyeOff, Plus } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Tabs, useTabParam } from "@/components/ui/Tabs";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
-import { Modal } from "@/components/ui/Modal";
+import { FormModal } from "@/components/ui/FormModal";
 import { Input, Textarea } from "@/components/ui/Input";
-import { FormErrorBanner, FormField } from "@/components/ui/FormField";
+import { FormField } from "@/components/ui/FormField";
 import { ChoiceCards } from "@/components/ui/ChoiceCards";
 import { SearchableListbox } from "@/components/ui/SearchableListbox";
 import { EmptyValue, ListTable, type ListTableColumn } from "@/components/ui/ListTable";
@@ -122,16 +123,28 @@ export default function AnnouncementsPage() {
   const loadClinics = () => {
     if (clinics.length > 0 || clinicsLoading) return;
     setClinicsLoading(true);
-    saGet<Clinic[]>("/api/superadmin/institutions", "Klinik listesi alınamadı.")
+    saGet<Clinic[]>("/api/superadmin/institutions?fields=basic", "Klinik listesi alınamadı.")
       .then((data) => setClinics((Array.isArray(data) ? data : []).filter((item) => item.isActive)))
       .catch((error) => setFormError(errorMessage(error, "Klinik listesi alınamadı.")))
       .finally(() => setClinicsLoading(false));
   };
 
-  const openCreate = () => {
+  const openCreate = useCallback(() => {
     setFormError(null);
     setOpen(true);
-  };
+  }, []);
+
+  // Derin bağlantı: /superadmin/announcements?yeni=1 formu açar (Klinikler/Faturalar ile aynı).
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  useEffect(() => {
+    if (searchParams.get("yeni") !== "1") return;
+    openCreate();
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("yeni");
+    router.replace(`${pathname}${params.toString() ? `?${params.toString()}` : ""}`, { scroll: false });
+  }, [openCreate, pathname, router, searchParams]);
 
   const resetForm = () => {
     setText("");
@@ -234,7 +247,7 @@ export default function AnnouncementsPage() {
   return (
     <section className="space-y-4">
       <PageHeader
-        icon="clipboard"
+        icon="sa-announcements"
         title="Duyurular"
         description="Kliniklerin ana sayfasında görünen platform duyuruları."
         actions={<Button icon={Plus} onClick={openCreate}>Yeni duyuru</Button>}
@@ -247,7 +260,7 @@ export default function AnnouncementsPage() {
         onChange={setScope}
         items={[
           { key: "platform", label: "Platform duyuruları" },
-          { key: "klinik", label: "Kliniklerin kendi duyuruları" },
+          { key: "klinik", label: "Klinik içi (salt görüntüleme)" },
         ]}
       />
 
@@ -257,7 +270,9 @@ export default function AnnouncementsPage() {
           rows={groups}
           rowKey={(group) => group.key}
           loading={loading}
-          error={loadError}
+          // Veri varken yenileme hatası listeyi silmez; üstte şerit olarak görünür.
+          error={groups.length > 0 ? null : loadError}
+          staleError={groups.length > 0 ? loadError : null}
           onRetry={reload}
           emptyText="Henüz duyuru yayınlanmadı"
           emptyDescription="Tüm kliniklere veya seçtiğiniz kliniklere duyuru göndermek için “Yeni duyuru”yu kullanın."
@@ -282,13 +297,13 @@ export default function AnnouncementsPage() {
         />
       ) : (
         <>
-          <p className="text-sm text-slate-500">Klinik yöneticilerinin kendi personeline yazdığı duyurular (yalnız görüntüleme).</p>
           <ListTable<ClinicAnnouncement>
             columns={clinicColumns}
             rows={clinicItems}
             rowKey={(item) => item.id}
             loading={loading}
-            error={loadError}
+            error={clinicItems.length > 0 ? null : loadError}
+            staleError={clinicItems.length > 0 ? loadError : null}
             onRetry={reload}
             emptyText="Kliniklerin iç duyurusu yok"
             pager={pager}
@@ -303,64 +318,62 @@ export default function AnnouncementsPage() {
         </>
       )}
 
-      <Modal
+      {/* Ortak form penceresi: Enter ile gönderim, hata şeridi, kirli formda kapatma onayı. */}
+      <FormModal
         open={open}
         onClose={() => setOpen(false)}
         title="Yeni duyuru"
         description="Duyuru seçilen kliniklerin ana sayfasında görünür."
         size="lg"
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => setOpen(false)}>Vazgeç</Button>
-            <Button loading={saving} onClick={() => void publish()}>Yayınla</Button>
-          </>
-        }
+        onSubmit={() => publish()}
+        submitLabel="Yayınla"
+        submitting={saving}
+        error={formError}
+        isDirty={Boolean(text.trim() || selectedIds.length > 0 || startDate || endDate)}
       >
-        <div className="space-y-4">
-          <FormErrorBanner message={formError} />
-          <FormField label="Duyuru metni" htmlFor="announcement-text" required hint={`${text.length} / ${MAX_TEXT} karakter`}>
-            <Textarea id="announcement-text" rows={4} maxLength={MAX_TEXT} value={text} onChange={(event) => setText(event.target.value)} placeholder="Ör. 12 Ekim gecesi 02:00-03:00 arası bakım çalışması yapılacaktır." />
+        <FormField label="Duyuru metni" htmlFor="announcement-text" required hint={`${text.length} / ${MAX_TEXT} karakter`}>
+          <Textarea id="announcement-text" rows={4} maxLength={MAX_TEXT} value={text} onChange={(event) => setText(event.target.value)} placeholder="Ör. 12 Ekim gecesi 02:00-03:00 arası bakım çalışması yapılacaktır." />
+        </FormField>
+        <ChoiceCards
+          label="Kimlere gönderilsin?"
+          variant="pills"
+          value={targetMode}
+          onChange={(value) => {
+            setTargetMode(value);
+            if (value === "selected") loadClinics();
+          }}
+          options={[
+            { value: "all", label: activeClinicCount != null ? `Tüm açık klinikler (${activeClinicCount})` : "Tüm açık klinikler" },
+            { value: "selected", label: "Seçtiğim klinikler" },
+          ]}
+        />
+        {targetMode === "selected" && (
+          <FormField as="div" label="Klinikler" htmlFor="announcement-clinics" required hint="Kapalı klinikler listede yer almaz">
+            <SearchableListbox
+              id="announcement-clinics"
+              options={clinicOptions}
+              value={selectedIds}
+              onChange={setSelectedIds}
+              multiple
+              loading={clinicsLoading}
+              onOpen={loadClinics}
+              placeholder="Klinik seçin"
+              searchPlaceholder="Klinik ara"
+              selectedLabel="klinik"
+              allSelectedLabel="Tüm açık klinikler seçildi"
+              emptyText="Bu adla klinik yok"
+            />
           </FormField>
-          <ChoiceCards
-            label="Kimlere gönderilsin?"
-            variant="pills"
-            value={targetMode}
-            onChange={(value) => {
-              setTargetMode(value);
-              if (value === "selected") loadClinics();
-            }}
-            options={[
-              { value: "all", label: activeClinicCount != null ? `Tüm açık klinikler (${activeClinicCount})` : "Tüm açık klinikler" },
-              { value: "selected", label: "Seçtiğim klinikler" },
-            ]}
-          />
-          {targetMode === "selected" && (
-            <FormField label="Klinikler" required hint="Kapalı klinikler listede yer almaz">
-              <SearchableListbox
-                options={clinicOptions}
-                value={selectedIds}
-                onChange={setSelectedIds}
-                multiple
-                loading={clinicsLoading}
-                onOpen={loadClinics}
-                placeholder="Klinik seçin"
-                searchPlaceholder="Klinik ara"
-                selectedLabel="klinik"
-                allSelectedLabel="Tüm açık klinikler seçildi"
-                emptyText="Bu adla klinik yok"
-              />
-            </FormField>
-          )}
-          <div className="grid gap-3 sm:grid-cols-2">
-            <FormField label="Yayın başlangıcı" htmlFor="announcement-start" hint="Boş = hemen">
-              <Input id="announcement-start" type="date" min={todayKey()} value={startDate} onChange={(event) => setStartDate(event.target.value)} />
-            </FormField>
-            <FormField label="Yayın bitişi" htmlFor="announcement-end" hint="Boş = siz kaldırana kadar">
-              <Input id="announcement-end" type="date" min={startDate || todayKey()} value={endDate} onChange={(event) => setEndDate(event.target.value)} />
-            </FormField>
-          </div>
+        )}
+        <div className="grid gap-3 sm:grid-cols-2">
+          <FormField label="Yayın başlangıcı" htmlFor="announcement-start" hint="Boş = hemen">
+            <Input id="announcement-start" type="date" min={todayKey()} value={startDate} onChange={(event) => setStartDate(event.target.value)} />
+          </FormField>
+          <FormField label="Yayın bitişi" htmlFor="announcement-end" hint="Boş = siz kaldırana kadar">
+            <Input id="announcement-end" type="date" min={startDate || todayKey()} value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+          </FormField>
         </div>
-      </Modal>
+      </FormModal>
     </section>
   );
 }

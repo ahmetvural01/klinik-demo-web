@@ -14,10 +14,10 @@ type MoneyProps = {
  */
 export function Money({ value, tone = "plain", className = "" }: MoneyProps) {
   if (value === null || value === undefined || value === "") {
-    return <span className={`text-slate-300 ${className}`} aria-label="Tutar yok">—</span>;
+    return <span className={`text-slate-300 ${className}`}><span aria-hidden="true">—</span><span className="sr-only">Tutar yok</span></span>;
   }
   const amount = typeof value === "string" ? Number(value) : value;
-  if (!Number.isFinite(amount)) return <span className={`text-slate-300 ${className}`}>—</span>;
+  if (!Number.isFinite(amount)) return <span className={`text-slate-300 ${className}`}><span aria-hidden="true">—</span><span className="sr-only">Tutar yok</span></span>;
   const color = tone === "positive" ? "text-emerald-700" : tone === "auto" && amount < 0 ? "text-red-700" : "";
   return <span className={`tabular-nums ${color} ${className}`}>{formatCurrency(amount)}</span>;
 }
@@ -45,7 +45,7 @@ export function formatDateText(value: string | Date, format: DateTextProps["form
 /** Tarihleri her ekranda aynı biçimde ve Türkiye saatine göre yazar; yoksa "—". */
 export function DateText({ value, format = "short", className = "" }: DateTextProps) {
   const text = value ? formatDateText(value, format) : "";
-  if (!text) return <span className={`text-slate-300 ${className}`} aria-label="Tarih yok">—</span>;
+  if (!text) return <span className={`text-slate-300 ${className}`}><span aria-hidden="true">—</span><span className="sr-only">Tarih yok</span></span>;
   const iso = typeof value === "string" ? value : value instanceof Date ? value.toISOString() : undefined;
   return <time dateTime={iso} className={`tabular-nums ${className}`}>{text}</time>;
 }

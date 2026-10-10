@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { safeLoginNextPath as safeNext } from "../src/lib/routes";
 
 const root = path.resolve(__dirname, "..");
 
@@ -31,6 +32,42 @@ function main() {
   assert(
     clinicLogin.includes("await request.json().catch(() => null)"),
     "Klinik girişi bozuk JSON gövdesini kontrollü biçimde reddetmeli.",
+  );
+  // "İ" içeren kurum adı: toLowerCase() "İ"yi birleşik noktalı "i̇" yapıp
+  // büyük/küçük harf duyarsız eşleşmeyi bozuyordu; arama yalnız trim ile yapılır.
+  assert(
+    !clinicLogin.includes("institution.toLowerCase()") && clinicLogin.includes("parsed.data.institution.trim()"),
+    "Klinik girişi kurum adını aramadan önce küçük harfe çevirmemeli (Türkçe İ eşleşmesi bozulur).",
+  );
+  assert(
+    clinicLogin.includes('toLocaleLowerCase("tr-TR")'),
+    "Hatalı deneme anahtarı Türkçe küçük harfle kurulmalı.",
+  );
+  // Hata metni hangi alanın yanlış olduğunu söylemez ve platform kimliğinde de aynıdır.
+  const loginFailure = "Kurum adı, TC kimlik no veya şifre hatalı.";
+  assert(
+    clinicLogin.includes(loginFailure) && !clinicLogin.includes("Kullanıcı adı veya şifre hatalı"),
+    "Klinik girişi formdaki alan adlarıyla tek bir hata metni döndürmeli.",
+  );
+  assert(
+    source("src/lib/platform-auth.ts").includes(loginFailure),
+    "Klinik ekranından platform kimliğiyle yanlış şifre, kimliğin platform hesabı olduğunu sızdırmamalı.",
+  );
+
+  // Oturum bitince dönüş adresi (?next=): açık yönlendirme koruması.
+  assert.equal(safeNext("/randevu?date=2026-10-10"), "/randevu?date=2026-10-10", "Panel yolu (sorgusuyla) kabul edilmeli.");
+  for (const unsafe of ["//evil.example", "/\\evil.example", "https://evil.example", "evil", "/api/patients", "/klinik/giris", "/giris", "/superadmin/kurumlar", "", null, undefined]) {
+    assert.equal(safeNext(unsafe), null, `Güvenli olmayan dönüş adresi reddedilmeli: ${String(unsafe)}`);
+  }
+  assert(
+    source("src/components/auth/clinic-login-form.tsx").includes("safeLoginNextPath(next)"),
+    "Giriş formu dönüş adresini yalnız güvenlik denetiminden geçirerek kullanmalı.",
+  );
+  // Oturum açık sayfada biterse (kabuk özeti 401) de kaldığı yere dönülür.
+  const panelAlerts = source("src/components/layout/use-panel-alerts.ts");
+  assert(
+    panelAlerts.includes("safeLoginNextPath(") && panelAlerts.includes('"neden", "oturum"') && !panelAlerts.includes('location.assign("/klinik/giris")'),
+    "Oturum sayfa açıkken bitince giriş ekranına ?next=…&neden=oturum ile gidilmeli.",
   );
 
   const superadminLogin = source("src/app/api/auth/superadmin/login/route.ts");

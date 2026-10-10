@@ -64,17 +64,18 @@ Every API route starts with `const auth = await requireAuth(permission); if (aut
 4. Checks the requested `permission` string against the DB-backed role→permission matrix (`src/lib/rbac.ts` + `role-permission-store.ts`, editable at Superadmin → Rol Yetkileri). `"*"` grants everything.
 5. For non-superadmin: requires `institutionId`, then checks the (cached) institution's billing/service state — `isActive`, `serviceMode` (`SUSPENDED`/`READ_ONLY`/`LIMITED`), `suspendedUntil`, demo expiry, and overdue-invoice payment grace — and can reject or throttle writes accordingly.
 
-There are **two separate, must-stay-in-sync** permission layers:
-- `middleware.ts` — static `ROLE_DENIED_PAGES` / `API_ROLE_DENIED` maps for whole-page/prefix denials that are fixed business rules (not meant to be superadmin-configurable, e.g. MUHASEBE can't see patient pages).
-- `src/lib/role-permissions.ts` (DB-backed via `role-permission-store.ts`) — the fine-grained, superadmin-editable permission matrix used by `requireAuth`.
-Don't hardcode a rule in `middleware.ts` that's supposed to be managed from the Rol Yetkileri screen — that makes the screen lie.
+Permissions have a **single source**: the DB-backed role→permission matrix (`src/lib/role-permissions.ts` defaults + `role-permission-store.ts`, editable at Superadmin → Rol Yetkileri; rationale per role in `docs/ROL-YETKILERI.md`). Per-person narrowing lives in `UserBranch.permissionCodes` — use `hasEffectivePermission(user, code)` (e.g. phone/TC masking via `shouldHidePatientPhoneForUser`), not role checks.
+- `middleware.ts` only validates the session (JWT once), applies per-user API rate limits and handles public prefixes — it has **no** role/page denial maps.
+- Page access and the menu come from `src/lib/nav.ts` (menu, page titles, route→permission) + `src/lib/panel-permissions.ts`, enforced client-side by `PanelRouteGuard`; the API is always the real gate (`requireAuth(permission)`).
+- An unsaved matrix row (version 1, `system`) follows the code defaults; a saved one does not change silently — apply new defaults with "Varsayılana döndür". Never run `backfill:fine-grained-permissions` (retired).
+Don't hardcode role rules in code that's supposed to be managed from the Rol Yetkileri screen — that makes the screen lie.
 
 `ghost` sessions are a superadmin's invisible impersonation of a clinic account (support access) — they bypass clinic-side role/permission checks but every action is still written to the audit log with `isGhost`/`actorRole`, just filtered out of the clinic's own `/log` view.
 
 ### Route groups
 
-- `src/app/(panel)/...` — the clinic-facing app (staff/doctor/owner UI), behind `middleware.ts` auth + role page-guards.
-- `src/app/superadmin/...` — platform operator UI, gated by `role === "SUPERADMIN"` and a separate DB-backed module-access check (`superadmin-modules.ts`) applied in `middleware.ts`.
+- `src/app/(panel)/...` — the clinic-facing app (staff/doctor/owner UI), behind `middleware.ts` session check + `PanelRouteGuard` page guards (`src/lib/nav.ts`).
+- `src/app/superadmin/...` — platform operator UI; API gated by `requireAuth("superadmin")`, plus a DB-backed per-admin module list (`superadmin-modules.ts`, carried in the session / `/api/auth/me`).
 - `src/app/api/...` — route handlers; each does its own `requireAuth(permission)`.
 - `src/app/randevu-al/[kurum]`, `src/app/sms-onay/[token]`, `src/app/api/public/...` — unauthenticated public pages/APIs (booking requests, SMS consent links). New public routes must be added to `PUBLIC_PREFIXES` in `middleware.ts` or they 401.
 

@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { invalidateUserSessionCache, requireAuth, writeAudit } from "@/lib/api";
 import { DEFAULT_SUPERADMIN_MODULES } from "@/lib/superadmin-modules";
+import { isValidTurkishIdentityNumber } from "@/lib/tc-kimlik";
 
 export async function GET() {
   const auth = await requireAuth("superadmin");
@@ -57,8 +58,9 @@ export async function POST(request: NextRequest) {
   if (!fullName || !identityNo || password.length < 8 || password.length > 72) {
     return NextResponse.json({ message: "Ad soyad, TC kimlik no ve 8-72 karakter şifre zorunlu" }, { status: 400 });
   }
-  if (!/^\d{11}$/.test(identityNo)) {
-    return NextResponse.json({ message: "TC kimlik numarası 11 rakam olmalı" }, { status: 400 });
+  // Yalnız 11 hane değil, TC sağlaması da (hasta formuyla aynı kural).
+  if (!isValidTurkishIdentityNumber(identityNo)) {
+    return NextResponse.json({ message: "TC kimlik numarası geçerli değil" }, { status: 400 });
   }
   if (email && !/^\S+@\S+\.\S+$/.test(email)) {
     return NextResponse.json({ message: "Geçerli bir e-posta adresi girin" }, { status: 400 });

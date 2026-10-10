@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit, withApiTiming } from "@/lib/api";
 import { firmaCreateSchema, formatZodError } from "@/lib/validators";
 import { requireActiveBranch } from "@/lib/branch-context";
+import { ibanError } from "@/components/firma/firma-shared";
 
 // GET /api/firma?durum=aktif|pasif|tumu — varsayılan yalnız aktif firmalar
 // (Muhasebe, Laboratuvar ve hasta dosyası seçicileri bu varsayılana güvenir).
@@ -116,6 +117,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Firma bilgileri geçersiz", errors: formatZodError(parsed.error) }, { status: 400 });
     }
     const { name, phone, iban, ibanName, notes, kategori, paymentTerms, customPaymentDays } = parsed.data;
+    // Tek yanlış rakamlı IBAN ödemenin başka hesaba gitmesine yol açabilir; önceden "TR12 3456 abc" kabul ediliyordu.
+    const ibanProblem = ibanError(iban);
+    if (ibanProblem) return NextResponse.json({ error: ibanProblem }, { status: 400 });
 
     // Aynı ad farklı büyük/küçük harfle ("İmplant A.Ş." / "implant a.ş.") ikinci
     // bir cari açmasın: veritabanı kısıtı harf farkını ayırt ediyordu.

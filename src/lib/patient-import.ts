@@ -8,9 +8,22 @@ import { normalizeLocalPhone } from "@/lib/phone-number";
 // yok), sonra onay ile gerçek kayıt. Bkz. src/app/api/superadmin/institutions/[id]/import/*.
 
 export const PATIENT_SHEET_NAME = "Hastalar";
-export const PAYMENT_SHEET_NAME = "Odeme Gecmisi";
-export const TREATMENT_SHEET_NAME = "Tedavi Gecmisi";
-export const PRESCRIPTION_SHEET_NAME = "Recete Gecmisi";
+// Sayfa adları Türkçe harflerle yazılır. Eski şablonlardaki ASCII adlar
+// ("Odeme Gecmisi") içe aktarmada hâlâ okunur (bkz. LEGACY_SHEET_NAMES).
+export const PAYMENT_SHEET_NAME = "Ödeme Geçmişi";
+export const TREATMENT_SHEET_NAME = "Tedavi Geçmişi";
+export const PRESCRIPTION_SHEET_NAME = "Reçete Geçmişi";
+
+const LEGACY_SHEET_NAMES: Record<string, string> = {
+  [PAYMENT_SHEET_NAME]: "Odeme Gecmisi",
+  [TREATMENT_SHEET_NAME]: "Tedavi Gecmisi",
+  [PRESCRIPTION_SHEET_NAME]: "Recete Gecmisi",
+};
+
+/** Sayfayı güncel adıyla, yoksa eski şablondaki ASCII adıyla bulur. */
+function findWorksheet(workbook: ExcelJS.Workbook, name: string) {
+  return workbook.getWorksheet(name) ?? (LEGACY_SHEET_NAMES[name] ? workbook.getWorksheet(LEGACY_SHEET_NAMES[name]) : undefined);
+}
 export const INSTRUCTIONS_SHEET_NAME = "Talimatlar";
 
 // String.toLocaleUpperCase("tr-TR") tek başına güvenilir değil: "nakit" → "NAKİT"
@@ -446,9 +459,9 @@ export async function parseImportWorkbook(buffer: Buffer): Promise<ImportParseRe
   await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
 
   const patientSheet = workbook.getWorksheet(PATIENT_SHEET_NAME);
-  const paymentSheet = workbook.getWorksheet(PAYMENT_SHEET_NAME);
-  const treatmentSheet = workbook.getWorksheet(TREATMENT_SHEET_NAME);
-  const prescriptionSheet = workbook.getWorksheet(PRESCRIPTION_SHEET_NAME);
+  const paymentSheet = findWorksheet(workbook, PAYMENT_SHEET_NAME);
+  const treatmentSheet = findWorksheet(workbook, TREATMENT_SHEET_NAME);
+  const prescriptionSheet = findWorksheet(workbook, PRESCRIPTION_SHEET_NAME);
 
   const patients: ParsedRow<PatientImportData>[] = [];
   const seenTc = new Set<string>();

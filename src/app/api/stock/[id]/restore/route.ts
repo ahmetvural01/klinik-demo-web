@@ -53,6 +53,6 @@ export async function POST(_req: NextRequest, props: { params: Promise<{ id: str
     },
     data: { isActive: true },
   });
-  await writeAudit(auth.user.id, "STOCK_ITEM_RESTORE", `"${existing.name}" stok kartı arşivden geri alındı (${params.id})`);
+  await writeAudit(auth.user.id, "STOCK_ITEM_RESTORE", `"${existing.name}" stok kartı arşivden geri alındı`);
   return NextResponse.json({ ...restored, category: normalizeCategory(restored.category) });
 }
