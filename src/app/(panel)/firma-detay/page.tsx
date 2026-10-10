@@ -1,7 +1,7 @@
 "use client";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Ban, Copy, FlaskConical, Pencil, Plus, Power, ShoppingCart, Trash2, Wallet } from "lucide-react";
+import { Ban, Copy, FlaskConical, PackageCheck, Pencil, Plus, Power, ShoppingCart, Trash2, Wallet } from "lucide-react";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
 import { formatCurrency, formatPhoneNumber } from "@/lib/format";
@@ -19,10 +19,9 @@ import { Badge } from "@/components/ui/Badge";
 import { Callout } from "@/components/ui/Callout";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { DescriptionList } from "@/components/ui/DescriptionList";
-import { Section } from "@/components/ui/Section";
 import { FormField } from "@/components/ui/FormField";
 import { Input, Select } from "@/components/ui/Input";
-import { ListTable, EmptyValue, type ListTableColumn } from "@/components/ui/ListTable";
+import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { LoadErrorState } from "@/components/ui/LoadErrorState";
 import { DateText, Money } from "@/components/ui/Money";
 import { usePermissions } from "@/components/auth/PermissionProvider";
@@ -61,6 +60,12 @@ const ISLEM_TIPI: Record<Islem["islemTipi"], { label: string; tone: "neutral" | 
   HIZMET: { label: "Hizmet", tone: "neutral" },
   ODEME: { label: "Ödeme", tone: "success" },
 };
+
+/** İşlem türü düz metin (her satırda rozet kutusu yok); ödeme yeşil, tutarı da eksi ve yeşil. */
+function IslemType({ islem }: { islem: Islem }) {
+  const meta = ISLEM_TIPI[islem.islemTipi];
+  return <span className={`whitespace-nowrap text-sm ${meta?.tone === "success" ? "font-semibold text-emerald-700" : "text-slate-600"}`}>{meta?.label || islem.islemTipi}</span>;
+}
 
 const TAB_KEYS = ["hareketler", "siparisler", "yetkililer"] as const;
 type DetailTab = typeof TAB_KEYS[number];
@@ -342,9 +347,15 @@ function FirmaDetayContent() {
   const pageCount = Math.max(1, Math.ceil(islemler.length / PAGE_SIZE));
   const pageRows = islemler.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
+  // Satırda tek tip çerçevesiz "…" menüsü; laboratuvar faturası da menüden açılır.
   const islemActions = (islem: Islem) => {
     if (isLabIslem(islem)) {
-      return <IconButton icon={FlaskConical} title="Laboratuvar işlerine git (iptal oradan yapılır)" size="sm" href="/lab" />;
+      return (
+        <ActionMenu
+          label={`${formatCurrency(Number(islem.tutar))} laboratuvar faturası işlemleri`}
+          items={[{ key: "lab", label: "Laboratuvar işlerine git", description: "Laboratuvar faturası oradan iptal edilir", icon: FlaskConical, href: "/lab" }]}
+        />
+      );
     }
     if (islem.islemTipi === "ODEME" && canWriteFinance) {
       return (
@@ -359,17 +370,18 @@ function FirmaDetayContent() {
 
   const islemColumns: ListTableColumn<Islem>[] = [
     { key: "tarih", header: "Tarih", render: (islem) => <DateText value={islem.tarih} className="whitespace-nowrap text-slate-600" /> },
-    { key: "tip", header: "İşlem", render: (islem) => <Badge tone={ISLEM_TIPI[islem.islemTipi]?.tone || "neutral"}>{ISLEM_TIPI[islem.islemTipi]?.label || islem.islemTipi}</Badge> },
+    { key: "tip", header: "İşlem", render: (islem) => <IslemType islem={islem} /> },
     {
       key: "aciklama",
       header: "Açıklama",
       cellClassName: "max-w-[300px]",
       render: (islem) => {
         const text = islemDescription(islem);
-        return text ? <span className="block truncate text-slate-700" title={text}>{text}</span> : <EmptyValue />;
+        return text ? <span className="block truncate text-slate-700" title={text}>{text}</span> : null;
       },
     },
-    { key: "fatura", header: "Fatura no", render: (islem) => islem.faturaNo ? <span className="text-slate-600">{islem.faturaNo}</span> : <EmptyValue /> },
+    // Boş hücreler boş kalır ("—" her satırda tekrar etmez).
+    { key: "fatura", header: "Fatura no", render: (islem) => islem.faturaNo ? <span className="text-slate-600">{islem.faturaNo}</span> : null },
     { key: "tutar", header: "Tutar", align: "right", render: (islem) => <IslemAmount islem={islem} /> },
     // Kalan bakiye tüm geçmiş üzerinden hesaplanır: tarih süzgecinde doğru kalır,
     // yalnız işlem türü süzülünce anlamını yitirir.
@@ -406,6 +418,25 @@ function FirmaDetayContent() {
     },
   ];
 
+  // Telefon: "Teslim al" kartın sağ üst köşesindeki "…" menüsünde (ayrı eylem sırası yok).
+  const orderMobileMenu = (order: Purchase) => (canPurchase ? (
+    <ActionMenu
+      label={`${formatCurrency(Number(order.total || 0))} tutarlı sipariş işlemleri`}
+      items={[{ key: "teslim", label: "Teslim al", icon: PackageCheck, onSelect: () => void purchaseManager.openReceivePurchase(order.id) }]}
+    />
+  ) : null);
+
+  // Yetkili kişi satırında çerçeveli ikonlar yerine tek "…" menüsü (Düzenle, Sil).
+  const kontaktMenu = (kontakt: FirmaKontakt) => (canWriteFinance ? (
+    <ActionMenu
+      label={`${kontakt.ad} işlemleri`}
+      items={[
+        { key: "edit", label: "Bilgilerini düzenle", icon: Pencil, onSelect: () => openKontakt(kontakt) },
+        { key: "delete", label: "Kişiyi sil", icon: Trash2, danger: true, separatorBefore: true, onSelect: () => void deleteKontakt(kontakt) },
+      ]}
+    />
+  ) : null);
+
   const kontaktColumns: ListTableColumn<FirmaKontakt>[] = [
     {
       key: "ad",
@@ -420,23 +451,18 @@ function FirmaDetayContent() {
         </div>
       ),
     },
-    { key: "telefon", header: "Telefon", render: (kontakt) => kontakt.telefon ? <a href={telHref(kontakt.telefon)} className="whitespace-nowrap text-slate-700 hover:text-primary">{formatPhoneNumber(kontakt.telefon)}</a> : <EmptyValue /> },
-    { key: "email", header: "E-posta", render: (kontakt) => kontakt.email ? <a href={`mailto:${kontakt.email}`} className="text-slate-700 hover:text-primary">{kontakt.email}</a> : <EmptyValue /> },
-    {
+    { key: "telefon", header: "Telefon", render: (kontakt) => kontakt.telefon ? <a href={telHref(kontakt.telefon)} className="whitespace-nowrap text-slate-700 hover:text-primary">{formatPhoneNumber(kontakt.telefon)}</a> : null },
+    { key: "email", header: "E-posta", render: (kontakt) => kontakt.email ? <a href={`mailto:${kontakt.email}`} className="text-slate-700 hover:text-primary">{kontakt.email}</a> : null },
+    ...(canWriteFinance ? [{
       key: "actions",
       header: "",
-      align: "right",
-      render: (kontakt) => canWriteFinance ? (
-        <div className="flex justify-end gap-1.5">
-          <IconButton icon={Pencil} title={`${kontakt.ad} bilgilerini düzenle`} size="sm" onClick={() => openKontakt(kontakt)} />
-          <IconButton icon={Trash2} title={`${kontakt.ad} kişisini sil`} tone="danger" size="sm" onClick={() => void deleteKontakt(kontakt)} />
-        </div>
-      ) : null,
-    },
+      align: "right" as const,
+      render: (kontakt: FirmaKontakt) => <div className="flex justify-end">{kontaktMenu(kontakt)}</div>,
+    }] : []),
   ];
 
   if (firmaLoading && !firma) {
-    return <PageSkeleton tabs={3} toolbar body="table" columns={6} label="Tedarikçi yükleniyor" />;
+    return <PageSkeleton tabs={3} toolbar="inset" body="table" columns={6} label="Tedarikçi yükleniyor" />;
   }
 
   if (!firma) {
@@ -483,9 +509,12 @@ function FirmaDetayContent() {
             {firma.phone && <>· <a href={telHref(firma.phone)} className="font-medium text-slate-700 hover:text-primary">{formatPhoneNumber(firma.phone)}</a></>}
           </span>
         )}
+        // Karar verdiren sayı "Kalan"; ödeme yokken toplam borç kalanla aynıdır, ikinci kez yazılmaz.
         stats={[
-          { label: "Toplam borç", value: formatCurrency(firma.borc) },
-          { label: "Ödenen", value: formatCurrency(firma.odenen), color: "text-emerald-700" },
+          ...(Math.abs(firma.odenen) >= 0.005 ? [
+            { label: "Toplam borç", value: formatCurrency(firma.borc) },
+            { label: "Ödenen", value: formatCurrency(firma.odenen), color: "text-emerald-700" },
+          ] : []),
           { label: "Kalan", value: formatCurrency(firma.bakiye), color: firma.bakiye > 0 ? "text-red-700" : "text-slate-800" },
         ]}
         actions={(
@@ -500,33 +529,35 @@ function FirmaDetayContent() {
       {!firma.isActive && (
         <Callout
           tone="neutral"
+          compact
+          inline
           action={canWriteFinance ? <Button size="sm" variant="secondary" onClick={() => void toggleFirmaActive()}>Aktif et</Button> : undefined}
         >
           Bu tedarikçi pasif: yeni satın almada listelenmez. Geçmiş ve kalan borç burada görünür.
         </Callout>
       )}
 
+      {/* IBAN ve not başlığın devamı gibi sayfa zemininde: ayrı kart açılmaz (sadelik K1). */}
       {hasInfo && (
-        <Section>
-          <DescriptionList
-            columns={3}
-            items={[
-              {
-                key: "iban",
-                label: "IBAN",
-                hidden: !firma.iban,
-                value: firma.iban ? (
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    <span className="truncate font-mono text-slate-800">{firma.iban}</span>
-                    <IconButton icon={Copy} title="IBAN'ı kopyala" size="sm" onClick={() => void copyIban()} />
-                  </span>
-                ) : null,
-              },
-              { key: "sahip", label: "Hesap sahibi", value: firma.ibanName, hidden: !firma.ibanName },
-              { key: "not", label: "Not", value: firma.notes, hidden: !firma.notes },
-            ]}
-          />
-        </Section>
+        <DescriptionList
+          columns={3}
+          className="px-1"
+          items={[
+            {
+              key: "iban",
+              label: "IBAN",
+              hidden: !firma.iban,
+              value: firma.iban ? (
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate font-mono text-slate-800">{firma.iban}</span>
+                  <IconButton icon={Copy} title="IBAN'ı kopyala" tone="ghost" size="sm" onClick={() => void copyIban()} />
+                </span>
+              ) : null,
+            },
+            { key: "sahip", label: "Hesap sahibi", value: firma.ibanName, hidden: !firma.ibanName },
+            { key: "not", label: "Not", value: firma.notes, hidden: !firma.notes },
+          ]}
+        />
       )}
 
       <Tabs<DetailTab>
@@ -541,59 +572,64 @@ function FirmaDetayContent() {
       />
 
       {tab === "hareketler" && (
-        <>
-          <Toolbar
-            filters={(
-              <>
-                <div className="sm:w-44">
-                  <Select aria-label="İşlem türü" value={ekstreTipi} onChange={(event) => setEkstreTipi(event.target.value)}>
-                    <option value="">Tüm işlemler</option>
-                    <option value="ALIM">Alım</option>
-                    <option value="HIZMET">Hizmet</option>
-                    <option value="ODEME">Ödeme</option>
-                  </Select>
-                </div>
-                <DateRangeFilter {...period.filterProps} />
-              </>
-            )}
-            filterCount={ekstreFilters.length}
-          />
-          <ActiveFilters filters={ekstreFilters} onClearAll={() => { setEkstreTipi(""); period.reset(); }} />
-          <ListTable<Islem>
-            columns={islemColumns}
-            rows={pageRows}
-            rowKey={(islem) => islem.id}
-            loading={!ekstre && !ekstreError}
-            error={!ekstre ? ekstreError : null}
-            staleError={ekstre ? ekstreError : null}
-            onRetry={() => void loadEkstre()}
-            emptyText={filtersActive ? "Bu filtreye uyan işlem yok" : "Henüz alım, hizmet veya ödeme yok"}
-            emptyDescription={filtersActive ? undefined : isLabFirma ? "Laboratuvar işleri ve faturaları Laboratuvar ekranından girilir; tutarları burada görünür." : "Faturayı “Yeni satın alma” ile girin; ödemeleri “Ödeme yap” ile kaydedin."}
-            onRowClick={(islem) => {
-              const purchaseId = linkedPurchaseId(islem);
-              if (purchaseId) void purchaseManager.openPurchaseDetail(purchaseId);
-            }}
-            // Yalnız satın almaya bağlı alım satırı bir şey açar; diğer satırlar düğme gibi davranmaz.
-            isRowClickable={(islem) => Boolean(linkedPurchaseId(islem))}
-            getRowAriaLabel={(islem) => `${islem.faturaNo ? `Fatura ${islem.faturaNo}` : "Alım"} ${formatCurrency(Number(islem.tutar))} ayrıntısını aç`}
-            pager={islemler.length > PAGE_SIZE ? { page, pageCount, pageSize: PAGE_SIZE, total: islemler.length, onPageChange: setPage } : undefined}
-            mobileCard={(islem) => (
+        <ListTable<Islem>
+          // Süzgeçler listenin kartının üst şeridi: ayrı kart değil (sadelik K1).
+          toolbar={(
+            <>
+              <Toolbar
+                filters={(
+                  <>
+                    <div className="sm:w-44">
+                      <Select aria-label="İşlem türü" value={ekstreTipi} onChange={(event) => setEkstreTipi(event.target.value)}>
+                        <option value="">Tüm işlemler</option>
+                        <option value="ALIM">Alım</option>
+                        <option value="HIZMET">Hizmet</option>
+                        <option value="ODEME">Ödeme</option>
+                      </Select>
+                    </div>
+                    <DateRangeFilter {...period.filterProps} />
+                  </>
+                )}
+                filterCount={ekstreFilters.length}
+              />
+              <ActiveFilters filters={ekstreFilters} onClearAll={() => { setEkstreTipi(""); period.reset(); }} />
+            </>
+          )}
+          columns={islemColumns}
+          rows={pageRows}
+          rowKey={(islem) => islem.id}
+          loading={!ekstre && !ekstreError}
+          error={!ekstre ? ekstreError : null}
+          staleError={ekstre ? ekstreError : null}
+          onRetry={() => void loadEkstre()}
+          emptyText={filtersActive ? "Bu filtreye uyan işlem yok" : "Henüz alım, hizmet veya ödeme yok"}
+          emptyDescription={filtersActive ? undefined : isLabFirma ? "Laboratuvar işleri ve faturaları Laboratuvar ekranından girilir; tutarları burada görünür." : "Faturayı “Yeni satın alma” ile girin; ödemeleri “Ödeme yap” ile kaydedin."}
+          onRowClick={(islem) => {
+            const purchaseId = linkedPurchaseId(islem);
+            if (purchaseId) void purchaseManager.openPurchaseDetail(purchaseId);
+          }}
+          // Yalnız satın almaya bağlı alım satırı bir şey açar; diğer satırlar düğme gibi davranmaz.
+          isRowClickable={(islem) => Boolean(linkedPurchaseId(islem))}
+          getRowAriaLabel={(islem) => `${islem.faturaNo ? `Fatura ${islem.faturaNo}` : "Alım"} ${formatCurrency(Number(islem.tutar))} ayrıntısını aç`}
+          pager={islemler.length > PAGE_SIZE ? { page, pageCount, pageSize: PAGE_SIZE, total: islemler.length, onPageChange: setPage } : undefined}
+          // Telefon kartı iki satır: tür · tarih + tutar; açıklama. "…" sağ üst köşede.
+          mobileCard={(islem) => {
+            const text = islemDescription(islem) || (islem.faturaNo ? `Fatura ${islem.faturaNo}` : "");
+            return (
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <Badge tone={ISLEM_TIPI[islem.islemTipi]?.tone || "neutral"}>{ISLEM_TIPI[islem.islemTipi]?.label}</Badge>
+                  <p className="flex items-center gap-2">
+                    <IslemType islem={islem} />
                     <DateText value={islem.tarih} className="text-xs text-slate-500" />
-                  </div>
-                  <p className="mt-1 truncate text-sm text-slate-700">{islemDescription(islem) || (islem.faturaNo ? `Fatura ${islem.faturaNo}` : "")}</p>
+                  </p>
+                  {text && <p className="truncate text-xs text-slate-500">{text}</p>}
                 </div>
-                <div className="flex shrink-0 flex-col items-end gap-1">
-                  <IslemAmount islem={islem} />
-                  {islemActions(islem)}
-                </div>
+                <IslemAmount islem={islem} className="shrink-0" />
               </div>
-            )}
-          />
-        </>
+            );
+          }}
+          mobileCardActions={islemActions}
+        />
       )}
 
       {tab === "siparisler" && (
@@ -610,14 +646,12 @@ function FirmaDetayContent() {
           onRowClick={(order) => void purchaseManager.openPurchaseDetail(order.id)}
           getRowAriaLabel={(order) => `${formatCurrency(Number(order.total || 0))} tutarlı siparişi aç`}
           mobileCard={(order) => (
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-semibold text-slate-900">{summarizeLines(order.lines) || `${order._count?.items ?? 0} kalem`}</p>
-                <p className="text-xs text-slate-500"><DateText value={order.tarih} /> · {formatCurrency(Number(order.total || 0))}</p>
-              </div>
-              {canPurchase && <Button size="sm" variant="secondary" onClick={() => void purchaseManager.openReceivePurchase(order.id)}>Teslim al</Button>}
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-slate-900">{summarizeLines(order.lines) || `${order._count?.items ?? 0} kalem`}</p>
+              <p className="text-xs text-slate-500"><DateText value={order.tarih} /> · {formatCurrency(Number(order.total || 0))}</p>
             </div>
           )}
+          mobileCardActions={canPurchase ? orderMobileMenu : undefined}
         />
       )}
 
@@ -630,21 +664,23 @@ function FirmaDetayContent() {
           emptyText="Henüz yetkili kişi yok"
           emptyDescription="Sipariş verdiğiniz ya da fatura sorduğunuz kişiyi ekleyin."
           emptyAction={canWriteFinance ? <Button size="sm" icon={Plus} onClick={() => openKontakt()}>Yetkili kişi ekle</Button> : undefined}
-          mobileCard={(kontakt) => (
-            <div className="flex items-start justify-between gap-3">
+          // Telefon kartı: ad (+ görev) ve aranabilir telefon; düzenle/sil sağ üstte "…".
+          mobileCard={(kontakt) => {
+            const role = [kontakt.unvan, kontakt.rol].filter(Boolean).join(" · ");
+            return (
               <div className="min-w-0">
                 <p className="font-semibold text-slate-900">{kontakt.ad}{kontakt.isPrimary ? " · Ana kişi" : ""}</p>
-                <p className="text-xs text-slate-500">{[kontakt.unvan, kontakt.rol].filter(Boolean).join(" · ")}</p>
-                {kontakt.telefon && <a href={telHref(kontakt.telefon)} className="text-sm text-primary">{formatPhoneNumber(kontakt.telefon)}</a>}
+                {(role || kontakt.telefon) && (
+                  <p className="truncate text-xs text-slate-500">
+                    {role}
+                    {role && kontakt.telefon ? " · " : ""}
+                    {kontakt.telefon && <a href={telHref(kontakt.telefon)} className="text-primary">{formatPhoneNumber(kontakt.telefon)}</a>}
+                  </p>
+                )}
               </div>
-              {canWriteFinance && (
-                <div className="flex shrink-0 gap-1.5">
-                  <IconButton icon={Pencil} title={`${kontakt.ad} bilgilerini düzenle`} size="sm" onClick={() => openKontakt(kontakt)} />
-                  <IconButton icon={Trash2} title={`${kontakt.ad} kişisini sil`} tone="danger" size="sm" onClick={() => void deleteKontakt(kontakt)} />
-                </div>
-              )}
-            </div>
-          )}
+            );
+          }}
+          mobileCardActions={canWriteFinance ? kontaktMenu : undefined}
         />
       )}
 

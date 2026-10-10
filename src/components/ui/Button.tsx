@@ -149,9 +149,12 @@ const ICON_TONE_CLASS: Record<IconButtonTone, string> = {
   primary: "border border-primary/15 bg-primary/10 text-primary hover:border-primary/25 hover:bg-primary/15",
   neutral: "border border-slate-200 bg-white text-slate-600 shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900",
   danger: "border border-red-100 bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700",
-  // Kenarlıksız (üst bar, menü, şifre göster/gizle): zemin yalnız üzerine gelince.
-  ghost: "border border-transparent text-slate-500 !shadow-none hover:bg-slate-100 hover:text-slate-900",
+  // Kenarlıksız (üst bar, menü, şifre göster/gizle, satır eylemi): zemin yalnız üzerine gelince.
+  ghost: "border border-transparent bg-transparent text-slate-500 !shadow-none hover:bg-slate-100 hover:text-slate-900",
 };
+// Liste satırında (ListTable tablo hücresi ve telefon kartı) her ton çerçevesiz
+// ve zeminsiz çizilir, rengini korur (sadelik K3; globals.css `[data-tone]`):
+// satır başına 2–3 kutulu ikon kalabalığı oluşmaz. Ton `data-tone` ile işaretlenir.
 
 // Satırda "Geldi" (Button sm) + ✎ (IconButton) + … (ActionMenu) aynı hizada
 // dursun: panelde Button sm 36px, md 40px — ikon düğmeleri de aynı ölçüde.
@@ -213,7 +216,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
   if (href && !disabled) {
     return (
       <Tooltip label={title} side={tooltipSide}>
-        <Link href={href} aria-label={title} className={classes}>
+        <Link href={href} aria-label={title} data-tone={tone} className={classes}>
           <Icon className={ICON_SIZE_CLASS[size]} />
           {children}
         </Link>
@@ -232,6 +235,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
         aria-haspopup={ariaHaspopup}
         disabled={disabled}
         onClick={onClick}
+        data-tone={tone}
         className={classes}
       >
         <Icon className={ICON_SIZE_CLASS[size]} />

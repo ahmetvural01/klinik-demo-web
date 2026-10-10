@@ -107,6 +107,18 @@ export function doctorLabel(name?: string | null) {
   return /^(dr|dt|uzm|prof|doç|doc|op)(\.\s*|\s+)/i.test(text) ? text : `Dr. ${text}`;
 }
 
+/**
+ * Listede her satırda aynı değer mi (sadelik K5): hepsi dolu ve aynıysa o
+ * değer, değilse null. Ör. tek doktorlu klinikte her tahsilatın altında
+ * "Dr. Ayşe Kaya" tekrar etmez; ad özette bir kez yazılır. Boş değerli bir
+ * satır varsa null döner (o satır da aynı kişiye aitmiş gibi görünmesin).
+ */
+export function sharedValue(values: readonly (string | null | undefined)[]): string | null {
+  const first = (values[0] || "").trim();
+  if (!first) return null;
+  return values.every((value) => (value || "").trim() === first) ? first : null;
+}
+
 /** Açıklamadaki sistem etiketlerini ([SISTEM:...], [GELIR_TURU:...]) kullanıcıdan gizler. */
 export const cleanNote = (text?: string | null) => stripSystemTags(text).replace(/\s*\[GELIR_TURU:[^\]]+\]/g, "").trim();
 

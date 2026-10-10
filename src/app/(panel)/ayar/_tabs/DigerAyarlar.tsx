@@ -13,7 +13,7 @@ const ExpenseTypesModal = dynamic(() => import("@/components/muhasebe/ExpenseTyp
 
 type LinkItem = { label: string; description: string; href: string; visible: boolean };
 
-const ITEM_CLASS = "group flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40";
+const ITEM_CLASS = "group flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-slate-100/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40";
 
 /**
  * "İlgili ayarlar": işin yapıldığı ekranda duran ayarlara kısa yol (yalnız
@@ -34,11 +34,11 @@ export function IlgiliAyarlar() {
   const links: LinkItem[] = [
     {
       label: "Otomatik mesajlar",
-      description: "Randevu, ödeme ve doğum günü mesajları; metinler ve özel günler",
+      description: "Randevu, ödeme, doğum günü ve özel günler",
       href: "/sms?tab=otomatik",
       visible: can("sms:read") || canReadWhatsapp,
     },
-    { label: "Mesaj kanalı ve kredi", description: "SMS / WhatsApp kanalı ve SMS kredisi", href: "/sms?tab=ayarlar", visible: canManageMessaging },
+    { label: "Mesaj kanalı ve kredi", description: "SMS / WhatsApp ve SMS kredisi", href: "/sms?tab=ayarlar", visible: canManageMessaging },
     { label: "Rol yetkileri", description: "Platform ekibi değiştirir; Destek'ten isteyin", href: "/destek", visible: can("support:read") },
   ].filter((item) => item.visible);
 
@@ -60,8 +60,8 @@ export function IlgiliAyarlar() {
   if (links.length === 0 && !canExpenseTypes) return null;
 
   return (
-    <section aria-labelledby="ilgili-ayarlar-baslik" className="rounded-lg border border-slate-200 bg-slate-50/70 p-4">
-      <h2 id="ilgili-ayarlar-baslik" className="text-sm font-bold text-slate-800">İlgili ayarlar</h2>
+    <section aria-labelledby="ilgili-ayarlar-baslik" className="pt-1">
+      <h2 id="ilgili-ayarlar-baslik" className="px-2 text-xs font-bold uppercase tracking-wide text-slate-500">İlgili ayarlar</h2>
       <ul className="mt-2 grid gap-1 sm:grid-cols-2 lg:grid-cols-4">
         {links.map((item) => (
           <li key={item.href}>
@@ -82,7 +82,7 @@ export function IlgiliAyarlar() {
               <ArrowRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />
               <span className="min-w-0">
                 <span className="block text-sm font-semibold text-slate-800 group-hover:text-primary">Gider türleri</span>
-                <span className="block text-xs text-slate-500">Gider kaydında seçilen türler</span>
+                <span className="block text-xs text-slate-500">Gider kaydındaki türler</span>
               </span>
             </button>
           </li>

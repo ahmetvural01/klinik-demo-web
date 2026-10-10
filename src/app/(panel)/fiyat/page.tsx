@@ -20,7 +20,7 @@ import { FormField } from "@/components/ui/FormField";
 import { Input } from "@/components/ui/Input";
 import { MoneyInput } from "@/components/ui/MoneyInput";
 import { ActionMenu, type ActionMenuItem } from "@/components/ui/ActionMenu";
-import { ListTable, EmptyValue, type ListTableColumn } from "@/components/ui/ListTable";
+import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { Money } from "@/components/ui/Money";
 import { usePermissions } from "@/components/auth/PermissionProvider";
 import { matchesSearch } from "@/components/stock/stock-shared";
@@ -275,6 +275,8 @@ function FiyatManagement() {
     }
   };
 
+  const tdbYear = priceMeta?.activeCatalogYear || standardPrices[0]?.catalogYear || 2026;
+
   const kindBadge = (row: Row) => (row.kind === "override"
     ? <Badge tone="info">Değiştirildi</Badge>
     : row.kind === "own" ? <Badge tone="neutral">Kliniğe özel</Badge> : null);
@@ -317,6 +319,25 @@ function FiyatManagement() {
     ...(row.kind === "own" ? [{ key: "delete", label: "Kalemi sil", icon: Trash2, danger: true, onSelect: () => void removePrice(row) }] : []),
   ];
 
+  /**
+   * Değiştirilmiş kalemin TDB ücreti ve farkı ("TDB ₺1.650 · +₺350"). Önceden
+   * "TDB ücreti" ve "Fark" iki ayrı sütundu: ~300 satırın neredeyse hepsinde
+   * TDB ile klinik ücreti aynı sayı, fark "—" idi (K5). Artık yalnız farklı
+   * olan kalemde, ücretin altında tek satır.
+   */
+  const tdbLine = (row: Row) => {
+    if (row.kind !== "override" || row.tdb === null) return null;
+    const diff = Math.round((Number(row.price.amount) - row.tdb) * 100) / 100;
+    if (diff === 0) return null;
+    return (
+      <p className="whitespace-nowrap text-xs text-slate-500">
+        TDB {formatCurrency(row.tdb)}
+        {" · "}
+        <span className={`font-semibold tabular-nums ${diff > 0 ? "text-emerald-700" : "text-amber-700"}`}>{diff > 0 ? "+" : "−"}{formatCurrency(Math.abs(diff))}</span>
+      </p>
+    );
+  };
+
   const columns: ListTableColumn<Row>[] = [
     { key: "code", header: "Kod", render: (row) => <span className="font-mono text-xs text-slate-500">{row.price.code}</span> },
     {
@@ -329,34 +350,29 @@ function FiyatManagement() {
         </span>
       ),
     },
-    { key: "tdb", header: "TDB ücreti", align: "right", render: (row) => (row.tdb === null ? <EmptyValue /> : <Money value={row.tdb} className="text-slate-500" />) },
-    { key: "clinic", header: "Klinik ücreti", align: "right", headerHint: "Değiştirilmemiş kalemde TDB ücreti geçerlidir.", render: clinicCell },
     {
-      key: "fark",
-      header: "Fark",
+      key: "clinic",
+      header: "Klinik ücreti",
       align: "right",
-      render: (row) => {
-        if (row.tdb === null || row.kind === "tdb") return <EmptyValue />;
-        const diff = Math.round((Number(row.price.amount) - row.tdb) * 100) / 100;
-        if (diff === 0) return <EmptyValue />;
-        return <span className={`tabular-nums font-semibold ${diff > 0 ? "text-emerald-700" : "text-amber-700"}`}>{diff > 0 ? "+" : "−"}{formatCurrency(Math.abs(diff))}</span>;
-      },
+      headerHint: `Değiştirilmemiş kalemde TDB ${tdbYear} ücreti geçerlidir. Değiştirilen kalemde TDB ücreti ve fark altında yazar.`,
+      render: (row) => (editingId === row.price.id ? clinicCell(row) : (
+        <div className="whitespace-nowrap">
+          {clinicCell(row)}
+          {tdbLine(row)}
+        </div>
+      )),
     },
+    // Satırda çerçeveli ikon yok (K3): ücreti değiştir satıra tıklayınca da açılır; tüm eylemler "…" menüsünde.
     ...(canWritePrices ? [{
       key: "actions",
-      header: "",
+      header: "İşlemler",
       align: "right" as const,
-      render: (row: Row) => editingId === row.price.id ? null : (
-        <div className="flex justify-end gap-1.5">
-          <IconButton icon={Pencil} title={`${row.price.treatment} ücretini değiştir`} size="sm" onClick={() => startEdit(row.price)} />
-          {row.kind === "override" && <IconButton icon={RotateCcw} title="TDB ücretine dön" size="sm" onClick={() => void removePrice(row)} />}
-          {row.kind === "own" && <IconButton icon={Trash2} title="Kalemi sil" tone="danger" size="sm" onClick={() => void removePrice(row)} />}
-        </div>
-      ),
+      render: (row: Row) => (editingId === row.price.id ? null : (
+        <ActionMenu label={`${row.price.treatment} için işlemler`} items={rowActions(row)} />
+      )),
     }] : []),
   ];
 
-  const tdbYear = priceMeta?.activeCatalogYear || standardPrices[0]?.catalogYear || 2026;
   const newButton = canWritePrices ? <Button icon={Plus} variant={embedded ? "secondary" : "primary"} size={embedded ? "sm" : "md"} onClick={openNew}>Yeni özel fiyat</Button> : undefined;
   const filtered = Boolean(search.trim()) || show !== "all";
 
@@ -366,7 +382,6 @@ function FiyatManagement() {
         <PageHeader
           icon="finance"
           title="Fiyat listesi"
-          description="Hasta dosyasında tedavi eklerken önerilen ücretler."
           actions={newButton}
         />
       )}
@@ -399,33 +414,35 @@ function FiyatManagement() {
             <Button size="sm" variant="secondary" icon={ExternalLink} href={priceMeta.officialPdfUrl} target="_blank">Tarifeyi aç</Button>
           ) : undefined}
         >
-          TDB {priceMeta.latestPublishedYear} tarifesi yayımlandı; sistemdeki liste {priceMeta.activeCatalogYear}. Değişen ücretleri satırdan girebilirsiniz.
+          <span className="font-semibold">TDB {priceMeta.latestPublishedYear} tarifesi yayımlandı.</span> Sistemdeki liste {priceMeta.activeCatalogYear}; değişen ücretleri satırdan girebilirsiniz.
         </Callout>
       )}
 
-      <Toolbar actions={embedded ? newButton : undefined}>
-        <SearchInput
-          value={search}
-          onChange={setSearch}
-          placeholder="Tedavi adı veya kod ara"
-          slashShortcut={!embedded}
-          wrapperClassName="flex-1 min-w-[220px]"
-        />
-        <ChoiceCards<ShowKey>
-          label="Gösterilen kalemler"
-          labelHidden
-          variant="pills"
-          value={show}
-          onChange={setShow}
-          options={[
-            { value: "all", label: "Tümü" },
-            { value: "changed", label: "Değiştirilenler", count: changedCount },
-            { value: "custom", label: "Kliniğe özel", count: ownCount },
-          ]}
-        />
-      </Toolbar>
-
       <ListTable<Row>
+        // Arama ve gösterim seçimi listenin kartının üst şeridi (K1: ayrı kart değil).
+        toolbar={(
+          <Toolbar actions={embedded ? newButton : undefined}>
+            <SearchInput
+              value={search}
+              onChange={setSearch}
+              placeholder="Tedavi adı veya kod ara"
+              slashShortcut={!embedded}
+              wrapperClassName="flex-1 min-w-[220px]"
+            />
+            <ChoiceCards<ShowKey>
+              label="Gösterilen kalemler"
+              labelHidden
+              variant="pills"
+              value={show}
+              onChange={setShow}
+              options={[
+                { value: "all", label: "Tümü" },
+                { value: "changed", label: "Değiştirilenler", count: changedCount },
+                { value: "custom", label: "Kliniğe özel", count: ownCount },
+              ]}
+            />
+          </Toolbar>
+        )}
         columns={columns}
         rows={pageRows}
         rowKey={(row) => row.price.id}
@@ -435,9 +452,17 @@ function FiyatManagement() {
         onRetry={() => void loadAll()}
         emptyText={filtered ? "Bu seçime uyan kalem yok" : "Liste boş"}
         emptyDescription={show === "changed" && !search.trim()
-          ? "Henüz TDB'den farklı ücret girilmemiş. Bir satırdaki kalem simgesiyle ücreti değiştirin."
+          ? "Henüz TDB'den farklı ücret girilmemiş. Ücreti değiştirmek için kalemin satırına tıklayın."
           : show === "custom" && !search.trim() ? "TDB'de olmayan tedaviler için “Yeni özel fiyat” ekleyin." : undefined}
         pager={rows.length > PAGE_SIZE ? { page: Math.min(page, pageCount), pageCount, pageSize: PAGE_SIZE, total: rows.length, onPageChange: setPage } : undefined}
+        // En sık iş (ücreti değiştirmek) satıra tıklamakla açılır; düzenlenen satır tıklanmaz.
+        onRowClick={canWritePrices ? (row) => startEdit(row.price) : undefined}
+        isRowClickable={(row) => editingId !== row.price.id}
+        getRowAriaLabel={(row) => `${row.price.treatment} ücretini değiştir`}
+        // Telefon kartı (K9): "…" sağ üstte; ücret adın yanında, TDB farkı altında.
+        mobileCardActions={canWritePrices ? (row) => (editingId === row.price.id ? null : (
+          <ActionMenu label={`${row.price.treatment} için işlemler`} items={rowActions(row)} />
+        )) : undefined}
         mobileCard={(row) => (
           <div className="space-y-1.5">
             <div className="flex items-start justify-between gap-3">
@@ -449,15 +474,12 @@ function FiyatManagement() {
                 </p>
               </div>
               {editingId !== row.price.id && (
-                <div className="flex shrink-0 items-center gap-1.5">
+                <div className="shrink-0 text-right">
                   <Money value={Number(row.price.amount)} className={row.kind === "tdb" ? "text-slate-600" : "font-semibold text-slate-900"} />
-                  {canWritePrices && <ActionMenu label={`${row.price.treatment} için işlemler`} items={rowActions(row)} />}
+                  {tdbLine(row)}
                 </div>
               )}
             </div>
-            {row.kind === "override" && row.tdb !== null && editingId !== row.price.id && (
-              <p className="text-xs text-slate-500">TDB ücreti {formatCurrency(row.tdb)}</p>
-            )}
             {editingId === row.price.id && clinicCell(row)}
           </div>
         )}

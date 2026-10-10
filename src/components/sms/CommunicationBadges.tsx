@@ -12,12 +12,16 @@ export function WhatsappConsentBadge({ granted }: { granted: boolean }) {
   return <Badge tone={granted ? "success" : "neutral"}>{granted ? "WhatsApp izni var" : "WhatsApp izni yok"}</Badge>;
 }
 
-/** Gönderim sonucu; "Gönderilmedi" ise kısa nedeniyle birlikte. */
+/**
+ * Gönderim sonucu; "Gönderilmedi" ise kısa nedeniyle birlikte. Rozet ve neden
+ * yer varsa AYNI satırda (sadelik K4/K9): her satırda iki satırlık hücre
+ * listeyi uzatıyordu; dar hücrede neden alta sarar.
+ */
 export function DispatchStatusBadge({ status, reason }: { status: string; reason?: string | null }) {
   const presentation = DISPATCH_STATUS[(status in DISPATCH_STATUS ? status : "QUEUED") as DispatchStatus];
   const why = status === "SUPPRESSED" || status === "FAILED" || status === "QUEUED" ? shortReason(reason) : null;
   return (
-    <span className="inline-flex min-w-0 flex-col items-start gap-0.5">
+    <span className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
       <Badge tone={presentation.tone}>{presentation.label}</Badge>
       {why && <span className="text-xs text-slate-500">{why}</span>}
     </span>

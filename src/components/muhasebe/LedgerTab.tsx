@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Ban, ExternalLink, Pencil } from "lucide-react";
-import { ListTable, EmptyValue, type ListTableColumn } from "@/components/ui/ListTable";
+import { Ban, ChevronDown, ExternalLink, Pencil } from "lucide-react";
+import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { Toolbar, ActiveFilters, type ActiveFilter } from "@/components/ui/Toolbar";
 import { SearchInput } from "@/components/ui/SearchInput";
 import { Select } from "@/components/ui/Input";
@@ -12,10 +12,8 @@ import { StatStrip, type StatItem } from "@/components/ui/StatStrip";
 import { DateRangeFilter } from "@/components/ui/DateRangeFilter";
 import { ExportMenu } from "@/components/ui/ExportMenu";
 import { ActionMenu, type ActionMenuItem } from "@/components/ui/ActionMenu";
-import { Button, IconButton } from "@/components/ui/Button";
+import { Button } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
-import { Disclosure } from "@/components/ui/Disclosure";
-import { DescriptionList } from "@/components/ui/DescriptionList";
 import { Badge } from "@/components/ui/Badge";
 import { formatDateText } from "@/components/ui/Money";
 import { useDateRangeParam } from "@/lib/use-date-range-param";
@@ -23,7 +21,7 @@ import { formatRangeLabel, rangeDayCount, type DatePresetKey } from "@/lib/date-
 import { LEDGER_PERIODS as SHARED_LEDGER_PERIODS } from "@/lib/ledger-periods";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
-import { FINANCE_TOOLBAR_CLASS, METHOD_LABELS, doctorLabel, methodLabel, money, shortDate } from "@/components/muhasebe/muhasebe-utils";
+import { FINANCE_TOOLBAR_CLASS, METHOD_LABELS, doctorLabel, methodLabel, money, sharedValue, shortDate } from "@/components/muhasebe/muhasebe-utils";
 import { useLoadWhenActive } from "@/components/muhasebe/finance-hooks";
 import type { EditTarget, LedgerExpense, LedgerPayment } from "@/components/muhasebe/EditEntryModal";
 
@@ -88,10 +86,12 @@ function rowTitle(row: LedgerRow) {
  * İkinci satır: tahsilatta doktor ve not, giderde not ve fatura no, firma ve
  * hakediş ödemesinde türü. Önceden her tahsilatta "Tahsilat", her giderde
  * "Klinik gideri" sabit metni tekrar ediyordu; fatura no hiç görünmüyordu.
+ * `hideDoctor`: bütün tahsilatlar aynı doktordaysa ad satırlarda tekrar
+ * etmez (özetteki "Tahsilat" ipucunda bir kez yazar).
  */
-function rowDetail(row: LedgerRow) {
+function rowDetail(row: LedgerRow, hideDoctor = false) {
   const faturaNo = row.expense?.faturaNo ? `Fatura ${row.expense.faturaNo}` : "";
-  if (row.subtype === "tahsilat") return [doctorLabel(row.doctor), row.note].filter(Boolean).join(" · ");
+  if (row.subtype === "tahsilat") return [hideDoctor ? "" : doctorLabel(row.doctor), row.note].filter(Boolean).join(" · ");
   if (row.subtype === "gider") return [row.note, faturaNo].filter(Boolean).join(" · ");
   if (row.subtype === "firma") return ["Firma ödemesi", row.note].filter(Boolean).join(" · ");
   return [row.item, row.note].filter(Boolean).join(" · ");
@@ -132,6 +132,8 @@ export function LedgerTab({
   const [data, setData] = useState<LedgerResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  // "Yönteme göre dağılım": özetteki nakit hücresine tıklayınca listenin kartının üst satırında açılır.
+  const [methodsOpen, setMethodsOpen] = useState(false);
   const sequenceRef = useRef(0);
 
   useEffect(() => {
@@ -273,12 +275,23 @@ export function LedgerTab({
     <Badge tone="neutral" title={row.voidedAt ? `${shortDate(row.voidedAt)} tarihinde iptal edildi` : undefined}>İptal edildi</Badge>
   ) : null);
 
-  const rowActions = (row: LedgerRow) => {
+  // Satırın "…" menüsü (çerçevesiz). Firma ödemesi de aynı menüden açılır: satırlarda
+  // tek tip eylem; telefonda kartın sağ üst köşesinde (ayrı eylem sırası yok).
+  const rowMenu = (row: LedgerRow) => {
     if (row.voided) return null;
     if (row.locked) {
-      return row.whoId
-        ? <div className="flex justify-end"><IconButton icon={ExternalLink} title="Firma ekstresinde aç (firma ödemeleri orada yönetilir)" href={`/firma-detay?id=${encodeURIComponent(row.whoId)}`} size="sm" /></div>
-        : null;
+      return row.whoId ? (
+        <ActionMenu
+          label={`${rowTitle(row)} için işlemler`}
+          items={[{
+            key: "firma",
+            label: "Firma ekstresinde aç",
+            description: "Firma ödemesi orada düzenlenir ve iptal edilir",
+            icon: ExternalLink,
+            href: `/firma-detay?id=${encodeURIComponent(row.whoId)}`,
+          }]}
+        />
+      ) : null;
     }
     const items: ActionMenuItem[] = [];
     if (canEdit(row)) items.push({ key: "edit", label: "Düzenle", icon: Pencil, onSelect: () => openRow(row) });
@@ -293,8 +306,17 @@ export function LedgerTab({
       });
     }
     if (items.length === 0) return null;
-    return <div className="flex justify-end"><ActionMenu items={items} label={`${rowTitle(row)} için işlemler`} /></div>;
+    return <ActionMenu items={items} label={`${rowTitle(row)} için işlemler`} />;
   };
+  const rowActions = (row: LedgerRow) => {
+    const menu = rowMenu(row);
+    return menu ? <div className="flex justify-end">{menu}</div> : null;
+  };
+
+  // Bütün kayıtlar bu sayfadaysa ve her tahsilat aynı doktora aitse doktor adı
+  // satırlarda tekrar etmez; özetteki "Tahsilat" ipucunda bir kez yazar.
+  const paymentRows = data && !invalidPeriod && data.pageCount <= 1 && !data.truncated ? data.rows.filter((row) => row.subtype === "tahsilat") : [];
+  const sharedDoctor = sharedValue(paymentRows.map((row) => row.doctor));
 
   const columns: ListTableColumn<LedgerRow>[] = [
     {
@@ -302,7 +324,7 @@ export function LedgerTab({
       header: singleDay ? "Saat" : "Tarih",
       cellClassName: "whitespace-nowrap",
       render: (row) => (singleDay ? (
-        row.hasTime ? <span className="text-sm tabular-nums text-slate-700">{timeText(row.date)}</span> : <EmptyValue />
+        row.hasTime ? <span className="text-sm tabular-nums text-slate-700">{timeText(row.date)}</span> : null
       ) : (
         <div>
           <p className="text-sm tabular-nums text-slate-700">{shortDate(row.date)}</p>
@@ -319,11 +341,11 @@ export function LedgerTab({
             <span className="truncate">{rowTitle(row)}</span>
             {voidedBadge(row)}
           </p>
-          {rowDetail(row) && <p className="truncate text-xs text-slate-500" title={rowDetail(row)}>{rowDetail(row)}</p>}
+          {rowDetail(row, Boolean(sharedDoctor)) && <p className="truncate text-xs text-slate-500" title={rowDetail(row, Boolean(sharedDoctor))}>{rowDetail(row, Boolean(sharedDoctor))}</p>}
         </div>
       ),
     },
-    { key: "yontem", header: "Yöntem", cellClassName: "whitespace-nowrap text-sm text-slate-600", render: (row) => methodLabel(row.method) || <EmptyValue /> },
+    { key: "yontem", header: "Yöntem", cellClassName: "whitespace-nowrap text-sm text-slate-600", render: (row) => methodLabel(row.method) },
     { key: "tutar", header: "Tutar", align: "right", render: amountCell },
     { key: "islem", header: "", align: "right", render: rowActions },
   ];
@@ -334,9 +356,15 @@ export function LedgerTab({
   const showIn = showPayments && effectiveTur !== "GIDER";
   const showOut = showExpenses && effectiveTur !== "TAHSILAT";
   const cash = totals?.byMethod?.NAKIT || { in: 0, out: 0 };
+  const methodEntries = totals && !cancelledView
+    ? Object.entries(totals.byMethod).filter(([, value]) => value.in > 0 || value.out > 0)
+    : [];
+  // Birden çok yöntem varsa nakit hücresi "Yönteme göre dağılım"ı açıp kapatır (ayrı kutu yok).
+  const canShowMethods = methodEntries.length > 1;
+  const showMethods = canShowMethods && methodsOpen;
   const stats: StatItem[] = cancelledView ? [] : [
     // Sıfır tutar işaretsiz ve renksiz ("−₺0,00" kırmızı görünmesin).
-    ...(showIn ? [{ key: "in", label: "Tahsilat", value: signedMoney(totals?.tahsilat ?? 0), tone: (totals?.tahsilat ?? 0) > 0 ? "success" as const : "neutral" as const, hint: totals ? `${totals.tahsilatCount} kayıt` : undefined }] : []),
+    ...(showIn ? [{ key: "in", label: "Tahsilat", value: signedMoney(totals?.tahsilat ?? 0), tone: (totals?.tahsilat ?? 0) > 0 ? "success" as const : "neutral" as const, hint: totals ? [`${totals.tahsilatCount} kayıt`, sharedDoctor ? doctorLabel(sharedDoctor) : ""].filter(Boolean).join(" · ") : undefined }] : []),
     ...(showOut ? [{ key: "out", label: "Gider", value: signedMoney(-(totals?.gider ?? 0)), tone: (totals?.gider ?? 0) > 0 ? "critical" as const : "neutral" as const, hint: totals ? `${totals.giderCount} kayıt` : undefined }] : []),
     ...(showIn && showOut ? [{ key: "net", label: "Fark", value: signedMoney(totals?.net ?? 0), tone: (totals?.net ?? 0) < 0 ? "critical" as const : "neutral" as const }] : []),
     ...(yontem === "HEPSI" ? [{
@@ -344,13 +372,17 @@ export function LedgerTab({
       // Gideri görmeyen (banko) için yalnız kasaya giren nakit; diğerleri için giren − çıkan.
       label: showOut ? "Nakit değişimi" : "Nakit tahsilat",
       value: showOut ? signedMoney(cash.in - cash.out) : money(cash.in),
-      // Kısa yazım: telefonda kutuya sığsın; çıkış yoksa değeri tekrar etmez.
-      hint: showOut && cash.out > 0 ? `+${money(cash.in)} · −${money(cash.out)}` : undefined,
+      // Kısa yazım: telefonda kutuya sığsın; çıkış yoksa değeri tekrar etmez. Birden çok yöntem
+      // varsa ipucu dağılımı açar (nakdin giren/çıkanı dağılım satırında yazar).
+      hint: canShowMethods ? (
+        <span className="inline-flex items-center gap-0.5 font-semibold text-primary">
+          Yönteme göre dağılım
+          <ChevronDown className={`h-3 w-3 shrink-0 transition-transform ${showMethods ? "rotate-180" : ""}`} aria-hidden="true" />
+        </span>
+      ) : showOut && cash.out > 0 ? `+${money(cash.in)} · −${money(cash.out)}` : undefined,
+      ...(canShowMethods ? { onClick: () => setMethodsOpen((open) => !open), active: showMethods } : {}),
     }] : []),
   ];
-  const methodEntries = totals && !cancelledView
-    ? Object.entries(totals.byMethod).filter(([, value]) => value.in > 0 || value.out > 0)
-    : [];
 
   const activeFilters: ActiveFilter[] = [
     ...(period.activeFilter ? [period.activeFilter] : []),
@@ -366,7 +398,9 @@ export function LedgerTab({
 
   return (
     <div className="space-y-3">
+      {/* Araç çubuğu çerçevesiz (sayfa zemininde): ayrı kart değil. */}
       <Toolbar
+        bare
         className={FINANCE_TOOLBAR_CLASS}
         filterCount={filterCount}
         filters={(
@@ -418,27 +452,25 @@ export function LedgerTab({
       {!invalidPeriod && data?.truncated && (
         <Callout tone="warning" compact>Bu dönemde çok fazla kayıt var; listenin tamamı için dönemi daraltın.</Callout>
       )}
-      {!invalidPeriod && methodEntries.length > 1 && (
-        <Disclosure title="Yönteme göre dağılım" summary={`${methodEntries.length} yöntem`} className="bg-white">
-          <DescriptionList
-            layout="rows"
-            items={methodEntries.map(([key, value]) => ({
-              key,
-              label: methodLabel(key),
-              value: (
-                <span className="tabular-nums">
+
+      <ListTable
+        columns={columns}
+        // Yönteme göre dağılım: listenin kartının üst satırı (tek satır, ayrı kutu değil).
+        header={!invalidPeriod && showMethods ? (
+          <div role="group" aria-label="Yönteme göre dağılım" className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b border-slate-100 px-4 py-2 text-xs text-slate-600">
+            <span className="font-semibold text-slate-500">Yönteme göre</span>
+            {methodEntries.map(([key, value]) => (
+              <span key={key} className="inline-flex items-baseline gap-1.5 whitespace-nowrap">
+                <span>{methodLabel(key)}</span>
+                <span className="font-semibold tabular-nums">
                   {value.in > 0 && <span className="text-emerald-700">+{money(value.in)}</span>}
                   {value.in > 0 && value.out > 0 && <span className="text-slate-400"> · </span>}
                   {value.out > 0 && <span className="text-red-700">−{money(value.out)}</span>}
                 </span>
-              ),
-            }))}
-          />
-        </Disclosure>
-      )}
-
-      <ListTable
-        columns={columns}
+              </span>
+            ))}
+          </div>
+        ) : undefined}
         rows={invalidPeriod ? [] : data?.rows || []}
         rowKey={(row) => row.key}
         // İlk istek daha başlamadan "kayıt yok" yanıp sönmesin.
@@ -452,24 +484,27 @@ export function LedgerTab({
         emptyText={invalidPeriod ? "Tarih aralığını düzeltin" : plainCancelledView ? "Bu dönemde iptal edilen kayıt yok" : narrowed ? "Filtreye uyan kayıt yok" : "Bu dönemde kayıt yok"}
         emptyDescription={invalidPeriod ? "Liste geçerli bir başlangıç ve bitiş tarihiyle yüklenir." : narrowed && !plainCancelledView ? "Filtreleri temizleyip tekrar deneyin." : "Başka bir dönem seçin."}
         emptyAction={!invalidPeriod && narrowed && !plainCancelledView ? <Button size="sm" variant="secondary" onClick={clearFilters}>Filtreleri temizle</Button> : undefined}
-        mobileCard={(row) => (
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="flex min-w-0 items-center gap-1.5 font-semibold text-slate-900">
-                <span className="truncate">{rowTitle(row)}</span>
-                {voidedBadge(row)}
-              </p>
-              <p className="truncate text-xs text-slate-500">
-                {[singleDay ? (row.hasTime ? timeText(row.date) : "") : `${shortDate(row.date)}${row.hasTime ? ` ${timeText(row.date)}` : ""}`, methodLabel(row.method)].filter(Boolean).join(" · ")}
-              </p>
-              {rowDetail(row) && <p className="truncate text-xs text-slate-400">{rowDetail(row)}</p>}
+        // Telefon kartı iki satır: kim/ne + tutar; tarih · yöntem · açıklama. "…" sağ üst köşede.
+        mobileCard={(row) => {
+          const meta = [
+            singleDay ? (row.hasTime ? timeText(row.date) : "") : `${shortDate(row.date)}${row.hasTime ? ` ${timeText(row.date)}` : ""}`,
+            methodLabel(row.method),
+            rowDetail(row, Boolean(sharedDoctor)),
+          ].filter(Boolean).join(" · ");
+          return (
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="flex min-w-0 items-center gap-1.5 font-semibold text-slate-900">
+                  <span className="truncate">{rowTitle(row)}</span>
+                  {voidedBadge(row)}
+                </p>
+                {meta && <p className="truncate text-xs text-slate-500" title={meta}>{meta}</p>}
+              </div>
+              <div className="shrink-0">{amountCell(row)}</div>
             </div>
-            <div className="flex shrink-0 flex-col items-end gap-1">
-              {amountCell(row)}
-              {rowActions(row)}
-            </div>
-          </div>
-        )}
+          );
+        }}
+        mobileCardActions={rowMenu}
         pager={!invalidPeriod && data && data.total > PAGE_SIZE ? {
           page: data.page,
           pageCount: data.pageCount,

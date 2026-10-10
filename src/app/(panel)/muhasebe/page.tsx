@@ -21,7 +21,7 @@ import { isInstallmentStatusFilter, type InstallmentStats } from "@/components/m
 import { useRealtimeRefresh } from "@/components/muhasebe/finance-hooks";
 
 // Görünmeyen sekmeler ve açılmamış pencereler ilk açılışta indirilmez.
-const tabSkeleton = () => <PageSkeleton header={false} toolbar stats={2} body="table" rows={6} />;
+const tabSkeleton = () => <PageSkeleton header={false} toolbar="bare" stats={2} body="table" rows={6} />;
 const BalancesTab = dynamic(() => import("@/components/muhasebe/BalancesTab").then((mod) => mod.BalancesTab), { loading: tabSkeleton });
 const InstallmentsTab = dynamic(() => import("@/components/muhasebe/InstallmentsTab").then((mod) => mod.InstallmentsTab), { loading: tabSkeleton });
 const HakedisTab = dynamic(() => import("@/components/muhasebe/HakedisTab").then((mod) => mod.HakedisTab), { loading: tabSkeleton });

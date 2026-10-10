@@ -4,6 +4,7 @@ import { useCallback, useRef, useState } from "react";
 import { Wallet } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { Tabs } from "@/components/ui/Tabs";
+import { ActionMenu } from "@/components/ui/ActionMenu";
 import { ListTable, EmptyValue, type ListTableColumn } from "@/components/ui/ListTable";
 import { ListRowSkeleton } from "@/components/ui/ListSkeleton";
 import { LoadErrorState } from "@/components/ui/LoadErrorState";
@@ -71,13 +72,19 @@ const csvAmount = (value: number, negative = false) => {
   return (Math.abs(signed) < 0.005 ? 0 : signed).toFixed(2).replace(".", ",");
 };
 
-/** Ay satırının durumu: kim kime ne borçlu, sade sözcükle. */
+/**
+ * Ay satırının durumu: kim kime ne borçlu, sade sözcükle. `plain`: olağan
+ * durum ("Ödendi") renkli rozet değil, soluk metin — 12 ayın 11'inde aynı
+ * rozet tekrar etmesin; istisnalar (Ödenecek, Ay sürüyor…) rozetle öne çıkar.
+ * Hakedişi ve ödemesi olmayan ayda durum yazılmaz.
+ */
 function monthStatus(row: HakedisMonth, isCurrent: boolean) {
-  if (isCurrent) return { label: "Ay sürüyor", tone: "info" as const, hint: "Ay kapanınca ödenebilir." };
-  if (row.kalan > 0.5) return { label: "Ödenecek", tone: "warning" as const, hint: "" };
-  if (row.odenen > Math.max(row.hakedilen, 0) + 0.5) return { label: "Fazla ödendi", tone: "critical" as const, hint: "Bu ay için hakedişten fazla ödeme yapılmış." };
-  if (row.hakedilen < -0.5) return { label: "Eksi hakediş", tone: "neutral" as const, hint: "Laboratuvar gideri bu ayın doktor payını aştı." };
-  return { label: "Ödendi", tone: "success" as const, hint: "" };
+  if (isCurrent) return { label: "Ay sürüyor", tone: "info" as const, hint: "Ay kapanınca ödenebilir.", plain: false };
+  if (row.kalan > 0.5) return { label: "Ödenecek", tone: "warning" as const, hint: "", plain: false };
+  if (row.odenen > Math.max(row.hakedilen, 0) + 0.5) return { label: "Fazla ödendi", tone: "critical" as const, hint: "Bu ay için hakedişten fazla ödeme yapılmış.", plain: false };
+  if (row.hakedilen < -0.5) return { label: "Eksi hakediş", tone: "neutral" as const, hint: "Laboratuvar gideri bu ayın doktor payını aştı.", plain: false };
+  if (Math.abs(row.hakedilen) < 0.5 && row.odenen < 0.5) return null;
+  return { label: "Ödendi", tone: "success" as const, hint: "", plain: true };
 }
 
 type DetailRow = { id: string; tarih: string; ad: string; aciklama: string; yontem: string; tutar: number };
@@ -201,8 +208,18 @@ export function HakedisMonthlyPanel({ doctorId, canPay = false, onPay, refreshTo
 
   const statusBadge = (row: HakedisMonth) => {
     const status = monthStatus(row, isCurrent(row));
+    if (!status) return null;
+    if (status.plain) return <span className="text-xs text-slate-500">{status.label}</span>;
     return <Badge tone={status.tone} title={status.hint || undefined}>{status.label}</Badge>;
   };
+
+  // Telefon: ödeme kartın sağ üst köşesindeki "…" menüsünde (ayrı eylem sırası yok).
+  const payMenu = (row: HakedisMonth) => (canPay && onPay && !isCurrent(row) && row.kalan > 0.5 ? (
+    <ActionMenu
+      label={`${monthName(row.year, row.month)} için işlemler`}
+      items={[{ key: "pay", label: `${monthName(row.year, row.month)} hakedişini öde`, icon: Wallet, onSelect: () => onPay(doctorId, row.year, row.month, row.kalan) }]}
+    />
+  ) : null);
 
   const payButton = (row: HakedisMonth) => (canPay && onPay && !isCurrent(row) && row.kalan > 0.5 ? (
     <Button size="sm" variant="secondary" icon={Wallet} onClick={() => onPay(doctorId, row.year, row.month, row.kalan)} aria-label={`${monthName(row.year, row.month)} hakedişini öde`}>
@@ -219,14 +236,15 @@ export function HakedisMonthlyPanel({ doctorId, canPay = false, onPay, refreshTo
       align: "right",
       render: (row) => <span className={`tabular-nums ${row.hakedilen < 0 ? "text-red-700" : "text-slate-700"}`}>{money(row.hakedilen)}</span>,
     },
-    { key: "odenen", header: "Ödenen", align: "right", render: (row) => (row.odenen > 0 ? <span className="tabular-nums text-slate-700">{money(row.odenen)}</span> : <EmptyValue />) },
+    // Ödeme yoksa hücre boş ("—" her satırda tekrar etmez).
+    { key: "odenen", header: "Ödenen", align: "right", render: (row) => (row.odenen > 0 ? <span className="tabular-nums text-slate-700">{money(row.odenen)}</span> : null) },
     {
       key: "kalan",
       header: "Kalan",
       align: "right",
       // İçinde bulunulan ayın kalanı henüz ödenemez; durum sütunu "Ay sürüyor" der.
       render: (row) => (isCurrent(row)
-        ? <EmptyValue />
+        ? null
         : <span className={`font-bold tabular-nums ${row.kalan > 0.5 ? "text-slate-900" : "text-slate-500"}`}>{money(row.kalan)}</span>),
     },
     { key: "durum", header: "Durum", render: statusBadge },
@@ -320,19 +338,22 @@ export function HakedisMonthlyPanel({ doctorId, canPay = false, onPay, refreshTo
             getRowAriaLabel={(row) => `${monthName(row.year, row.month)} dökümünü aç`}
             emptyText="Bu doktor için son 12 ayda hakediş yok"
             emptyDescription="Doktorun tedavi kaydı oluştukça aylık hakediş burada görünür."
+            // Telefon kartı iki satır: ay + durum, hakediş · ödenen; kalan sağda, ödeme sağ üstte "…".
             mobileCard={(row) => (
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="font-semibold text-slate-900">{monthName(row.year, row.month)}</p>
-                  <p className="text-xs text-slate-500">Hakediş {money(row.hakedilen)} · Ödenen {money(row.odenen)}</p>
-                  <div className="mt-1">{statusBadge(row)}</div>
+                  <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                    <span className="font-semibold text-slate-900">{monthName(row.year, row.month)}</span>
+                    {statusBadge(row)}
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    Hakediş {money(row.hakedilen)}{row.odenen > 0 ? ` · Ödenen ${money(row.odenen)}` : ""}
+                  </p>
                 </div>
-                <div className="flex shrink-0 flex-col items-end gap-1.5">
-                  {!isCurrent(row) && <span className="font-bold tabular-nums text-slate-900">{money(row.kalan)}</span>}
-                  {payButton(row)}
-                </div>
+                {!isCurrent(row) && row.kalan > 0.5 && <span className="shrink-0 font-bold tabular-nums text-slate-900">{money(row.kalan)}</span>}
               </div>
             )}
+            mobileCardActions={canPay && onPay ? payMenu : undefined}
           />
         </>
       )}

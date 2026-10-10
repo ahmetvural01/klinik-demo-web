@@ -41,6 +41,12 @@ type CalloutProps = {
   action?: ReactNode;
   compact?: boolean;
   /**
+   * Tek satırlık şerit (sadelik K7): eylem telefonda da metnin yanında, aynı
+   * satırda kalır (varsayılan: telefonda metnin altına iner). Kısa başlık +
+   * metin içi bağlantı gibi küçük eylemle kullanın.
+   */
+  inline?: boolean;
+  /**
    * Ekran okuyucu davranışı: kullanıcı eylemine yanıt olarak beliren ACİL hata
    * için "alert"; kalıcı durum bilgisi için "status" (varsayılan); salt bilgi
    * notu için "note".
@@ -57,22 +63,23 @@ type CalloutProps = {
  * uyarıyı her sayfada farklı görüyordu. Tonlar Badge ile aynı dildedir.
  * Kullanım: <Callout tone="warning" title="Kredi azaldı">Kredi bitince SMS gitmez.</Callout>
  */
-export function Callout({ tone = "info", title, children, icon, action, compact = false, role = "status", className = "", id }: CalloutProps) {
+export function Callout({ tone = "info", title, children, icon, action, compact = false, inline = false, role = "status", className = "", id }: CalloutProps) {
   const Icon = icon === null ? null : icon || DEFAULT_ICON[tone];
+  const layout = inline ? "flex-row items-center justify-between" : "flex-col sm:flex-row sm:items-center sm:justify-between";
   return (
     <div
       id={id}
       role={role}
-      className={`ui-callout flex flex-col gap-2 rounded-[var(--radius-surface)] border sm:flex-row sm:items-center sm:justify-between ${compact ? "px-3 py-2 text-xs" : "px-3.5 py-2.5 text-sm"} ${TONE_CLASS[tone]} ${className}`}
+      className={`ui-callout flex gap-2 rounded-[var(--radius-surface)] border ${layout} ${compact ? "px-3 py-2 text-xs" : "px-3.5 py-2.5 text-sm"} ${TONE_CLASS[tone]} ${className}`}
     >
-      <div className="flex min-w-0 items-start gap-2.5">
-        {Icon && <Icon className={`mt-0.5 shrink-0 ${compact ? "h-3.5 w-3.5" : "h-4 w-4"} ${ICON_CLASS[tone]}`} aria-hidden="true" />}
+      <div className={`flex min-w-0 gap-2.5 ${inline ? "items-center" : "items-start"}`}>
+        {Icon && <Icon className={`${inline ? "" : "mt-0.5"} shrink-0 ${compact ? "h-3.5 w-3.5" : "h-4 w-4"} ${ICON_CLASS[tone]}`} aria-hidden="true" />}
         <div className="min-w-0 leading-5">
           {title && <p className="font-semibold">{title}</p>}
           {children && <div className={title ? "mt-0.5 opacity-90" : ""}>{children}</div>}
         </div>
       </div>
-      {action && <div className="flex shrink-0 items-center gap-2 pl-6 sm:pl-0">{action}</div>}
+      {action && <div className={`flex shrink-0 items-center gap-2 ${inline ? "" : "pl-6 sm:pl-0"}`}>{action}</div>}
     </div>
   );
 }

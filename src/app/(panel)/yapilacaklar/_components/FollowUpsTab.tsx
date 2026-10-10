@@ -410,47 +410,60 @@ export const FollowUpsTab = forwardRef<FollowUpsTabHandle, Props>(function Follo
     ? <DueLabel at={item.dueAt} open={item.isOpen} now={new Date(nowTick)} granularity="day" showTime={!item.dueAllDay} />
     : <span className="whitespace-nowrap font-semibold text-amber-700">Hemen ara</span>);
 
-  const rowActions = (item: FollowItem) => {
+  /** Satırda görünen TEK eylem (en sık sonuç); yoksa null. */
+  const primaryAction = (item: FollowItem) => {
     const busy = busyKeys.has(item.key);
     const appointment = visitFor(item)?.nextAppointment;
-    let primary = null;
     if (canWrite && item.isOpen && appointment) {
-      primary = <Button size="sm" variant="secondary" icon={CalendarCheck} loading={busy} onClick={() => void quickCloseWithAppointment(item)} title="Randevusu var: görüşmeyi “Randevu verildi” olarak kaydet ve aramayı kapat">Aramayı kapat</Button>;
-    } else if (canWrite && item.isOpen && !hidePhone) {
-      // Tek tık "Ulaşılamadı" yalnız telefonu görüp arayabilen için (doktor/asistan telefonu görmez).
-      primary = <Button size="sm" variant="secondary" icon={PhoneOff} loading={busy} onClick={() => void quickUnreached(item)} title="Ulaşılamadı olarak kaydet; 2 gün sonra tekrar aranır">Ulaşılamadı</Button>;
-    } else if (canWrite && !item.isOpen && item.followUpId) {
-      primary = <Button size="sm" variant="secondary" icon={RotateCcw} loading={busy} onClick={() => void quickReopen(item)}>Yeniden aç</Button>;
+      return <Button size="sm" variant="secondary" icon={CalendarCheck} loading={busy} onClick={() => void quickCloseWithAppointment(item)} title="Randevusu var: görüşmeyi “Randevu verildi” olarak kaydet ve aramayı kapat">Aramayı kapat</Button>;
     }
-    const menu: ActionMenuItem[] = [
-      ...(canBookAppointments && item.isOpen ? [{ key: "randevu", label: "Randevu ver", icon: CalendarPlus, href: routes.newAppointment({ patientId: item.patientId, patientName: item.patientName }) }] : []),
-      ...(canOpenPatient ? [{ key: "dosya", label: "Hasta dosyası", icon: FolderOpen, href: routes.patient(item.patientId) }] : []),
-      ...(canWrite && item.isOpen && item.followUpId ? [
-        { key: "duzenle", label: "Aramayı düzenle", description: "Neden, gün, not ya da öncelik", icon: Pencil, onSelect: () => setEditItem(item) },
-        { key: "iptal", label: "Aramayı iptal et", icon: XCircle, danger: true, separatorBefore: true, onSelect: () => void cancelRow(item) },
-      ] : []),
-    ];
-    return (
-      <div className="flex items-center justify-end gap-1.5">
-        {primary}
-        <ActionMenu items={menu} label={`${item.patientName}: diğer işlemler`} />
-      </div>
-    );
+    if (canWrite && item.isOpen && !hidePhone) {
+      // Tek tık "Ulaşılamadı" yalnız telefonu görüp arayabilen için (doktor/asistan telefonu görmez).
+      return <Button size="sm" variant="secondary" icon={PhoneOff} loading={busy} onClick={() => void quickUnreached(item)} title="Ulaşılamadı olarak kaydet; 2 gün sonra tekrar aranır">Ulaşılamadı</Button>;
+    }
+    if (canWrite && !item.isOpen && item.followUpId) {
+      return <Button size="sm" variant="secondary" icon={RotateCcw} loading={busy} onClick={() => void quickReopen(item)}>Yeniden aç</Button>;
+    }
+    return null;
   };
 
+  /** "…" menüsü: randevu ver, hasta dosyası, düzenle, iptal. */
+  const menuItems = (item: FollowItem): ActionMenuItem[] => [
+    ...(canBookAppointments && item.isOpen ? [{ key: "randevu", label: "Randevu ver", icon: CalendarPlus, href: routes.newAppointment({ patientId: item.patientId, patientName: item.patientName }) }] : []),
+    ...(canOpenPatient ? [{ key: "dosya", label: "Hasta dosyası", icon: FolderOpen, href: routes.patient(item.patientId) }] : []),
+    ...(canWrite && item.isOpen && item.followUpId ? [
+      { key: "duzenle", label: "Aramayı düzenle", description: "Neden, gün, not ya da öncelik", icon: Pencil, onSelect: () => setEditItem(item) },
+      { key: "iptal", label: "Aramayı iptal et", icon: XCircle, danger: true, separatorBefore: true, onSelect: () => void cancelRow(item) },
+    ] : []),
+  ];
+
+  // Hasta hücresi iki satır: ad (+ diğer açık arama sayısı) · telefon ve
+  // varsa randevusu. Önceden altında iki ayrı rozet satırı açılıyordu.
+  const others = (item: FollowItem) => (item.isOpen ? (openCountByPatient.get(item.patientId) || 0) - 1 : 0);
+  const appointmentText = (item: FollowItem) => {
+    const appointment = item.isOpen ? visitFor(item)?.nextAppointment : null;
+    return appointment ? `Randevusu var · ${formatDateText(appointment.startAt, "datetime")}` : "";
+  };
+  /** `withPriority`: telefonda "Yüksek öncelik" adın yanında (masaüstünde Neden sütununda). */
+  const patientNameLine = (item: FollowItem, withPriority = false) => (
+    <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
+      <span className="font-bold text-slate-900">{item.patientName}</span>
+      {others(item) > 0 && <span className="text-xs font-semibold text-slate-500">+{others(item)} açık arama</span>}
+      {withPriority && <PriorityBadge value={item.priority} />}
+    </p>
+  );
   const patientCell = (item: FollowItem) => {
-    const appointment = visitFor(item)?.nextAppointment;
-    const others = item.isOpen ? (openCountByPatient.get(item.patientId) || 0) - 1 : 0;
+    const visit = appointmentText(item);
+    const phone = !hidePhone && item.patientPhone ? item.patientPhone : null;
     return (
       <div className="min-w-0">
-        <p className="font-bold text-slate-900">{item.patientName}</p>
-        {!hidePhone && item.patientPhone && <PhoneLink phone={item.patientPhone} countryCode={item.phoneCountryCode} withIcon className="text-xs" />}
-        {(appointment && item.isOpen) || others > 0 ? (
-          <div className="mt-1 flex flex-wrap gap-1">
-            {appointment && item.isOpen && <Badge tone="success">Randevusu var · {formatDateText(appointment.startAt, "datetime")}</Badge>}
-            {others > 0 && <Badge tone="neutral">+{others} açık arama</Badge>}
-          </div>
-        ) : null}
+        {patientNameLine(item)}
+        {(phone || visit) && (
+          <p className="flex flex-wrap items-center gap-x-2 text-xs">
+            {phone && <PhoneLink phone={phone} countryCode={item.phoneCountryCode} withIcon className="text-xs" />}
+            {visit && <span className="font-semibold text-emerald-700">{visit}</span>}
+          </p>
+        )}
       </div>
     );
   };
@@ -475,12 +488,15 @@ export const FollowUpsTab = forwardRef<FollowUpsTabHandle, Props>(function Follo
     );
   };
 
+  // Görüşme yoksa hücre boş kalır (önceden her satırda "Görüşülmedi" yazıyordu);
+  // listede hiç görüşme yoksa sütun da gösterilmez.
   const lastContactCell = (item: FollowItem) => (item.lastEvent ? (
     <div className="min-w-0 max-w-[220px]">
       <p className="text-xs tabular-nums text-slate-500">{formatDateText(item.lastEvent.occurredAt, "datetime")}</p>
       <p className="truncate text-sm text-slate-700" title={item.lastEvent.summary}>{item.lastEvent.summary}</p>
     </div>
-  ) : <span className="text-xs text-slate-400">Görüşülmedi</span>);
+  ) : null);
+  const showLastContact = rows.some((item) => item.lastEvent);
 
   // Kapanan aramada "Son görüşme" ile kapanış aynı metni tekrar ediyordu; tek "Sonuç" sütunu (denetim §3.1 sorun 3).
   const resultCell = (item: FollowItem) => (
@@ -492,7 +508,12 @@ export const FollowUpsTab = forwardRef<FollowUpsTabHandle, Props>(function Follo
 
   // Satırda yapılacak bir şey yoksa (salt okuyan rol) boş "İşlem" sütunu gösterilmez.
   const actionColumn: ListTableColumn<FollowItem>[] = canWrite || canOpenPatient || canBookAppointments
-    ? [{ key: "islem", header: "İşlem", align: "right", render: rowActions }]
+    ? [{ key: "islem", header: "İşlem", align: "right", render: (item) => (
+        <div className="flex items-center justify-end gap-1.5">
+          {primaryAction(item)}
+          <ActionMenu items={menuItems(item)} label={`${item.patientName}: diğer işlemler`} />
+        </div>
+      ) }]
     : [];
   const columns: ListTableColumn<FollowItem>[] = status === "kapali"
     ? [
@@ -504,42 +525,41 @@ export const FollowUpsTab = forwardRef<FollowUpsTabHandle, Props>(function Follo
     : [
         { key: "patient", header: "Hasta", cellClassName: "min-w-[180px] whitespace-nowrap", render: patientCell },
         { key: "reason", header: "Neden", render: reasonCell },
-        { key: "last", header: "Son görüşme", render: lastContactCell },
+        ...(showLastContact ? [{ key: "last", header: "Son görüşme", render: lastContactCell }] : []),
         { key: "due", header: "Ne zaman", render: dueCell },
         ...actionColumn,
       ];
 
+  // Telefonda kart: ad ("…" kartın sağ üst köşesinde, mobileCardActions); neden + ne zaman + doktor tek satır;
+  // neden/not ayrıntısı; telefon ve (varsa) randevu ile sık eylem aynı satırda —
+  // eylemler ayrı bir düğme sırası oluşturmaz.
   const mobileCard = (item: FollowItem) => {
-    const appointment = visitFor(item)?.nextAppointment;
-    const others = item.isOpen ? (openCountByPatient.get(item.patientId) || 0) - 1 : 0;
     // Telefonda da "neden aranacak" görünür (not, lab provası, kaçırılan randevu); masaüstündeki Neden sütunuyla aynı metin.
     const detailText = item.isOpen ? reasonDetail(item) : "";
+    const visit = appointmentText(item);
+    const primary = primaryAction(item);
+    const phone = !hidePhone && item.patientPhone ? item.patientPhone : null;
     return (
-      <div className="space-y-1.5">
-        <div className="flex items-start justify-between gap-2">
-          <p className="min-w-0 font-bold text-slate-900">{item.patientName}</p>
+      <div className="space-y-1">
+        <div className="min-h-7 pt-1">{patientNameLine(item, true)}</div>
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
           <Badge tone={item.reasonTone}>{item.reasonLabel}</Badge>
-        </div>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
           {item.isOpen ? dueCell(item) : <span>Kapandı {item.closedAt ? formatDateText(item.closedAt) : ""}</span>}
           {item.doctorName && <span>{item.doctorName}</span>}
-          <PriorityBadge value={item.priority} />
         </div>
         {detailText && <p className="truncate text-xs text-slate-600" title={detailText}>{detailText}</p>}
         {item.isOpen
           ? item.lastEvent && <p className="truncate text-xs text-slate-600">Son görüşme: {item.lastEvent.summary}</p>
           : item.resolutionNote && <p className="truncate text-xs text-slate-600">{item.resolutionNote}</p>}
-        {((appointment && item.isOpen) || others > 0) && (
-          <div className="flex flex-wrap gap-1">
-            {appointment && item.isOpen && <Badge tone="success">Randevusu var · {formatDateText(appointment.startAt, "datetime")}</Badge>}
-            {others > 0 && <Badge tone="neutral">+{others} açık arama</Badge>}
+        {(phone || visit || primary) && (
+          <div className="flex items-center gap-2">
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2">
+              {phone && <PhoneLink phone={phone} countryCode={item.phoneCountryCode} withIcon className="min-h-9 text-sm font-semibold" />}
+              {visit && <span className="text-xs font-semibold text-emerald-700">{visit}</span>}
+            </div>
+            {primary}
           </div>
         )}
-        <div className="flex items-center gap-1.5 pt-0.5">
-          {!hidePhone && item.patientPhone ? <PhoneLink phone={item.patientPhone} countryCode={item.phoneCountryCode} withIcon className="min-h-9 text-sm font-semibold" /> : null}
-          <span className="flex-1" />
-          {rowActions(item)}
-        </div>
       </div>
     );
   };
@@ -556,20 +576,35 @@ export const FollowUpsTab = forwardRef<FollowUpsTabHandle, Props>(function Follo
 
   const detailItem = detail ? allItems.find((item) => item.key === detail.key) || detail : null;
 
-  return (
-    <div className="space-y-3">
+  // Listenin kartında üst şerit, iki düzenli sıra: durum çipleri (sağda Dışa
+  // aktar) · arama ve süzgeçler. Önceden çipler, arama ve açılır listeler
+  // ayrı bir kartta karışık sarılıyordu.
+  const listToolbar = (
+    <>
+      <div className="flex flex-wrap items-center justify-between gap-2 px-3 pt-2.5 sm:px-4 sm:pt-3">
+        <ChoiceCards
+          label="Arama durumu"
+          labelHidden
+          variant="pills"
+          value={status}
+          onChange={onStatusChange}
+          options={[
+            { value: "bugun", label: "Bugün aranacak", count: loaded ? buckets.bugun.length : undefined, countTone: overdueCount > 0 ? "critical" : "warning" },
+            { value: "sonraki", label: "Sonraki günler", count: loaded ? buckets.sonraki.length : undefined },
+            { value: "kapali", label: "Kapanan" },
+          ]}
+        />
+        <ExportMenu
+          className="hidden sm:inline-flex"
+          disabled={rows.length === 0}
+          disabledReason="Dışa aktarılacak kayıt yok"
+          items={[
+            { key: "excel", label: "Excel (CSV)", icon: FileSpreadsheet, onSelect: downloadExcel },
+            { key: "pdf", label: "PDF", icon: FileText, onSelect: downloadPdf },
+          ]}
+        />
+      </div>
       <Toolbar
-        actions={(
-          <ExportMenu
-            className="hidden sm:inline-flex"
-            disabled={rows.length === 0}
-            disabledReason="Dışa aktarılacak kayıt yok"
-            items={[
-              { key: "excel", label: "Excel (CSV)", icon: FileSpreadsheet, onSelect: downloadExcel },
-              { key: "pdf", label: "PDF", icon: FileText, onSelect: downloadPdf },
-            ]}
-          />
-        )}
         filters={(
           <>
             <Select aria-label="Neden" value={reasonFilter} onChange={(event) => setReasonFilter(event.target.value)} className="sm:w-48">
@@ -589,18 +624,6 @@ export const FollowUpsTab = forwardRef<FollowUpsTabHandle, Props>(function Follo
         )}
         filterCount={activeFilters.length}
       >
-        <ChoiceCards
-          label="Arama durumu"
-          labelHidden
-          variant="pills"
-          value={status}
-          onChange={onStatusChange}
-          options={[
-            { value: "bugun", label: "Bugün aranacak", count: loaded ? buckets.bugun.length : undefined, countTone: overdueCount > 0 ? "critical" : "warning" },
-            { value: "sonraki", label: "Sonraki günler", count: loaded ? buckets.sonraki.length : undefined },
-            { value: "kapali", label: "Kapanan" },
-          ]}
-        />
         <SearchInput
           value={query}
           onChange={setQuery}
@@ -608,8 +631,16 @@ export const FollowUpsTab = forwardRef<FollowUpsTabHandle, Props>(function Follo
           wrapperClassName="flex-1 min-w-[200px]"
         />
       </Toolbar>
+    </>
+  );
+  const filterChips = activeFilters.length > 0 ? (
+    <div className="border-b border-slate-100 px-3 py-2 sm:px-4">
       <ActiveFilters filters={activeFilters} onClearAll={resetFilters} />
+    </div>
+  ) : undefined;
 
+  return (
+    <div className="space-y-3">
       {data?.appointmentsTruncated && status !== "kapali" && (
         <Callout tone="warning" compact>Son 90 günde çok sayıda gelmeyen randevu var; listede en yeni 500 randevu gösteriliyor.</Callout>
       )}
@@ -624,7 +655,10 @@ export const FollowUpsTab = forwardRef<FollowUpsTabHandle, Props>(function Follo
         onRetry={refresh}
         onRowClick={(item) => setDetail(item)}
         getRowAriaLabel={(item) => `${item.patientName} aramasını aç`}
+        toolbar={listToolbar}
+        header={filterChips}
         mobileCard={mobileCard}
+        mobileCardActions={(item) => (menuItems(item).length > 0 ? <ActionMenu items={menuItems(item)} label={`${item.patientName}: işlemler`} /> : null)}
         emptyText={emptyText}
         emptyDescription={emptyDescription}
         emptyAction={isFiltered ? <Button size="sm" variant="secondary" onClick={resetFilters}>Filtreleri temizle</Button> : undefined}

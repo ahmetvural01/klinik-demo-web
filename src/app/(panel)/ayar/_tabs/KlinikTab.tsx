@@ -7,7 +7,7 @@ import { CopyField } from "@/components/ui/CopyField";
 import { FormField } from "@/components/ui/FormField";
 import { ImageUploadField } from "@/components/ui/ImageUploadField";
 import { Input, Textarea } from "@/components/ui/Input";
-import { Section } from "@/components/ui/Section";
+import { Section, SectionDivider } from "@/components/ui/Section";
 import { Switch } from "@/components/ui/Switch";
 import { TimeRangeInput } from "@/components/ui/TimeRangeInput";
 import { CLINIC_ADDRESS_MAX, CLINIC_NAME_MAX } from "@/app/api/settings/clinic-contact";
@@ -142,9 +142,14 @@ export default function KlinikTab({ form, onChange, canWrite, bookingLink, login
             />
           </FormField>
         </div>
-      </Section>
 
-      <Section icon={Link2} title="Hasta bağlantıları">
+        {/* Hasta bağlantıları aynı kartta ayırıcıyla (sadelik K1): klinik
+            kimliğiyle ilgili tüm alanlar tek yüzeyde; ayrı kart açılmaz. */}
+        <SectionDivider />
+        <h3 className="mb-3 flex items-center gap-2 text-sm font-extrabold text-slate-900">
+          <Link2 className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+          Hasta bağlantıları
+        </h3>
         <div className="grid gap-4 lg:grid-cols-2">
           {bookingLink ? (
             <CopyField

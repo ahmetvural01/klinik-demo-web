@@ -61,6 +61,14 @@ export interface ListTableProps<T> {
   actions?: ReactNode;
   /** Başlık düzeyi (sayfa içi ana liste h2; sekme/kart içi alt liste h3). */
   titleAs?: "h2" | "h3";
+  /**
+   * Araç çubuğu yuvası (sadelik K1): arama/süzgeç/dışa aktar çubuğu
+   * (`<Toolbar>`) listenin KARTININ üst şeridi olarak çizilir — ayrı kart
+   * olmaz. `title` varsa onun altında, `header`'ın üstünde durur. Yuvadaki
+   * Toolbar'ın çerçevesi kendiliğinden kalkar. Açılır menüler (ActionMenu,
+   * ExportMenu) portal kullandığı için kartın kenarında kırpılmaz.
+   */
+  toolbar?: ReactNode;
   emptyText?: string;
   emptyDescription?: string;
   emptyAction?: ReactNode;
@@ -84,6 +92,13 @@ export interface ListTableProps<T> {
    * Kart içeriği satırın en önemli 2-3 bilgisini ve eylemlerini göstermeli.
    */
   mobileCard?: (row: T) => ReactNode;
+  /**
+   * Kart görünümünde kartın SAĞ ÜST köşesindeki eylem (genellikle satırın
+   * "…" ActionMenu'si). Verilirse eylem ayrı bir sıra oluşturmaz; kart
+   * içeriği sağda ona yer bırakır (sadelik K3/K9). Aynı menüyü `mobileCard`
+   * içinde ikinci kez çizmeyin.
+   */
+  mobileCardActions?: (row: T) => ReactNode;
   /**
    * Kart görünümünün geçerli olduğu genişlik: "md" (varsayılan, <768px) ya da
    * "lg" (<1024px). Çok sütunlu tablo tablette (menü açıkken) sığmıyorsa "lg".
@@ -226,6 +241,7 @@ export function ListTable<T>({
   subtitle,
   actions,
   titleAs = "h2",
+  toolbar,
   emptyText = "Kayıt bulunamadı",
   emptyDescription,
   emptyAction,
@@ -237,6 +253,7 @@ export function ListTable<T>({
   getRowAriaLabel,
   rowClassName,
   mobileCard,
+  mobileCardActions,
   cardBelow = "md",
   sort,
   onSortChange,
@@ -343,6 +360,7 @@ export function ListTable<T>({
           {actions && <div className="flex shrink-0 flex-wrap items-center gap-2 sm:-my-2">{actions}</div>}
         </div>
       )}
+      {toolbar && <div className="ui-list-table-toolbar border-b border-slate-100">{toolbar}</div>}
       {header}
       {showStale && (
         <div role="status" className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-amber-200 bg-amber-50 px-4 py-1 text-xs text-amber-900">
@@ -374,7 +392,7 @@ export function ListTable<T>({
             <div
               key={rowKey(row)}
               {...rowHandlers(row)}
-              className={`px-4 py-3 ${isInteractiveRow(row) ? "cursor-pointer active:bg-primary/5 focus:outline-none focus-visible:bg-primary/5 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary" : ""} ${selection && selectedSet.has(rowKey(row)) ? "bg-primary/[0.05]" : ""} ${rowClassName?.(row) || ""}`}
+              className={`ui-list-card px-4 py-3 ${mobileCardActions ? "relative pr-12" : ""} ${isInteractiveRow(row) ? "cursor-pointer active:bg-primary/5 focus:outline-none focus-visible:bg-primary/5 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary" : ""} ${selection && selectedSet.has(rowKey(row)) ? "bg-primary/[0.05]" : ""} ${rowClassName?.(row) || ""}`}
             >
               {selection ? (
                 <div className="flex items-start gap-3">
@@ -382,6 +400,8 @@ export function ListTable<T>({
                   <div className="min-w-0 flex-1">{mobileCard(row)}</div>
                 </div>
               ) : mobileCard(row)}
+              {/* Sağ üst köşe: "…" menüsü ayrı bir eylem sırası oluşturmaz. */}
+              {mobileCardActions && <div className="absolute right-2 top-2 flex items-center gap-1">{mobileCardActions(row)}</div>}
             </div>
           ))}
         </div>
@@ -390,10 +410,12 @@ export function ListTable<T>({
       {!showError && (
         <div className={`${mobileCard ? TABLE_ONLY_CLASS[cardBelow] : ""} overflow-x-auto`}>
           <table className={`${tableMinWidth} w-full`} aria-labelledby={title ? titleId : undefined}>
-            <thead>
+            {/* Boş listede sütun başlıkları gösterilmez: başlık satırı ile "kayıt yok"
+                metni üst üste görünüyor, ekran gereksiz kalabalıklaşıyordu. */}
+            <thead className={showEmpty ? "sr-only" : undefined}>
               <tr className="border-b border-slate-200/80">
                 {selection && (
-                  <th className="w-10 px-3 py-2.5 sm:px-4">
+                  <th className="w-10 px-3 py-2 sm:px-4">
                     <input
                       type="checkbox"
                       checked={allVisibleSelected}
@@ -407,18 +429,24 @@ export function ListTable<T>({
                 )}
                 {columns.map((col) => {
                   const sorted = sort && col.sortKey && sort.key === col.sortKey ? sort.dir : null;
+                  const actionsColumn = isActionsColumn(col.key);
                   return (
                     <th
                       key={col.key}
                       aria-sort={sorted ? (sorted === "asc" ? "ascending" : "descending") : undefined}
                       className={[
-                        "whitespace-nowrap px-3 py-2.5 sm:px-4",
+                        "whitespace-nowrap py-2",
+                        // Eylem sütunu daraltılır (içeriği kadar): "…" ve tek görünür eylem sığar, tablo genişliğini yemez.
+                        actionsColumn ? "w-px pl-2 pr-2 sm:pr-3" : "px-3 sm:px-4",
                         ALIGN_CLASS[col.align || "left"],
-                        isActionsColumn(col.key) ? "md:sticky md:right-0 md:z-10 md:bg-[rgb(var(--app-surface))]" : "",
+                        actionsColumn ? "md:sticky md:right-0 md:z-10 md:bg-[rgb(var(--app-surface))]" : "",
                         col.headerClassName || "",
                       ].filter(Boolean).join(" ")}
                     >
-                      {col.sortKey && onSortChange ? (
+                      {actionsColumn && !col.sortKey && !col.headerHint ? (
+                        // "İşlem" başlığı eylem ikonlarının üstünde bilgi taşımaz: görsel olarak gizli, ekran okuyucu duyar.
+                        <span className="sr-only">{col.header}</span>
+                      ) : col.sortKey && onSortChange ? (
                         <button
                           type="button"
                           onClick={() => onSortChange(col.sortKey as string)}
@@ -454,12 +482,14 @@ export function ListTable<T>({
                     {...rowHandlers(row)}
                     className={`group transition-colors duration-150 hover:bg-primary/[0.035] ${isInteractiveRow(row) ? "cursor-pointer focus:outline-none focus-visible:bg-primary/5 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary" : ""} ${selection && selectedSet.has(rowKey(row)) ? "bg-primary/[0.05]" : ""} ${rowClassName?.(row) || ""}`}
                   >
-                    {selection && <td className="w-10 px-3 py-2.5 sm:px-4">{selectBox(row)}</td>}
+                    {selection && <td className="h-12 w-10 px-3 py-2 sm:px-4">{selectBox(row)}</td>}
                     {columns.map((col) => (
                       <td
                         key={col.key}
                         className={[
-                          "px-3 py-2.5 sm:px-4",
+                          // Satır ritmi (sadelik K9): tek satırlı satır 48px, iki satırlı ~52–56px.
+                          "h-12 py-2",
+                          isActionsColumn(col.key) ? "ui-list-actions-cell w-px whitespace-nowrap pl-2 pr-2 sm:pr-3" : "px-3 sm:px-4",
                           ALIGN_CLASS[col.align || "left"],
                           // Yapışkan eylem hücresi opak kalır (kayan içerik altından
                           // görünmez) ve satırın zeminini aynen taşır: üzerine gelme,

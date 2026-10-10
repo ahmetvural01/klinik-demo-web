@@ -235,12 +235,8 @@ function DestekContent() {
     {
       key: "user",
       header: "Gönderen",
-      render: (ticket) => ticket.user ? (
-        <div>
-          <p className="text-sm text-slate-800">{ticket.user.fullName}</p>
-          <p className="text-xs text-slate-500">{roleLabel(ticket.user.role)}</p>
-        </div>
-      ) : <EmptyValue />,
+      // Tek satır: ad. Rol talep ayrıntısında yazar (her satırda ikinci satır gereksizdi).
+      render: (ticket) => ticket.user ? <span className="text-sm text-slate-800">{ticket.user.fullName}</span> : <EmptyValue />,
     },
     { key: "status", header: "Durum", render: (ticket) => <StatusBadge ticket={ticket} /> },
   ];
@@ -253,7 +249,6 @@ function DestekContent() {
       <PageHeader
         icon="support"
         title="Destek"
-        description="Programla ilgili sorun ve isteklerinizi destek ekibine iletin."
         actions={(
           <>
             <Button variant="secondary" icon={MessageCircle} href={WHATSAPP_URL} target="_blank" title="WhatsApp destek hattı yeni sekmede açılır">
@@ -270,24 +265,27 @@ function DestekContent() {
         </Callout>
       )}
 
-      <Toolbar>
-        <SearchInput value={query} onChange={setQuery} placeholder="Konu, mesaj veya gönderen ara" wrapperClassName="flex-1 min-w-[220px]" />
-        <ChoiceCards
-          label="Durum"
-          labelHidden
-          variant="pills"
-          value={statusFilter}
-          onChange={setStatusFilter}
-          options={[
-            { value: "tum", label: "Tümü" },
-            { value: "bekliyor", label: "Yanıt bekleyen", count: counts.bekliyor, countTone: "warning" },
-            { value: "yanitlandi", label: "Yanıtlanan" },
-            { value: "kapandi", label: "Kapanan" },
-          ]}
-        />
-      </Toolbar>
-
       <ListTable
+        // Arama ve durum çipleri listenin kartının üst şeridinde (sadelik K1);
+        // hiç talep yokken süzülecek bir şey olmadığı için şerit çizilmez.
+        toolbar={loaded && tickets.length === 0 ? undefined : (
+          <Toolbar>
+            <SearchInput value={query} onChange={setQuery} placeholder="Konu, mesaj veya gönderen ara" wrapperClassName="flex-1 min-w-[220px]" />
+            <ChoiceCards
+              label="Durum"
+              labelHidden
+              variant="pills"
+              value={statusFilter}
+              onChange={setStatusFilter}
+              options={[
+                { value: "tum", label: "Tümü" },
+                { value: "bekliyor", label: "Yanıt bekleyen", count: counts.bekliyor, countTone: "warning" },
+                { value: "yanitlandi", label: "Yanıtlanan" },
+                { value: "kapandi", label: "Kapanan" },
+              ]}
+            />
+          </Toolbar>
+        )}
         columns={columns}
         rows={filtered}
         rowKey={(ticket) => ticket.id}
@@ -319,7 +317,7 @@ function DestekContent() {
         open={Boolean(selected)}
         onClose={() => setSelected(null)}
         title={selected?.subject || "Destek talebi"}
-        description={selected ? `${formatDateText(selected.createdAt, "datetime")}${selected.user ? ` · ${selected.user.fullName}` : ""}` : undefined}
+        description={selected ? `${formatDateText(selected.createdAt, "datetime")}${selected.user ? ` · ${selected.user.fullName}${selected.user.role ? ` (${roleLabel(selected.user.role)})` : ""}` : ""}` : undefined}
         size="lg"
         trackFormChanges={false}
         footer={<Button variant="secondary" onClick={() => setSelected(null)}>Kapat</Button>}

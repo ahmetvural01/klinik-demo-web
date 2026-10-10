@@ -1,13 +1,12 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState, type ReactNode } from "react";
-import { ArrowRight, FileSpreadsheet, FileText } from "lucide-react";
+import { Suspense, useCallback, useEffect, useId, useState, type ReactNode } from "react";
+import { ArrowRight, ChevronDown, FileSpreadsheet, FileText } from "lucide-react";
 import { usePermissions } from "@/components/auth/PermissionProvider";
 import { Button } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
 import { DateRangeFilter } from "@/components/ui/DateRangeFilter";
 import { DescriptionList, type DescriptionItem } from "@/components/ui/DescriptionList";
-import { Disclosure } from "@/components/ui/Disclosure";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ExportMenu } from "@/components/ui/ExportMenu";
 import { LoadErrorState } from "@/components/ui/LoadErrorState";
@@ -117,6 +116,30 @@ function BarListSkeleton({ rows = 4 }: { rows?: number }) {
           <Skeleton className="h-3.5 w-16" />
         </div>
       ))}
+    </div>
+  );
+}
+
+/**
+ * Kartın alt şeridinde katlanır ek bilgi (ör. vergi dilimleri). Kart içinde
+ * ikinci çerçeveli kutu açılmaz (sadelik K1); içerik kapalıyken de DOM'da kalır.
+ */
+function FooterDisclosure({ title, children }: { title: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const contentId = useId();
+  return (
+    <div>
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={contentId}
+        onClick={() => setOpen((value) => !value)}
+        className="-my-1 flex w-full items-center justify-between gap-3 rounded-md text-left text-sm font-semibold text-slate-700 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+      >
+        <span>{title}</span>
+        <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? "rotate-180" : ""}`} aria-hidden="true" />
+      </button>
+      <div id={contentId} hidden={!open} className="pb-1 pt-3">{children}</div>
     </div>
   );
 }
@@ -277,24 +300,25 @@ function RaporContent() {
     if (tab === "vergi") {
       return (
         <div className="space-y-3">
-          <Callout tone="neutral" role="note">Tahmini hesaplamadır. Resmi beyan için mali müşavirinize danışın.</Callout>
+          <Callout tone="neutral" role="note" compact>Tahmini hesaplamadır. Resmi beyan için mali müşavirinize danışın.</Callout>
           <div className="grid gap-3 lg:grid-cols-2">
             <Section title="KDV">
               {busy ? <BarListSkeleton rows={3} /> : <DescriptionList layout="rows" items={vatItems} />}
             </Section>
-            <Section title={`Gelir vergisi (${taxYear})`}>
-              {busy ? <BarListSkeleton rows={3} /> : (
-                <div className="space-y-3">
-                  <DescriptionList layout="rows" items={incomeTaxItems} />
-                  <Disclosure title={`Vergi dilimleri (${stats.taxTariffYear ?? INCOME_TAX_TARIFF_YEAR} tarifesi)`}>
-                    <ul className="space-y-1 text-sm text-slate-600">
-                      {TAX_BRACKETS.map(([label, rate]) => (
-                        <li key={label} className="flex justify-between gap-3"><span>{label}</span><span className="font-semibold tabular-nums">{rate}</span></li>
-                      ))}
-                    </ul>
-                  </Disclosure>
-                </div>
+            {/* Vergi dilimleri kartın alt şeridinde açılır (kart içinde ikinci çerçeve yok). */}
+            <Section
+              title={`Gelir vergisi (${taxYear})`}
+              footer={busy ? undefined : (
+                <FooterDisclosure title={`Vergi dilimleri (${stats.taxTariffYear ?? INCOME_TAX_TARIFF_YEAR} tarifesi)`}>
+                  <ul className="space-y-1 text-sm text-slate-600">
+                    {TAX_BRACKETS.map(([label, rate]) => (
+                      <li key={label} className="flex justify-between gap-3"><span>{label}</span><span className="font-semibold tabular-nums">{rate}</span></li>
+                    ))}
+                  </ul>
+                </FooterDisclosure>
               )}
+            >
+              {busy ? <BarListSkeleton rows={3} /> : <DescriptionList layout="rows" items={incomeTaxItems} />}
             </Section>
           </div>
         </div>
@@ -356,8 +380,11 @@ function RaporContent() {
         </div>
 
         {!busy && unpaidPatients > 0 && (
+          // Tek satırlık şerit: eylem telefonda da metnin yanında.
           <Callout
             tone="info"
+            compact
+            inline
             action={canLedger && canFinance ? <SectionLink href="/muhasebe?tab=alacaklar&gorunum=hastalar">Alacaklar</SectionLink> : undefined}
           >
             Bu dönemde tedavi görüp bugün itibarıyla borcu kalan <b>{count(unpaidPatients)}</b> hasta var.
@@ -382,7 +409,9 @@ function RaporContent() {
         onChange={setTab}
       />
 
+      {/* Dönem ve dışa aktarma sayfa zemininde (ayrı kart değil). */}
       <Toolbar
+        bare
         actions={canExport ? (
           <ExportMenu
             disabled={!data || loading || Boolean(period.error)}
@@ -412,7 +441,7 @@ function RaporContent() {
 
 export default function RaporPage() {
   return (
-    <Suspense fallback={<PageSkeleton headerAction={false} toolbar stats={4} tabs={3} body="cards" rows={4} columns={2} label="Raporlar yükleniyor" />}>
+    <Suspense fallback={<PageSkeleton headerAction={false} toolbar="bare" stats={4} tabs={3} body="cards" rows={4} columns={2} label="Raporlar yükleniyor" />}>
       <RaporContent />
     </Suspense>
   );

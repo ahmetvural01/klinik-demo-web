@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { ChoiceCards } from "@/components/ui/ChoiceCards";
 import { Select } from "@/components/ui/Input";
-import { EmptyValue, ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { formatDateText } from "@/components/ui/Money";
 import { SearchInput } from "@/components/ui/SearchInput";
 import { ActiveFilters, Toolbar, type ActiveFilter } from "@/components/ui/Toolbar";
@@ -333,39 +333,54 @@ export const TasksTab = forwardRef<TasksTabHandle, Props>(function TasksTab({ ac
   const listError = isOpenView ? openError : closedError;
   const listLoaded = isOpenView ? openLoaded : Boolean(closed);
 
-  const rowActions = (task: ClinicTask) => {
+  /** Satırda görünen TEK eylem: açık görevde "Tamamla", kapanmışta "Yeniden aç". */
+  const primaryAction = (task: ClinicTask) => {
+    if (!canWriteTasks) return null;
     const busy = busyIds.has(task.id);
-    const open = isOpenTask(task);
-    const primary = !canWriteTasks ? null : open
+    return isOpenTask(task)
       ? <Button size="sm" variant="secondary" icon={CheckCircle2} loading={busy} onClick={() => void changeStatus(task, "TAMAMLANDI")}>Tamamla</Button>
       : <Button size="sm" variant="secondary" icon={RotateCcw} loading={busy} onClick={() => void changeStatus(task, "ACIK")}>Yeniden aç</Button>;
-    const menu: ActionMenuItem[] = [
+  };
+
+  /** "…" menüsü: beklet/devam, hasta dosyası, iptal. */
+  const menuItems = (task: ClinicTask): ActionMenuItem[] => {
+    const busy = busyIds.has(task.id);
+    const open = isOpenTask(task);
+    return [
       ...(canWriteTasks && open ? [task.status === "BEKLEMEDE"
         ? { key: "devam", label: "Devam et", description: "Beklemeden çıkar", icon: PlayCircle, disabled: busy, onSelect: () => void changeStatus(task, "ACIK") }
         : { key: "beklet", label: "Beklemeye al", description: "Dışarıdan yanıt bekleniyor", icon: PauseCircle, disabled: busy, onSelect: () => void changeStatus(task, "BEKLEMEDE") }] : []),
       ...(canOpenPatient && task.patient?.id ? [{ key: "dosya", label: "Hasta dosyası", icon: FolderOpen, href: routes.patient(task.patient.id) }] : []),
       ...(canCancelTasks && open ? [{ key: "iptal", label: "Görevi iptal et", icon: XCircle, danger: true, separatorBefore: true, disabled: busy, onSelect: () => void changeStatus(task, "IPTAL") }] : []),
     ];
-    return (
-      <div className="flex items-center justify-end gap-1.5">
-        {primary}
-        <ActionMenu items={menu} label={`${task.title}: diğer işlemler`} />
-      </div>
-    );
   };
 
-  // Hasta, firma ve tür ikinci satırda (önceden "Hasta" ayrı sütundu ve çoğu satırda boştu; firma hiç görünmüyordu).
+  const rowActions = (task: ClinicTask) => (
+    <div className="flex items-center justify-end gap-1.5">
+      {primaryAction(task)}
+      <ActionMenu items={menuItems(task)} label={`${task.title}: diğer işlemler`} />
+    </div>
+  );
+
+  // Görevin ikinci satırı: tür (olağan "Diğer" yazılmaz) · hasta · firma · not —
+  // tek satırda, uzunsa kısaltılır (önceden not üçüncü satırdı).
+  const metaOf = (task: ClinicTask) => [
+    task.type !== "DIGER" ? TASK_TYPE_LABELS[task.type] : null,
+    task.patient ? `Hasta: ${task.patient.fullName}` : null,
+    task.vendorName ? `Firma: ${task.vendorName}` : null,
+    task.details || null,
+  ].filter(Boolean).join(" · ");
+
   const titleCell = (task: ClinicTask) => {
-    const meta = [TASK_TYPE_LABELS[task.type], task.patient ? `Hasta: ${task.patient.fullName}` : null, task.vendorName ? `Firma: ${task.vendorName}` : null].filter(Boolean).join(" · ");
+    const meta = metaOf(task);
     return (
-      <div className="min-w-0 max-w-[420px]">
-        <p className={`font-semibold ${task.status === "IPTAL" ? "text-slate-400 line-through" : "text-slate-900"}`}>{task.title}</p>
-        <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
-          <span className="min-w-0 truncate" title={meta}>{meta}</span>
+      <div className="min-w-0 max-w-[460px]">
+        <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className={`font-semibold ${task.status === "IPTAL" ? "text-slate-400 line-through" : "text-slate-900"}`}>{task.title}</span>
           {task.status === "BEKLEMEDE" && <Badge tone="warning">Beklemede</Badge>}
           <PriorityBadge value={task.priority} />
-        </div>
-        {task.details && <p className="mt-0.5 truncate text-xs text-slate-500" title={task.details}>{task.details}</p>}
+        </p>
+        {meta && <p className="mt-0.5 truncate text-xs text-slate-500" title={meta}>{meta}</p>}
       </div>
     );
   };
@@ -377,10 +392,11 @@ export const TasksTab = forwardRef<TasksTabHandle, Props>(function TasksTab({ ac
       : <span className="text-xs text-slate-400">Atanmadı</span>;
   };
 
+  // Tarihi olmayan görevde hücre boş kalır (önceden her satırda "—").
   const dateCell = (task: ClinicTask) => {
-    if (isOpenView) return <DueLabel at={task.dueAt} open now={now} />;
+    if (isOpenView) return task.dueAt ? <DueLabel at={task.dueAt} open now={now} /> : null;
     const at = status === "tamamlanan" ? task.completedAt : task.updatedAt;
-    return at ? <span className="text-sm tabular-nums text-slate-600">{formatDateText(at, "datetime")}</span> : <EmptyValue />;
+    return at ? <span className="text-sm tabular-nums text-slate-600">{formatDateText(at, "datetime")}</span> : null;
   };
 
   // Salt okuyan rolde (ör. muhasebe) satırda yapılacak bir şey yoksa boş "İşlem" sütunu da yok.
@@ -392,27 +408,36 @@ export const TasksTab = forwardRef<TasksTabHandle, Props>(function TasksTab({ ac
     ...(hasRowActions ? [{ key: "islem", header: "İşlem", align: "right" as const, render: rowActions }] : []),
   ];
 
-  const mobileCard = (task: ClinicTask) => (
-    <div className="space-y-1">
-      <div className="flex items-start justify-between gap-2">
-        <p className={`min-w-0 font-semibold ${task.status === "IPTAL" ? "text-slate-400 line-through" : "text-slate-900"}`}>{task.title}</p>
-        <PriorityBadge value={task.priority} />
+  // Telefonda kart: başlık ("…" kartın sağ üst köşesinde, mobileCardActions); tür/hasta/sorumlu tek satır;
+  // tarih ile sık eylem aynı satırda (ayrı düğme sırası yok).
+  const mobileCard = (task: ClinicTask) => {
+    const primary = primaryAction(task);
+    const date = dateCell(task);
+    const names = assigneeNames(task);
+    return (
+      <div className="space-y-1">
+        <p className="flex min-h-7 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 pt-1">
+          <span className={`font-semibold ${task.status === "IPTAL" ? "text-slate-400 line-through" : "text-slate-900"}`}>{task.title}</span>
+          {task.status === "BEKLEMEDE" && <Badge tone="warning">Beklemede</Badge>}
+          <PriorityBadge value={task.priority} />
+        </p>
+        {/* Telefonda hasta ile sorumlu aynı biçimde yazılınca karışıyordu (canlı mobil U13): önekli. */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+          {task.type !== "DIGER" && <span>{TASK_TYPE_LABELS[task.type]}</span>}
+          {task.patient && <span>Hasta: <span className="font-semibold text-slate-700">{task.patient.fullName}</span></span>}
+          {task.vendorName && <span>Firma: {task.vendorName}</span>}
+          <span>Sorumlu: {names.length > 0 ? names.join(", ") : "atanmadı"}</span>
+        </div>
+        {task.details && <p className="truncate text-xs text-slate-500" title={task.details}>{task.details}</p>}
+        {(date || primary) && (
+          <div className="flex items-center gap-2">
+            <span className="min-w-0 flex-1 text-xs">{date}</span>
+            {primary}
+          </div>
+        )}
       </div>
-      {/* Telefonda hasta ile sorumlu aynı biçimde yazılınca karışıyordu (canlı mobil U13): önekli. */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
-        <span>{TASK_TYPE_LABELS[task.type]}</span>
-        {task.patient && <span>Hasta: <span className="font-semibold text-slate-700">{task.patient.fullName}</span></span>}
-        {task.vendorName && <span>Firma: {task.vendorName}</span>}
-        <span>Sorumlu: {assigneeNames(task).length > 0 ? assigneeNames(task).join(", ") : "atanmadı"}</span>
-        {task.status === "BEKLEMEDE" && <Badge tone="warning">Beklemede</Badge>}
-      </div>
-      <div className="flex items-center gap-2 pt-0.5">
-        <span className="text-xs">{dateCell(task)}</span>
-        <span className="flex-1" />
-        {rowActions(task)}
-      </div>
-    </div>
-  );
+    );
+  };
 
   const ownerValue = effectiveAssignee ? `kisi:${effectiveAssignee}` : effectiveScope;
   const ownerName = people.find((person) => person.id === effectiveAssignee)?.name;
@@ -433,8 +458,27 @@ export const TasksTab = forwardRef<TasksTabHandle, Props>(function TasksTab({ ac
       : status === "zamani-gelen" ? "Zamanı gelen göreviniz yok"
         : status === "tamamlanan" ? "Tamamlanan görev yok" : "İptal edilen görev yok";
 
-  return (
-    <div className="space-y-3">
+  // Listenin kartında üst şerit, Hasta aramaları ile aynı iki sıra: durum
+  // çipleri · arama ve kişi süzgeci.
+  const listToolbar = (
+    <>
+      <ChoiceCards
+        label="Görev durumu"
+        labelHidden
+        variant="pills"
+        className="px-3 pt-2.5 sm:px-4 sm:pt-3"
+        value={status}
+        onChange={onStatusChange}
+        options={[
+          { value: "yapilacak", label: "Yapılacak", count: openLoaded ? filteredOpen.length : undefined, countTone: overdueCount > 0 ? "critical" : "neutral" },
+          // Yalnız size atanmış ve zamanı gelmiş görev varken (ya da bağlantıyla açılınca) görünür.
+          ...(dueRows.length > 0 || status === "zamani-gelen"
+            ? [{ value: "zamani-gelen" as const, label: "Zamanı gelen", count: openLoaded ? dueRows.length : undefined, countTone: "warning" as const }]
+            : []),
+          { value: "tamamlanan", label: "Tamamlanan" },
+          { value: "iptal", label: "İptal edilen" },
+        ]}
+      />
       <Toolbar
         filters={canSeeAll ? (
           <Select aria-label="Kimin işleri" value={ownerValue} onChange={(event) => changeOwner(event.target.value)} className="sm:w-52">
@@ -446,22 +490,6 @@ export const TasksTab = forwardRef<TasksTabHandle, Props>(function TasksTab({ ac
         ) : undefined}
         filterCount={activeFilters.length}
       >
-        <ChoiceCards
-          label="Görev durumu"
-          labelHidden
-          variant="pills"
-          value={status}
-          onChange={onStatusChange}
-          options={[
-            { value: "yapilacak", label: "Yapılacak", count: openLoaded ? filteredOpen.length : undefined, countTone: overdueCount > 0 ? "critical" : "neutral" },
-            // Yalnız size atanmış ve zamanı gelmiş görev varken (ya da bağlantıyla açılınca) görünür.
-            ...(dueRows.length > 0 || status === "zamani-gelen"
-              ? [{ value: "zamani-gelen" as const, label: "Zamanı gelen", count: openLoaded ? dueRows.length : undefined, countTone: "warning" as const }]
-              : []),
-            { value: "tamamlanan", label: "Tamamlanan" },
-            { value: "iptal", label: "İptal edilen" },
-          ]}
-        />
         <SearchInput
           value={query}
           onChange={setQuery}
@@ -469,8 +497,16 @@ export const TasksTab = forwardRef<TasksTabHandle, Props>(function TasksTab({ ac
           wrapperClassName="flex-1 min-w-[200px]"
         />
       </Toolbar>
+    </>
+  );
+  const filterChips = activeFilters.length > 0 ? (
+    <div className="border-b border-slate-100 px-3 py-2 sm:px-4">
       <ActiveFilters filters={activeFilters} onClearAll={resetFilters} />
+    </div>
+  ) : undefined;
 
+  return (
+    <div className="space-y-3">
       <ListTable<ClinicTask>
         columns={columns}
         rows={rows}
@@ -481,7 +517,10 @@ export const TasksTab = forwardRef<TasksTabHandle, Props>(function TasksTab({ ac
         onRetry={refresh}
         onRowClick={(task) => setForm({ task, patient: null })}
         getRowAriaLabel={(task) => `${task.title} görevini aç`}
+        toolbar={listToolbar}
+        header={filterChips}
         mobileCard={mobileCard}
+        mobileCardActions={(task) => (menuItems(task).length > 0 ? <ActionMenu items={menuItems(task)} label={`${task.title}: işlemler`} /> : null)}
         emptyText={emptyText}
         emptyDescription={isFiltered ? "Arama metnini ya da kişiyi değiştirin." : undefined}
         emptyAction={isFiltered ? <Button size="sm" variant="secondary" onClick={resetFilters}>Filtreleri temizle</Button> : undefined}

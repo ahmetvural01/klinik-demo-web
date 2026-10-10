@@ -5,7 +5,6 @@ import { CalendarClock, CalendarPlus, FlaskConical, Stethoscope, Wallet } from "
 import { Button } from "@/components/ui/Button";
 import { Section } from "@/components/ui/Section";
 import { DescriptionList, type DescriptionItem } from "@/components/ui/DescriptionList";
-import { IconFrame, type IconAccent } from "@/components/ui/IconFrame";
 import { Textarea } from "@/components/ui/Input";
 import { formatDateText } from "@/components/ui/Money";
 import { showToastSafe } from "@/lib/toast-client";
@@ -33,12 +32,24 @@ type NextStep = {
   action?: { label: string; onClick?: () => void; href?: string };
 };
 
-const TONE_ACCENT: Record<NextStep["tone"], IconAccent> = {
-  critical: "rose",
-  warning: "amber",
-  info: "teal",
-  neutral: "neutral",
+// Kutusuz ikon: önceden her satırda renkli ikon kutusu (IconFrame) vardı.
+const TONE_ICON: Record<NextStep["tone"], string> = {
+  critical: "text-red-600",
+  warning: "text-amber-600",
+  info: "text-primary",
+  neutral: "text-slate-500",
 };
+
+/** "Fissür Örtülmesi (15), Fissür Örtülmesi (16)…" yerine "Fissür Örtülmesi: 15, 16 · …". */
+function groupedTreatments(exams: { treatmentName: string; toothNo?: string | null }[]) {
+  const groups = new Map<string, string[]>();
+  for (const exam of exams) {
+    const teeth = groups.get(exam.treatmentName) || [];
+    if (exam.toothNo) teeth.push(exam.toothNo);
+    groups.set(exam.treatmentName, teeth);
+  }
+  return Array.from(groups, ([name, teeth]) => (teeth.length > 0 ? `${name}: ${teeth.sort((a, b) => a.localeCompare(b, "tr", { numeric: true })).join(", ")}` : name)).join(" · ");
+}
 
 type NoteEntry = { at: string; author: string; text: string };
 
@@ -126,13 +137,14 @@ export function SummaryTab() {
           action: can("payments:write") ? { label: "Tahsilat al", onClick: () => openPayment() } : { label: "Taksitleri gör", onClick: () => selectTab("odeme") },
         });
       } else if (balance.totalDebt > 0.004) {
-        // Tutar başlıkta yazıyor; burada borcun nereden geldiği ve eylem.
+        // Tutar başlıkta ("Kalan borç"), dökümü Hesap sekmesinde: burada yalnız
+        // iş ve eylem (önceden aynı tutarlar burada ikinci kez yazıyordu).
         steps.push({
           id: "debt",
           icon: Wallet,
           tone: "warning",
           title: "Tahsilat bekliyor",
-          detail: `Yapılan tedaviler ${money(balance.discountedTotal)}${balance.discountRate > 0 ? ` (%${balance.discountRate} indirimli)` : ""}, alınan ${money(balance.totalPaid)}.`,
+          detail: "",
           action: can("payments:write") ? { label: "Tahsilat al", onClick: () => openPayment() } : { label: "Hesabı gör", onClick: () => selectTab("odeme") },
         });
       }
@@ -162,7 +174,7 @@ export function SummaryTab() {
         icon: Stethoscope,
         tone: "info",
         title: `${pending.length} yapılacak tedavi`,
-        detail: pending.slice(0, 3).map((exam) => `${exam.treatmentName}${exam.toothNo ? ` (${exam.toothNo})` : ""}`).join(", ") + (pending.length > 3 ? "…" : ""),
+        detail: groupedTreatments(pending),
         action: { label: "Tedaviye git", onClick: () => selectTab("tedavi") },
       });
       // Yapılacak tedavisi olup ileri randevusu olmayan hasta: kontrol randevusu.
@@ -229,7 +241,8 @@ export function SummaryTab() {
   const tcVisible = Boolean(data.tcNo) && data.tcNo !== "***";
   const generalItems: DescriptionItem[] = [
     { key: "tc", label: data.isForeigner ? "Kimlik / pasaport no" : "TC kimlik no", value: <span className="tabular-nums">{data.tcNo}</span>, hidden: !tcVisible },
-    { key: "birth", label: "Doğum tarihi", value: data.birthDate ? formatDateText(data.birthDate) : null },
+    // Boş alan satırı çizilmez ("Doğum tarihi —"); girilmemiş bilgi "Düzenle"den eklenir.
+    { key: "birth", label: "Doğum tarihi", value: data.birthDate ? formatDateText(data.birthDate) : null, hidden: !data.birthDate },
     { key: "insurance", label: "Kurum / sigorta", value: data.insurance, hidden: !data.insurance },
     { key: "discount", label: "İndirim", value: `%${data.discountRate}`, hidden: !(Number(data.discountRate) > 0) },
     { key: "profession", label: "Meslek", value: data.profession, hidden: !data.profession },
@@ -257,17 +270,16 @@ export function SummaryTab() {
           ) : (
             <ul className="divide-y divide-slate-100">
               {nextSteps.map((step) => (
-                <li key={step.id} className="flex flex-wrap items-center gap-3 px-4 py-3 sm:flex-nowrap">
-                  <IconFrame icon={step.icon} size="md" accent={TONE_ACCENT[step.tone]} />
-                  {/* Telefonda metin satırın tamamını alır, düğme alta (ml-11) iner:
-                      önceden düğme yanda kalıyor, metin ~150 px'e sıkışıp "tahsilatı
-                      Dr. X adına alın" gibi ayrıntı kesiliyordu. */}
-                  <div className="min-w-0 flex-1 basis-[calc(100%-2.75rem)] sm:basis-0">
+                // Telefonda da eylem sağda kalır (ayrı sıra yok): kutusuz küçük
+                // ikon sayesinde metne yer açıldı.
+                <li key={step.id} className="flex items-center gap-3 px-4 py-2.5">
+                  <step.icon className={`h-4 w-4 shrink-0 ${TONE_ICON[step.tone]}`} aria-hidden="true" />
+                  <div className="min-w-0 flex-1">
                     <p className="text-sm font-semibold text-slate-900">{step.title}</p>
                     {step.detail && <p className="mt-0.5 line-clamp-2 text-xs text-slate-500" title={step.detail}>{step.detail}</p>}
                   </div>
                   {step.action && (
-                    <Button variant="secondary" size="sm" className="ml-11 sm:ml-0" href={step.action.href} onClick={step.action.onClick}>
+                    <Button variant="secondary" size="sm" className="shrink-0" href={step.action.href} onClick={step.action.onClick}>
                       {step.action.label}
                     </Button>
                   )}
@@ -279,35 +291,38 @@ export function SummaryTab() {
 
         <Section title="Notlar">
           {canEditPatient && (
-            <form className="mb-4 space-y-2" onSubmit={(event) => { event.preventDefault(); void saveNote(); }}>
-              <Textarea
-                ref={noteRef}
-                id="hd-note"
-                rows={2}
-                maxLength={2000}
-                aria-label="Yeni not"
-                aria-invalid={noteError ? true : undefined}
-                aria-describedby={noteError ? "hd-note-error" : undefined}
-                value={noteText}
-                onChange={(event) => setNoteText(event.target.value)}
-                placeholder="Not yazın…"
-              />
-              {noteError && <p id="hd-note-error" role="alert" className="text-xs font-medium text-red-600">{noteError}</p>}
-              <div className="flex justify-end">
+            // Kaydet alanın yanında (ayrı satır yok); boşken "Henüz not yok"
+            // yazılmaz — boş alan bunu zaten söylüyor.
+            <form className="space-y-1.5" onSubmit={(event) => { event.preventDefault(); void saveNote(); }}>
+              <div className="flex items-end gap-2">
+                <Textarea
+                  ref={noteRef}
+                  id="hd-note"
+                  rows={2}
+                  maxLength={2000}
+                  aria-label="Yeni not"
+                  aria-invalid={noteError ? true : undefined}
+                  aria-describedby={noteError ? "hd-note-error" : undefined}
+                  value={noteText}
+                  onChange={(event) => setNoteText(event.target.value)}
+                  placeholder="Not yazın…"
+                  className="min-w-0 flex-1"
+                />
                 <Button type="submit" size="sm" variant="secondary" loading={noteSaving} disabled={!noteText.trim()}>Kaydet</Button>
               </div>
+              {noteError && <p id="hd-note-error" role="alert" className="text-xs font-medium text-red-600">{noteError}</p>}
             </form>
           )}
           {notes.length === 0 ? (
-            <p className="text-sm text-slate-500">Henüz not yok.</p>
+            !canEditPatient && <p className="text-sm text-slate-500">Henüz not yok.</p>
           ) : (
             <>
-              <ol className="space-y-2">
+              <ol className={`divide-y divide-slate-100 ${canEditPatient ? "mt-3 border-t border-slate-100" : ""}`}>
                 {visibleNotes.map((note, index) => (
-                  <li key={`${note.at}-${index}`} className="rounded-lg border border-slate-100 bg-slate-50/70 px-3 py-2">
+                  <li key={`${note.at}-${index}`} className="py-2.5 last:pb-0">
                     <p className="whitespace-pre-wrap text-sm text-slate-800">{note.text}</p>
                     {(note.at || note.author) && (
-                      <p className="mt-1 text-xs text-slate-500">{[note.at, note.author].filter(Boolean).join(" · ")}</p>
+                      <p className="mt-0.5 text-xs text-slate-500">{[note.at, note.author].filter(Boolean).join(" · ")}</p>
                     )}
                   </li>
                 ))}
@@ -333,25 +348,27 @@ export function SummaryTab() {
       <aside className="min-w-0">
         <Section title="Hasta bilgileri">
           <div className="space-y-5">
-            <DescriptionList layout="rows" items={generalItems} />
+            <div>
+              <DescriptionList layout="rows" items={generalItems} />
+              {/* SMS izni listenin bir satırı (ayrı "İletişim" alt başlığı yok). */}
+              {showSms && (
+                <div className="mt-2 border-t border-slate-100 pt-2">
+                  <SmsConsentCard
+                    patientId={patientId}
+                    preference={(data.smsPreference ?? null) as SmsPreference | null}
+                    latestToken={data.smsConsentTokens?.[0] ?? null}
+                    canResend={canEditPatient}
+                    onChanged={() => void reload(true)}
+                  />
+                </div>
+              )}
+            </div>
             {(hasHealthRows || !hasHealthFlags) && (
               <div>
                 <SubHeading>Sağlık</SubHeading>
                 {hasHealthRows
                   ? <DescriptionList layout="rows" items={healthItems} />
                   : <p className="text-sm text-slate-500">Bilinen sağlık uyarısı yok.</p>}
-              </div>
-            )}
-            {showSms && (
-              <div>
-                <SubHeading>İletişim</SubHeading>
-                <SmsConsentCard
-                  patientId={patientId}
-                  preference={(data.smsPreference ?? null) as SmsPreference | null}
-                  latestToken={data.smsConsentTokens?.[0] ?? null}
-                  canResend={canEditPatient}
-                  onChanged={() => void reload(true)}
-                />
               </div>
             )}
           </div>

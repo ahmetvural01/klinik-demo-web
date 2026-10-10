@@ -79,8 +79,9 @@ export function RecordCheckTab() {
 
   return (
     <div className="space-y-3">
-      <Toolbar actions={<Button variant="secondary" size="sm" icon={RefreshCw} loading={loading} onClick={() => void load()}>Yeniden kontrol et</Button>}>
-        <div className="flex min-w-0 flex-wrap items-center gap-2 px-1 text-sm text-slate-600">
+      {/* Özet şeridi çerçevesiz, sayfa zemininde (sadelik K1: ayrı kart değil). */}
+      <Toolbar bare actions={<Button variant="secondary" size="sm" icon={RefreshCw} loading={loading} onClick={() => void load()}>Yeniden kontrol et</Button>}>
+        <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-slate-600">
           {severityCounts.length > 0 && !loading && severityCounts.map((item) => (
             <Badge key={item.severity} tone={SEVERITY[item.severity].tone}>{item.count} {SEVERITY[item.severity].label.toLocaleLowerCase("tr-TR")}</Badge>
           ))}
@@ -107,13 +108,19 @@ export function RecordCheckTab() {
           />
         </div>
       ) : (
-        <div className={`space-y-3 transition-opacity ${loading ? "opacity-50" : ""}`}>
-          {groups.map(([area, areaIssues]) => (
-            <Section key={area} title={area}>
-              <div className="space-y-2">
+        // TEK kart (sadelik K1): bölümler (Laboratuvar, Stok…) kart içinde küçük
+        // grup başlığı; her konu ince çizgiyle ayrılmış katlanır satır. Önceden
+        // her bölüm ayrı kart, her konu o kartın içinde ayrı çerçeveli kutuydu.
+        <Section padding="none" className={`transition-opacity ${loading ? "opacity-50" : ""}`}>
+          {groups.map(([area, areaIssues], groupIndex) => (
+            <div key={area} role="group" aria-labelledby={`kayit-kontrol-${groupIndex}`} className={groupIndex > 0 ? "border-t border-slate-100" : ""}>
+              <h2 id={`kayit-kontrol-${groupIndex}`} className="bg-slate-50/70 px-4 py-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-500">{area}</h2>
+              <div className="divide-y divide-slate-100 border-t border-slate-100">
                 {areaIssues.map((issue) => (
                   <Disclosure
                     key={issue.id}
+                    // Çerçevesiz satır: grup içinde kutu-içinde-kutu olmasın.
+                    className="!rounded-none !border-0"
                     title={(
                       <>
                         <Badge tone={SEVERITY[issue.severity].tone}>{SEVERITY[issue.severity].label}</Badge>
@@ -143,9 +150,9 @@ export function RecordCheckTab() {
                   </Disclosure>
                 ))}
               </div>
-            </Section>
+            </div>
           ))}
-        </div>
+        </Section>
       )}
     </div>
   );

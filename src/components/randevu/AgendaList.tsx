@@ -79,6 +79,30 @@ export function quickStatusActions(appointment: Appointment): Array<{ status: st
   return actions;
 }
 
+/**
+ * Satırdaki TEK durum rozeti. Saati geçmiş ya da önceki günden açık kalmış
+ * randevuda durum ve uyarı aynı rozette yazar ("Planlandı · saati geçti");
+ * önceden yan yana iki rozet ("Planlandı" + "Saati geçti") satırı kalabalıklaştırıyordu.
+ */
+export function AppointmentStatusBadge({ appointment }: { appointment: Appointment }) {
+  const Icon = STATUS_ICON[displayStatus(appointment.status)];
+  const shortLabel = appointment.status === "GELDI" ? "Geldi" : statusChipLabel(appointment.status);
+  // Telefonda yalnız uyarı yazar (simge durumu gösterir): rozet telefon numarasıyla aynı satıra sığsın.
+  const warning = (text: string, title: string) => (
+    <Badge tone="warning" icon={Icon} title={title}>
+      <span className="sm:hidden">{text.charAt(0).toLocaleUpperCase("tr-TR")}{text.slice(1)}</span>
+      <span className="max-sm:hidden">{shortLabel} · {text}</span>
+    </Badge>
+  );
+  if (isUnresolvedPast(appointment.status, appointment.startAt)) {
+    return warning("işaretlenmedi", `${statusChipLabel(appointment.status)} — durumu işaretlenmedi`);
+  }
+  if (isLateUnmarked(appointment.status, appointment.startAt)) {
+    return warning("saati geçti", `${statusChipLabel(appointment.status)} — saati geçti, gelişi işaretlenmedi`);
+  }
+  return <Badge tone={statusTone(appointment.status)} icon={Icon}>{statusChipLabel(appointment.status)}</Badge>;
+}
+
 export function QuickStatusButton({ appointment, onChanged }: { appointment: Appointment; onChanged: (appointment: Appointment) => void }) {
   const [busy, setBusy] = useState<string | null>(null);
   const actions = quickStatusActions(appointment);
@@ -143,35 +167,39 @@ export function AgendaList({
   const rows = [...appointments].sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
   const treatmentOf = (row: Appointment) => treatmentMetaOf(parseNoteFull(row.note, treatments).treatment, treatments);
 
-  const patientCell = (row: Appointment) => {
+  const nameLine = (row: Appointment) => (
+    <p className="flex items-center gap-1.5 font-semibold text-slate-800">
+      <span className="truncate">{row.patient?.fullName || "Hasta"}</span>
+      {row.patient?.hasContagiousDisease && <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-red-600" aria-label="Bulaşıcı hastalık uyarısı" />}
+      {highlightId === row.id && <Badge tone="info" solid>Sıradaki</Badge>}
+    </p>
+  );
+
+  const phoneLink = (row: Appointment) => {
     const tel = canSeePhone ? phoneHref(row.patient?.phone) : null;
-    const treatment = compact ? treatmentOf(row) : null;
+    return tel ? <a href={tel} className="whitespace-nowrap font-semibold tabular-nums text-primary hover:underline">{formatPhoneDisplay(row.patient?.phone)}</a> : null;
+  };
+
+  // Hücre en çok iki satır: ad + (sıkı görünümde tedavi ·) telefon. Önceden
+  // anasayfada ad, tedavi ve telefon üç ayrı satırdı.
+  const patientCell = (row: Appointment) => {
+    const tel = phoneLink(row);
+    const treatment = compact ? treatmentOf(row).label : "";
     return (
       <div className="min-w-0">
-        <p className="flex items-center gap-1.5 font-semibold text-slate-800">
-          <span className="truncate">{row.patient?.fullName || "Hasta"}</span>
-          {row.patient?.hasContagiousDisease && <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-red-600" aria-label="Bulaşıcı hastalık uyarısı" />}
-          {highlightId === row.id && <Badge tone="info" solid>Sıradaki</Badge>}
-        </p>
-        {treatment && <p className="text-xs text-slate-500">{treatment.label}</p>}
-        {tel && (
-          <a href={tel} className="text-xs font-semibold text-primary hover:underline">{formatPhoneDisplay(row.patient?.phone)}</a>
+        {nameLine(row)}
+        {(treatment || tel) && (
+          <p className="text-xs text-slate-500">
+            {treatment}
+            {treatment && tel && <span aria-hidden="true"> · </span>}
+            {tel}
+          </p>
         )}
       </div>
     );
   };
 
-  const statusCell = (row: Appointment) => {
-    const Icon = STATUS_ICON[displayStatus(row.status)];
-    return (
-      <div className="flex flex-wrap items-center gap-1">
-        <Badge tone={statusTone(row.status)} icon={Icon}>{statusChipLabel(row.status)}</Badge>
-        {isUnresolvedPast(row.status, row.startAt)
-          ? <Badge tone="warning">İşaretlenmedi</Badge>
-          : isLateUnmarked(row.status, row.startAt) && <Badge tone="warning">Saati geçti</Badge>}
-      </div>
-    );
-  };
+  const statusCell = (row: Appointment) => <AppointmentStatusBadge appointment={row} />;
 
   const treatmentCell = (row: Appointment) => {
     const meta = treatmentOf(row);
@@ -202,7 +230,7 @@ export function AgendaList({
     },
   ];
 
-  return (
+  const table = (
     <ListTable
       columns={columns}
       rows={rows}
@@ -217,15 +245,21 @@ export function AgendaList({
       rowClassName={(row) => (row.status === "IPTAL" ? "opacity-60" : highlightId === row.id ? "bg-primary/[0.04]" : "")}
       emptyText={emptyText}
       emptyAction={emptyAction}
+      // Telefonda kart üç satır: ad · tedavi (ve doktor) · durum + telefon. Eylem
+      // düğmesi sağda, ayrı bir sıra oluşturmaz.
       mobileCard={(row) => {
-        const meta = [hideDoctor ? "" : row.doctor?.fullName || "", compact ? "" : treatmentOf(row).label].filter(Boolean).join(" · ");
+        const meta = [treatmentOf(row).label, hideDoctor ? "" : row.doctor?.fullName || ""].filter(Boolean).join(" · ");
+        const tel = phoneLink(row);
         return (
           <div className="flex items-start gap-3">
-            <div className="w-14 shrink-0 pt-0.5 text-sm font-bold tabular-nums text-slate-800">{formatTimeRange(row.startAt, row.endAt).split("–")[0]}</div>
+            <div className="w-12 shrink-0 pt-0.5 text-sm font-bold tabular-nums text-slate-800">{formatTimeRange(row.startAt, row.endAt).split("–")[0]}</div>
             <div className="min-w-0 flex-1 space-y-1">
-              {patientCell(row)}
-              {meta && <p className="text-xs text-slate-500">{meta}</p>}
-              {statusCell(row)}
+              {nameLine(row)}
+              {meta && <p className="truncate text-xs text-slate-500">{meta}</p>}
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                {statusCell(row)}
+                {tel}
+              </div>
             </div>
             {canCreate && <div className="shrink-0"><QuickStatusButton appointment={row} onChanged={onChanged} /></div>}
           </div>
@@ -233,4 +267,9 @@ export function AgendaList({
       }}
     />
   );
+
+  // Sıkı görünümde (anasayfa) sütun başlıkları yalnız ekran okuyucuya kalır:
+  // saat, hasta ve durum kendini anlatıyor; durum süzgeci şeridinin altında
+  // ikinci bir başlık şeridi oluşmasın.
+  return compact ? <div className="[&_thead]:sr-only">{table}</div> : table;
 }

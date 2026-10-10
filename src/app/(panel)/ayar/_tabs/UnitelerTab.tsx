@@ -2,8 +2,9 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { Armchair, Pencil, Plus, Power } from "lucide-react";
+import { ActionMenu, type ActionMenuItem } from "@/components/ui/ActionMenu";
 import { Badge } from "@/components/ui/Badge";
-import { Button, IconButton } from "@/components/ui/Button";
+import { Button } from "@/components/ui/Button";
 import { FormField } from "@/components/ui/FormField";
 import { FormModal } from "@/components/ui/FormModal";
 import { Input } from "@/components/ui/Input";
@@ -127,17 +128,25 @@ export default function KoltukOda({ canWrite, scopeBadge }: { canWrite: boolean;
     </span>
   );
 
-  // Yalnız işlem süren satır kilitlenir (önceden bir satırda işlem sürerken tüm satırlar kilitleniyordu).
-  const rowActions = (item: ClinicUnit) => (
-    <div className="flex shrink-0 justify-end gap-1.5">
-      <IconButton icon={Pencil} title="Düzenle" size="sm" disabled={actionId === item.id} onClick={() => openForm(item)} />
-      <IconButton icon={Power} title={item.isActive ? "Pasife al" : "Yeniden kullanıma aç"} size="sm" disabled={actionId === item.id} onClick={() => void toggleActive(item)} />
-    </div>
-  );
+  // Eylemler satır sonundaki çerçevesiz "…" menüsünde (sadelik K3). Yalnız
+  // işlem süren satır kilitlenir (önceden bir satırda işlem sürerken tüm satırlar kilitleniyordu).
+  const menuItems = (item: ClinicUnit): ActionMenuItem[] => [
+    { key: "edit", label: "Düzenle", icon: Pencil, disabled: actionId === item.id, onSelect: () => openForm(item) },
+    {
+      key: "toggle",
+      label: item.isActive ? "Pasife al" : "Yeniden kullanıma aç",
+      description: item.isActive ? "Yeni randevuda seçilemez" : undefined,
+      icon: Power,
+      disabled: actionId === item.id,
+      onSelect: () => void toggleActive(item),
+    },
+  ];
+  const rowMenu = (item: ClinicUnit) => <ActionMenu items={menuItems(item)} label={`${item.name} işlemleri`} />;
 
+  // Yalnız kullanılmış koltukta sayı görünür ("Kullanılmadı" her satırda tekrar etmez).
   const usageText = (item: ClinicUnit) => {
     const count = item._count?.appointments || 0;
-    return count ? `${count.toLocaleString("tr-TR")} randevu` : "Kullanılmadı";
+    return count ? `${count.toLocaleString("tr-TR")} randevu` : "";
   };
 
   const columns: ListTableColumn<ClinicUnit>[] = [
@@ -146,9 +155,9 @@ export default function KoltukOda({ canWrite, scopeBadge }: { canWrite: boolean;
       key: "appointments",
       header: "Randevu",
       align: "right",
-      render: (item) => <span className="text-sm tabular-nums text-slate-600">{usageText(item)}</span>,
+      render: (item) => <span className="text-sm tabular-nums text-slate-500">{usageText(item)}</span>,
     },
-    ...(canWrite ? [{ key: "actions", header: "", align: "right" as const, render: rowActions }] : []),
+    ...(canWrite ? [{ key: "actions", header: "İşlemler", align: "right" as const, render: rowMenu }] : []),
   ];
 
   return (
@@ -169,15 +178,16 @@ export default function KoltukOda({ canWrite, scopeBadge }: { canWrite: boolean;
         emptyText="Koltuk takibi kapalı"
         emptyDescription="Tek koltukta çalışıyorsanız boş bırakabilirsiniz."
         rowClassName={(item) => (item.isActive ? "" : "opacity-70")}
+        // Satıra tıklamak düzenleme penceresini açar (menüdeki "Düzenle" ile aynı).
+        onRowClick={canWrite ? openForm : undefined}
+        getRowAriaLabel={(item) => `${item.name} koltuk / odasını düzenle`}
         mobileCard={(item) => (
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              {nameCell(item)}
-              <p className="mt-1 text-xs text-slate-500">{usageText(item)}</p>
-            </div>
-            {canWrite && rowActions(item)}
+          <div className="flex min-h-7 min-w-0 items-center justify-between gap-3">
+            {nameCell(item)}
+            {usageText(item) && <span className="shrink-0 text-xs tabular-nums text-slate-500">{usageText(item)}</span>}
           </div>
         )}
+        mobileCardActions={canWrite ? rowMenu : undefined}
       />
 
       <FormModal

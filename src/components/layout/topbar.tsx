@@ -32,6 +32,7 @@ import { SearchInput } from "@/components/ui/SearchInput";
 import { Spinner } from "@/components/ui/Spinner";
 import { usePermissions } from "@/components/auth/PermissionProvider";
 import { BranchSwitcher, type BranchSwitcherData } from "@/components/layout/BranchSwitcher";
+import { BillingNoticeButton, BillingNoticeDetails, isFullBillingPath, useBillingNotice } from "@/components/layout/billing-status-banner";
 import { UserMenu } from "@/components/layout/header-menus";
 import { ShellPopover } from "@/components/layout/shell-popover";
 import {
@@ -399,7 +400,15 @@ export function Topbar({ user, branchContext }: Props) {
     return () => query.removeEventListener("change", update);
   }, []);
   const pendingTotal = rowsTotal + (isPhone ? waitingForMe : 0);
-  const pendingLabel = pendingTotal > 0 ? `Bekleyen işler, ${pendingTotal} iş` : "Bekleyen işler";
+  // Ödeme uyarısı (sadelik K7): şeridin görünmediği sayfalarda masaüstünde
+  // ayrı küçük gösterge; telefonda (dar üst bar) zil penceresinin başında.
+  const billingNotice = useBillingNotice();
+  const billingInShell = billingNotice?.tone === "warning" && !isFullBillingPath(pathname) ? billingNotice : null;
+  const billingInBell = Boolean(isPhone && billingInShell);
+  const pendingLabel = [
+    pendingTotal > 0 ? `Bekleyen işler, ${pendingTotal} iş` : "Bekleyen işler",
+    billingInBell ? "ödeme uyarısı var" : "",
+  ].filter(Boolean).join(", ");
 
   return (
     <>
@@ -530,6 +539,8 @@ export function Topbar({ user, branchContext }: Props) {
             </div>
           )}
 
+          <BillingNoticeButton className="hidden sm:block" />
+
           <div>
             <IconButton
               ref={pendingRef}
@@ -544,8 +555,17 @@ export function Topbar({ user, branchContext }: Props) {
               {/* Telefonda bekleme salonu da bu pencerededir; sayısı rozete eklenir. */}
               <CountBadge count={rowsTotal + waitingForMe} tone={hasCritical ? "critical" : "warning"} placement="corner" max={9} className="sm:hidden" />
               <CountBadge count={rowsTotal} tone={hasCritical ? "critical" : "warning"} placement="corner" max={9} className="hidden sm:inline-flex" />
+              {/* Telefonda ödeme uyarısı zil penceresindedir; sayaç yoksa küçük nokta görünür. */}
+              {billingInShell && rowsTotal + waitingForMe === 0 && (
+                <span aria-hidden="true" className="pointer-events-none absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-amber-500 ring-2 ring-white sm:hidden" />
+              )}
             </IconButton>
             <ShellPopover open={showPending} onClose={() => setShowPending(false)} anchorRef={pendingRef} title="Bekleyen işler" width={340}>
+              {billingInShell && (
+                <div className="border-b border-slate-100 sm:hidden">
+                  <BillingNoticeDetails notice={billingInShell} onNavigate={() => setShowPending(false)} />
+                </div>
+              )}
               {showWaitingInBell && (
                 <div className="border-b border-slate-100 sm:hidden">
                   <p className="px-4 pb-1 pt-3 text-xs font-semibold text-slate-500">Bekleme salonu</p>
@@ -590,7 +610,7 @@ export function Topbar({ user, branchContext }: Props) {
                   </div>
                 )
               ) : (
-                <div className={showWaitingInBell ? "hidden sm:block" : ""}>
+                <div className={showWaitingInBell || billingInShell ? "hidden sm:block" : ""}>
                   <EmptyState compact title="Bekleyen iş yok" />
                 </div>
               ))}

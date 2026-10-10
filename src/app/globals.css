@@ -61,7 +61,9 @@
   --font-display: var(--font-jakarta), var(--font-manrope), "Segoe UI", ui-sans-serif, system-ui, sans-serif;
   --radius-control: 0.5rem;
   --radius-surface: 0.5rem;
-  --shadow-rest: 0 1px 2px rgb(15 23 42 / 0.04), 0 4px 12px rgb(15 23 42 / 0.035);
+  /* Sadelik turu: dinlenen yüzeyde gölge neredeyse yok — katmanı tek ince
+     kenarlık ayırır (kutu içinde kutu hissi azalır). */
+  --shadow-rest: 0 1px 2px rgb(15 23 42 / 0.03);
   --shadow-surface: 0 1px 2px rgb(15 23 42 / 0.05), 0 8px 22px rgb(15 23 42 / 0.07);
   --shadow-raised: 0 2px 5px rgb(15 23 42 / 0.06), 0 14px 34px rgb(15 23 42 / 0.1);
   --shadow-popover: 0 10px 28px rgb(15 23 42 / 0.14), 0 3px 8px rgb(15 23 42 / 0.07);
@@ -118,7 +120,7 @@ body {
   border: 1px solid rgb(var(--app-border));
   border-radius: var(--radius-surface);
   background: rgb(var(--app-surface));
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.72), inset 0 -1px 0 rgb(15 23 42 / 0.018), var(--shadow-rest);
+  box-shadow: var(--shadow-rest);
 }
 
 @keyframes ui-page-icon-drift { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-1.5px) scale(1.03); } }
@@ -441,11 +443,36 @@ body {
   border: 1px solid rgb(var(--app-border));
   border-radius: var(--radius-surface);
   background: rgb(var(--app-surface));
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.8), var(--shadow-rest);
+  box-shadow: var(--shadow-rest);
 }
 
 .ui-toolbar > * {
   position: relative;
+}
+
+/* Sadelik K1: araç çubuğu ayrı kart olmaz. `bare` → sayfa zemininde
+   çerçevesiz; ListTable `toolbar` yuvasında listenin kartının üst şeridi
+   (çerçeve yuvada kendiliğinden kalkar, iç boşluk tablo hücreleriyle hizalı). */
+.ui-toolbar.ui-toolbar-bare,
+.ui-list-table-toolbar .ui-toolbar {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.ui-list-table-toolbar .ui-toolbar {
+  padding: 0.625rem 0.75rem;
+}
+.ui-list-table-toolbar .ui-active-filters {
+  padding: 0 0.75rem 0.625rem;
+}
+@media (min-width: 640px) {
+  .ui-list-table-toolbar .ui-toolbar {
+    padding: 0.75rem 1rem;
+  }
+  .ui-list-table-toolbar .ui-active-filters {
+    padding: 0 1rem 0.75rem;
+  }
 }
 
 .ui-form-field input:not([type="checkbox"]):not([type="radio"]),
@@ -1714,23 +1741,19 @@ th {
 .ui-select { padding-right: 2rem; cursor: pointer; }
 .ui-search-input::-webkit-search-cancel-button { display: none; }
 
+/* Sadelik K2: sekme çubuğu çerçeveli "hap" kutusu değil, alt çizgili düz
+   sekmedir. Çubuk tam genişlikte ince alt çizgi taşır; seçili sekme marka
+   renginde ve altında 2px çizgi. Kayan çubukta devamı olan kenar `data-more`
+   ile solar (mask — sayfa zemininde de kart içinde de çalışır). */
 .ui-tabs {
   position: relative;
   display: flex;
-  width: fit-content;
+  width: 100%;
   max-width: 100%;
   gap: 0.25rem;
   overflow-x: auto;
   scrollbar-width: none;
-  border: 1px solid rgb(var(--color-slate-200) / 0.8);
-  border-radius: 0.625rem;
-  background:
-    linear-gradient(to right, rgb(var(--color-slate-100)) 30%, rgb(var(--color-slate-100) / 0)) left center / 24px 100% no-repeat local,
-    linear-gradient(to left, rgb(var(--color-slate-100)) 30%, rgb(var(--color-slate-100) / 0)) right center / 24px 100% no-repeat local,
-    radial-gradient(farthest-side at 0 50%, rgb(15 23 42 / 0.16), transparent) left center / 10px 100% no-repeat scroll,
-    radial-gradient(farthest-side at 100% 50%, rgb(15 23 42 / 0.16), transparent) right center / 10px 100% no-repeat scroll,
-    rgb(var(--color-slate-100));
-  padding: 0.25rem;
+  box-shadow: inset 0 -1px 0 rgb(var(--color-slate-200));
 }
 .ui-tabs::-webkit-scrollbar { display: none; }
 .ui-tab {
@@ -1738,23 +1761,23 @@ th {
   flex-shrink: 0;
   align-items: center;
   gap: 0.375rem;
-  min-height: 36px;
+  min-height: 40px;
   white-space: nowrap;
-  border-radius: 0.5rem;
-  padding: 0.4375rem 0.875rem;
+  border-radius: 0.375rem 0.375rem 0 0;
+  padding: 0.5rem 0.75rem;
   font-size: 0.875rem;
   font-weight: 600;
   color: rgb(var(--color-slate-600));
-  transition: background-color 150ms var(--ease-product), color 150ms var(--ease-product), box-shadow 150ms var(--ease-product);
+  transition: color 150ms var(--ease-product), box-shadow 150ms var(--ease-product), background-color 150ms var(--ease-product);
 }
-.ui-tab:hover:not(:disabled) { background: rgb(var(--app-surface) / 0.65); color: rgb(var(--color-slate-900)); }
-.ui-tab[aria-selected="true"] {
-  background: rgb(var(--app-surface));
+.ui-tab:hover:not(:disabled) { color: rgb(var(--color-slate-900)); box-shadow: inset 0 -2px 0 rgb(var(--color-slate-300)); }
+.ui-tab[aria-selected="true"],
+.ui-tab[aria-selected="true"]:hover:not(:disabled) {
   color: rgb(var(--app-primary));
-  box-shadow: 0 1px 2px rgb(15 23 42 / 0.08), 0 1px 1px rgb(15 23 42 / 0.04);
+  box-shadow: inset 0 -2px 0 rgb(var(--app-primary));
 }
-/* Odak halkası tam marka rengi: %50'si gri zeminde ~2:1 kalıyordu (WCAG 1.4.11 en az 3:1). */
-.ui-tab:focus-visible { outline: 2px solid rgb(var(--app-primary)); outline-offset: 1px; }
+/* Odak halkası tam marka rengi (WCAG 1.4.11 en az 3:1); kayan çubukta kırpılmasın diye içe çizilir. */
+.ui-tab:focus-visible { outline: 2px solid rgb(var(--app-primary)); outline-offset: -2px; }
 .ui-tab:disabled { cursor: not-allowed; opacity: 0.5; }
 .ui-tab-count {
   display: inline-flex;
@@ -1768,9 +1791,51 @@ th {
   font-weight: 700;
   line-height: 1;
 }
-.ui-tabs-sm .ui-tab { min-height: 32px; padding: 0.3125rem 0.625rem; font-size: 0.8125rem; }
+/* size="sm": kart/pencere içi alt bölüm, görünüm seçimi — küçük, çerçevesiz
+   "segment". Alt çizgi yok (iki kat sekme görüntüsü olmasın); seçili olan
+   açık marka dolgusu taşır. */
+.ui-tabs-sm { width: fit-content; box-shadow: none; }
+.ui-tabs-sm .ui-tab {
+  min-height: 32px;
+  border-radius: 0.375rem;
+  padding: 0.3125rem 0.75rem;
+  font-size: 0.8125rem;
+  color: rgb(var(--color-slate-600));
+}
+.ui-tabs-sm .ui-tab:hover:not(:disabled) { background: rgb(var(--color-slate-100)); box-shadow: none; }
+.ui-tabs-sm .ui-tab[aria-selected="true"],
+.ui-tabs-sm .ui-tab[aria-selected="true"]:hover:not(:disabled) {
+  background: rgb(var(--app-primary) / 0.1);
+  color: rgb(var(--app-primary));
+  box-shadow: none;
+}
 }
 .panel-content .ui-tabs-sm .ui-tab { min-height: 32px; }
+
+/* Kayan sekme çubuğunda devamı olan kenar solar (Tabs.tsx `data-more`). */
+.ui-tabs[data-more="end"] {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+}
+.ui-tabs[data-more="start"] {
+  -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 32px), transparent);
+  mask-image: linear-gradient(to left, #000 calc(100% - 32px), transparent);
+}
+.ui-tabs[data-more="both"] {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent);
+}
+
+/* Sekme sayacı: bilgi amaçlı (neutral) sayı rozet değil, düz soluk rakam;
+   eylem gerektiren (critical/warning) sayaç renkli rozet olarak kalır. */
+.ui-tab .ui-tab-count-plain {
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  color: rgb(var(--color-slate-600));
+  font-weight: 500;
+}
+.ui-tab[aria-selected="true"] .ui-tab-count-plain { color: rgb(var(--app-primary) / 0.75); }
 
 /* Input/Select/SearchInput size="sm": `.panel-content input { font-size }`
    (daha özgül) küçük boyutu panelde 14px'e geri çekiyordu; pencerede 13px,
@@ -1831,6 +1896,74 @@ th {
     min-height: 36px;
     transform: translate(-50%, -50%);
   }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   SADELİK TURU (2026-10) — sözleşme "Sadelik kuralları" K1–K10.
+   Bütün sayfalar aynı anda rahatlasın diye ortak bileşenlerin görünümü
+   burada sadeleşir; sayfalarda yama yazılmaz.
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* K3 — Liste satırında (ListTable hücresi ve telefon kartı) çerçeveli ikon
+   düğme yok: IconButton'ın her tonu ve ActionMenu "…" çerçevesiz, zeminsiz
+   çizilir, rengini korur; zemin yalnız üzerine gelince belirir. Ölçü 32px
+   (satır 48px kalır); dokunmatikte dokunma alanı ::after ile 42px. */
+.ui-list-table :is(td, .ui-list-card) .ui-icon-button-premium[data-tone] {
+  width: 2rem;
+  height: 2rem;
+  border-color: transparent;
+  background-color: transparent;
+  box-shadow: none;
+}
+.ui-list-table :is(td, .ui-list-card) .ui-icon-button-premium:is([data-tone="neutral"], [data-tone="ghost"]) {
+  color: rgb(var(--color-slate-500));
+}
+.ui-list-table :is(td, .ui-list-card) .ui-icon-button-premium:is([data-tone="neutral"], [data-tone="ghost"]):hover:not(:disabled),
+.ui-list-table :is(td, .ui-list-card) .ui-icon-button-premium[data-tone="ghost"][aria-expanded="true"] {
+  background-color: rgb(var(--color-slate-100));
+  color: rgb(var(--color-slate-900));
+}
+.ui-list-table :is(td, .ui-list-card) .ui-icon-button-premium[data-tone="primary"] {
+  color: rgb(var(--app-primary));
+}
+.ui-list-table :is(td, .ui-list-card) .ui-icon-button-premium[data-tone="primary"]:hover:not(:disabled) {
+  background-color: rgb(var(--app-primary) / 0.1);
+}
+.ui-list-table :is(td, .ui-list-card) .ui-icon-button-premium[data-tone="danger"] {
+  color: rgb(220 38 38);
+}
+.ui-list-table :is(td, .ui-list-card) .ui-icon-button-premium[data-tone="danger"]:hover:not(:disabled) {
+  background-color: rgb(254 242 242);
+  color: rgb(185 28 28);
+}
+/* Satırdaki görünür eylem düğmesi ("Geldi", "Laboratuvardan geldi") gölgesiz: kutu kalabalığı azalır. */
+.ui-list-table :is(td, .ui-list-card) .ui-button-premium,
+.ui-list-table :is(td, .ui-list-card) .ui-button-premium:hover {
+  box-shadow: none;
+}
+/* Eylem sütunu içeriği kadar dar (ListTable `w-px`); eylemler tek satırda kalır, alt alta dizilmez. */
+.ui-list-table td.ui-list-actions-cell :where(.flex-wrap) {
+  flex-wrap: nowrap;
+}
+
+/* K6 — StatStrip: tek çerçeve içinde ince ayırıcılı şerit. Ayırıcı her
+   hücrenin sol ve üst dış gölgesidir; ilk sütun/satırdakiler çerçevenin
+   kırpma kenarında kalır. Böylece sarma (telefonda 2'li ızgara) ve boş
+   hücrede de çizgiler doğru düşer. Seçili süzgeç hücresi alttan marka çizgisi alır. */
+.ui-stat-strip-item {
+  box-shadow: -1px 0 0 0 rgb(var(--color-slate-200) / 0.8), 0 -1px 0 0 rgb(var(--color-slate-200) / 0.8);
+}
+.ui-stat-strip-item[data-active="true"] {
+  background-color: rgb(var(--app-primary) / 0.05);
+  box-shadow: -1px 0 0 0 rgb(var(--color-slate-200) / 0.8), 0 -1px 0 0 rgb(var(--color-slate-200) / 0.8), inset 0 -2px 0 0 rgb(var(--app-primary));
+}
+
+/* K1 — Kart içinde iç çerçeve yerine ayırıcı (Section.tsx SectionDivider):
+   Section'ın iç boşluğunu (px-4) aşarak kenardan kenara ince çizgi. */
+.ui-section-divider {
+  margin: 0.875rem -1rem;
+  border: 0;
+  border-top: 1px solid rgb(var(--color-slate-100));
 }
 
 /* iOS Safari 16px'ten küçük yazılı alana odaklanınca sayfayı yakınlaştırır.

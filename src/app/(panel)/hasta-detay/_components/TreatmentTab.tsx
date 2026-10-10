@@ -2,19 +2,21 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Check, ClipboardCheck, ExternalLink, Pencil, Plus, Printer, Stethoscope, XCircle } from "lucide-react";
+import { Check, ClipboardCheck, ExternalLink, NotebookPen, Pencil, Plus, Printer, Stethoscope, XCircle } from "lucide-react";
+import { ActionMenu } from "@/components/ui/ActionMenu";
 import { Badge } from "@/components/ui/Badge";
-import { Button, IconButton } from "@/components/ui/Button";
+import { Button } from "@/components/ui/Button";
 import { BulkActionBar } from "@/components/ui/BulkActionBar";
 import { Callout } from "@/components/ui/Callout";
 import { ChoiceCards } from "@/components/ui/ChoiceCards";
 import { Disclosure } from "@/components/ui/Disclosure";
-import { ListTable, EmptyValue, type ListTableColumn } from "@/components/ui/ListTable";
+import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { FormErrorBanner, FormField } from "@/components/ui/FormField";
 import { Input, Textarea } from "@/components/ui/Input";
 import { MoneyInput } from "@/components/ui/MoneyInput";
 import { SearchSelect } from "@/components/ui/SearchSelect";
 import { Section } from "@/components/ui/Section";
+import { Switch } from "@/components/ui/Switch";
 import { formatDateText } from "@/components/ui/Money";
 import { DoctorSelect } from "@/components/staff/DoctorSelect";
 import { OdontogramSelector, type ToothMarker } from "@/components/ToothChart";
@@ -35,6 +37,7 @@ import {
   money,
   multiplyMoney,
   roundMoney,
+  sharedName,
   toNumber,
   type Exam,
 } from "./patient-file-shared";
@@ -50,10 +53,6 @@ const AREA_OPTIONS: { value: Area; label: string }[] = [
   { value: "none", label: "Genel (diş yok)" },
 ];
 const AREA_LABEL: Record<Exclude<Area, "teeth" | "none">, string> = { upper: "Üst çene", lower: "Alt çene", all: "Tüm ağız" };
-const DENTITION_OPTIONS: { value: "adult" | "child"; label: string }[] = [
-  { value: "adult", label: "Daimi dişler" },
-  { value: "child", label: "Süt dişleri" },
-];
 
 const PLAN_STATUS: Record<string, { label: string; tone: "info" | "success" | "neutral" | "warning" }> = {
   PLANLANDI: { label: "Planlandı", tone: "neutral" },
@@ -375,39 +374,74 @@ export function TreatmentTab() {
     </div>
   );
 
+  // Satırda tek görünür eylem ("Yapıldı"); düzenleme ve iptal çerçevesiz
+  // "…" menüsünde. Önceden her satırda üç kutulu ikon (✓ ✎ ⊗) vardı.
+  const rowMenu = (exam: Exam, kind: "pending" | "done") => (
+    <ActionMenu
+      label={`${exam.treatmentName} için diğer işlemler`}
+      items={[
+        { key: "edit", label: "Düzenle", icon: Pencil, disabled: busy, onSelect: () => setEditing(exam) },
+        ...(canDelete ? [{
+          key: "cancel",
+          label: kind === "pending" ? "Yapılacaklardan çıkar" : "Tedaviyi iptal et",
+          icon: XCircle,
+          danger: true,
+          disabled: busy,
+          onSelect: () => void cancelRecords([exam.id], kind),
+        }] : []),
+      ]}
+    />
+  );
+
   const pendingActions = (exam: Exam) => (!canModify(exam) ? null : (
-    <div className="flex justify-end gap-1.5">
-      <IconButton icon={Check} title="Yapıldı olarak işaretle" tone="primary" size="sm" disabled={busy} onClick={() => void markDone([exam.id])} />
-      <IconButton icon={Pencil} title="Düzenle" size="sm" disabled={busy} onClick={() => setEditing(exam)} />
-      {canDelete && <IconButton icon={XCircle} title="Yapılacaklardan çıkar" tone="danger" size="sm" disabled={busy} onClick={() => void cancelRecords([exam.id], "pending")} />}
+    <div className="flex items-center justify-end gap-1">
+      {/* Telefonda yalnız ✓ (ad ekran okuyucuda kalır): satır eylemleri ayrı sıra oluşturmasın. */}
+      <Button size="sm" variant="secondary" icon={Check} aria-label="Yapıldı olarak işaretle" title="Yapıldı olarak işaretle" disabled={busy} onClick={() => void markDone([exam.id])}>
+        <span className="max-sm:sr-only">Yapıldı</span>
+      </Button>
+      {rowMenu(exam, "pending")}
     </div>
   ));
 
   const doneActions = (exam: Exam) => (!canModify(exam) ? null : (
-    <div className="flex justify-end gap-1.5">
-      <IconButton icon={Pencil} title="Düzenle" size="sm" disabled={busy} onClick={() => setEditing(exam)} />
-      {canDelete && <IconButton icon={XCircle} title="Tedaviyi iptal et" tone="danger" size="sm" disabled={busy} onClick={() => void cancelRecords([exam.id], "done")} />}
-    </div>
+    <div className="flex justify-end">{rowMenu(exam, "done")}</div>
   ));
 
-  const baseColumns = (amountHint?: string): ListTableColumn<Exam>[] => [
+  // Bütün satırlar aynı hekimdeyse hekim adı başlık altında bir kez yazılır.
+  const pendingDoctor = sharedName(pending, (exam) => exam.doctor?.fullName);
+  const doneDoctor = sharedName(done, (exam) => exam.doctor?.fullName);
+
+  const baseColumns = (sameDoctor: string | null, amountHint?: string): ListTableColumn<Exam>[] => [
     { key: "date", header: "Tarih", render: (exam) => <span className="whitespace-nowrap">{formatDateText(exam.diagnosedAt)}</span> },
     { key: "treatment", header: "Tedavi", render: treatmentCell },
-    { key: "tooth", header: "Diş", render: (exam) => exam.toothNo || <EmptyValue /> },
-    { key: "doctor", header: "Hekim", render: (exam) => exam.doctor?.fullName || <EmptyValue /> },
+    // Boş değer (genel tedavi, hekimsiz kayıt) boş kalır; "—" yazılmaz.
+    { key: "tooth", header: "Diş", render: (exam) => exam.toothNo || null },
+    ...(sameDoctor ? [] : [{ key: "doctor", header: "Hekim", render: (exam: Exam) => exam.doctor?.fullName || null }]),
     { key: "amount", header: "Tutar", align: "right", headerHint: amountHint, render: (exam) => <span className="tabular-nums">{money(exam.amount)}</span> },
   ];
 
-  const examCard = (exam: Exam, actions: ReactNode) => (
-    <div className="space-y-1.5">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-sm font-semibold text-slate-800">{exam.treatmentName}{exam.toothNo ? <span className="font-normal text-slate-500"> · Diş {exam.toothNo}</span> : null}</p>
-          <p className="text-xs text-slate-500">{[formatDateText(exam.diagnosedAt), exam.doctor?.fullName].filter(Boolean).join(" · ")}</p>
-        </div>
-        <span className="shrink-0 text-sm font-semibold tabular-nums">{money(exam.amount)}</span>
+  const listSubtitle = (count: number, total: number, sameDoctor: string | null) => (
+    count > 0 ? [`Toplam ${money(total)}`, sameDoctor ? `Hekim: ${sameDoctor}` : ""].filter(Boolean).join(" · ") : undefined
+  );
+
+  // Telefon kartı: solda ad + kısa satır, sağda tutar ve eylemler (alt alta
+  // ayrı eylem sırası yok).
+  const examCard = (exam: Exam, actions: ReactNode, sameDoctor: string | null) => (
+    <div className="flex items-start justify-between gap-3">
+      <div className="min-w-0">
+        <p className="text-sm font-semibold text-slate-800">
+          {exam.treatmentName}
+          {examStatusKind(exam.status) === "in_progress" && <Badge tone="info" className="ml-1.5 align-[1px]">Devam ediyor</Badge>}
+        </p>
+        <p className="mt-0.5 text-xs text-slate-500">
+          {/* "Üst çene / Tüm ağız" kayıtlarında "Diş" öneki yazılmaz. */}
+          {[exam.toothNo ? (/^\d/.test(exam.toothNo) ? `Diş ${exam.toothNo}` : exam.toothNo) : "", formatDateText(exam.diagnosedAt), sameDoctor ? "" : exam.doctor?.fullName].filter(Boolean).join(" · ")}
+        </p>
       </div>
-      {canWrite && <div className="flex justify-end">{actions}</div>}
+      <div className="flex shrink-0 flex-col items-end gap-1">
+        <span className="text-sm font-semibold tabular-nums text-slate-800">{money(exam.amount)}</span>
+        {canWrite && actions}
+      </div>
     </div>
   );
 
@@ -433,26 +467,16 @@ export function TreatmentTab() {
         <Section title="Tedavi ekle" icon={Stethoscope}>
           <div className="space-y-4">
             <FormErrorBanner message={formError} />
-            <div className="flex flex-wrap items-end gap-x-6 gap-y-3">
-              <ChoiceCards
-                label="Nereye"
-                labelHidden
-                variant="pills"
-                options={AREA_OPTIONS}
-                value={area}
-                onChange={(value) => { setArea(value); clearError("teeth"); }}
-              />
-              {area === "teeth" && (
-                <ChoiceCards
-                  label="Diş şeması"
-                  labelHidden
-                  variant="pills"
-                  options={DENTITION_OPTIONS}
-                  value={dentition}
-                  onChange={(value) => { setDentition(value); setTeeth([]); }}
-                />
-              )}
-            </div>
+            {/* Tek çip sırası (nereye); daimi/süt seçimi şemanın altında tek anahtar.
+                Önceden iki ayrı çip sırası ve şema için iki kat çerçeve vardı. */}
+            <ChoiceCards
+              label="Nereye"
+              labelHidden
+              variant="pills"
+              options={AREA_OPTIONS}
+              value={area}
+              onChange={(value) => { setArea(value); clearError("teeth"); }}
+            />
             {area === "teeth" && (
               <div className="space-y-2">
                 <OdontogramSelector
@@ -460,6 +484,15 @@ export function TreatmentTab() {
                   dentition={dentition}
                   markers={markers}
                   showLegend
+                  frame={false}
+                  legendExtra={(
+                    <Switch
+                      label="Süt dişleri"
+                      checked={dentition === "child"}
+                      onChange={(child) => { setDentition(child ? "child" : "adult"); setTeeth([]); }}
+                      className="!items-center !gap-2 [&_label]:text-xs"
+                    />
+                  )}
                   onToggle={(num) => {
                     setTeeth((current) => (current.includes(num) ? current.filter((item) => item !== num) : [...current, num]));
                     clearError("teeth");
@@ -504,16 +537,36 @@ export function TreatmentTab() {
               </FormField>
             </div>
 
-            <Disclosure title="Klinik not" summary={note.trim() ? "Not yazıldı" : "İsteğe bağlı"} open={noteOpen} onOpenChange={setNoteOpen}>
-              <Textarea id="hd-exam-note" rows={2} maxLength={1000} aria-label="Klinik not" value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ön teşhis, planlama veya uygulama notu" />
-            </Disclosure>
+            {/* Klinik not çerçeveli katlanır kutu yerine tek satırlık bağlantı;
+                açılınca alan formun içinde (kart içinde ikinci kutu yok). */}
+            {noteOpen && (
+              <FormField label="Klinik not" htmlFor="hd-exam-note" hint="İsteğe bağlı">
+                <Textarea id="hd-exam-note" rows={2} maxLength={1000} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ön teşhis, planlama veya uygulama notu" />
+              </FormField>
+            )}
 
             <div className="flex flex-col gap-3 border-t border-slate-100 pt-3 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-sm text-slate-600" aria-live="polite">
-                {totalText
-                  ? <>{targets.length} kayıt{targets.length > 1 ? <> × {money(amount)}</> : null} = <b className="text-slate-900">{totalText}</b></>
-                  : "Tedavi ve diş seçince toplam burada görünür."}
-              </p>
+              <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+                {!noteOpen && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={NotebookPen}
+                    className="-ml-3"
+                    onClick={() => {
+                      setNoteOpen(true);
+                      // Düğme alanla yer değiştirir; odak yazılacak alana geçer.
+                      window.requestAnimationFrame(() => document.getElementById("hd-exam-note")?.focus());
+                    }}
+                  >
+                    Klinik not ekle
+                  </Button>
+                )}
+                {/* Toplam yalnız hesaplanınca yazar (boş bilgi cümlesi yok); bölge hep yerinde. */}
+                <p className="text-sm text-slate-600" aria-live="polite">
+                  {totalText ? <>{targets.length} kayıt{targets.length > 1 ? <> × {money(amount)}</> : null} = <b className="text-slate-900">{totalText}</b></> : null}
+                </p>
+              </div>
               <div className="flex flex-col gap-2 sm:flex-row">
                 <Button variant="secondary" icon={ClipboardCheck} loading={adding === "done"} disabled={Boolean(adding)} onClick={() => void addRecords("done")}>Yapıldı olarak kaydet</Button>
                 <Button icon={Plus} loading={adding === "pending"} disabled={Boolean(adding)} onClick={() => void addRecords("pending")}>Yapılacaklara ekle</Button>
@@ -525,7 +578,7 @@ export function TreatmentTab() {
 
       <ListTable
         title="Yapılacak tedaviler"
-        subtitle={pending.length > 0 ? `Toplam ${money(pendingTotal)}` : undefined}
+        subtitle={listSubtitle(pending.length, pendingTotal, pendingDoctor)}
         header={canWrite ? (
           <BulkActionBar
             count={selectedPending.length}
@@ -540,7 +593,7 @@ export function TreatmentTab() {
           />
         ) : undefined}
         columns={[
-          ...baseColumns("Yapılacak tedavinin tutarı, “Yapıldı” işaretlenince hastanın borcuna eklenir."),
+          ...baseColumns(pendingDoctor, "Yapılacak tedavinin tutarı, “Yapıldı” işaretlenince hastanın borcuna eklenir."),
           ...(canWrite ? [{ key: "actions", header: "", align: "right" as const, render: pendingActions }] : []),
         ]}
         rows={pending}
@@ -550,19 +603,19 @@ export function TreatmentTab() {
         emptyIcon={Stethoscope}
         emptyText="Yapılacak tedavi yok"
         emptyDescription={canWrite ? "Muayenede bulunan tedavileri yukarıdan “Yapılacaklara ekle” ile kaydedin; yapılınca tutarı borca eklenir." : undefined}
-        mobileCard={(exam) => examCard(exam, pendingActions(exam))}
+        mobileCard={(exam) => examCard(exam, pendingActions(exam), pendingDoctor)}
       />
 
       <ListTable
         title="Yapılan tedaviler"
-        subtitle={done.length > 0 ? `Toplam ${money(doneTotal)}` : undefined}
+        subtitle={listSubtitle(done.length, doneTotal, doneDoctor)}
         actions={done.length > 0 ? <Button size="sm" variant="secondary" icon={Printer} onClick={() => setPrintOpen(true)}>Tedavi raporu</Button> : undefined}
-        columns={[...baseColumns(), ...(canWrite ? [{ key: "actions", header: "", align: "right" as const, render: doneActions }] : [])]}
+        columns={[...baseColumns(doneDoctor), ...(canWrite ? [{ key: "actions", header: "", align: "right" as const, render: doneActions }] : [])]}
         rows={done}
         rowKey={(exam) => exam.id}
         emptyIcon={ClipboardCheck}
         emptyText="Yapılan tedavi yok"
-        mobileCard={(exam) => examCard(exam, doneActions(exam))}
+        mobileCard={(exam) => examCard(exam, doneActions(exam), doneDoctor)}
       />
 
       {canReadPlans && (canPlan || treatmentPlans.length > 0) && (
@@ -573,11 +626,11 @@ export function TreatmentTab() {
         >
           <div className="space-y-3">
             {treatmentPlans.length > 0 ? (
-              <ul className="divide-y divide-slate-100 rounded-lg border border-slate-100">
+              <ul className="-mx-3.5 divide-y divide-slate-100">
                 {treatmentPlans.map((plan) => {
                   const status = PLAN_STATUS[plan.status] || { label: plan.status, tone: "neutral" as const };
                   return (
-                    <li key={plan.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm">
+                    <li key={plan.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3.5 py-2 text-sm">
                       {/* Plan sayfası ?planId= ile doğrudan bu planı açar. */}
                       <Link href={`${planListHref}&planId=${encodeURIComponent(plan.id)}`} className="min-w-0 flex-1 font-medium text-slate-800 hover:text-primary hover:underline">{plan.title}</Link>
                       <span className="text-xs text-slate-500">{plan.steps.length} adım</span>

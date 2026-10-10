@@ -40,8 +40,12 @@ export type PageSkeletonProps = {
   headerStats?: number;
   /** Sekme sayısı (0 = sekme yok). */
   tabs?: number;
-  /** Arama + filtre çubuğu (Toolbar). */
-  toolbar?: boolean;
+  /**
+   * Arama + filtre çubuğu (Toolbar). `true`: ayrı çerçeveli şerit; `"inset"`:
+   * tablo kartının üst şeridi (ListTable `toolbar` yuvası); `"bare"`: çerçevesiz
+   * sayfa zemininde (Toolbar `bare`). İskelet gerçek düzene uymazsa açılışta ekran kayar.
+   */
+  toolbar?: boolean | "inset" | "bare";
   /** Özet sayaç kutusu sayısı (StatStrip; 0 = yok). Yalnız sayfada gerçekten sayaç varsa verin. */
   stats?: number;
   /**
@@ -147,16 +151,16 @@ export function HeaderSkeleton({ action = true, stats = 0 }: { action?: boolean;
   );
 }
 
-/** Tabs ile aynı kap (.ui-tabs) ve 36px sekme yüksekliği; ilki seçili görünür. */
+/** Tabs ile aynı kap (.ui-tabs, alt çizgili düz sekme) ve 40px sekme yüksekliği; ilki seçili (altı çizili) görünür. */
 export function TabsSkeleton({ count = 3 }: { count?: number }) {
   return (
     <div className="ui-tabs">
       {Array.from({ length: Math.max(1, count) }).map((_, index) => (
         <span
           key={index}
-          className={`flex h-9 shrink-0 items-center rounded-lg px-3.5 ${index === 0 ? "bg-[rgb(var(--app-surface))] shadow-[0_1px_2px_rgb(15_23_42/0.08)]" : ""}`}
+          className={`flex h-10 shrink-0 items-center px-3 ${index === 0 ? "shadow-[inset_0_-2px_0_rgb(var(--app-primary)/0.35)]" : ""}`}
         >
-          <Skeleton className={`h-3 ${index === 0 ? "" : ON_TINT} ${TAB_WIDTHS[index % TAB_WIDTHS.length]}`} />
+          <Skeleton className={`h-3 ${ON_TINT} ${TAB_WIDTHS[index % TAB_WIDTHS.length]}`} />
         </span>
       ))}
     </div>
@@ -167,9 +171,9 @@ export function TabsSkeleton({ count = 3 }: { count?: number }) {
  * Toolbar ile aynı kap ve sarma düzeni: arama kutusu (genişler), iki filtre,
  * sağda ikincil düğme (mobilde gizli). Dar alanda filtreler alt satıra iner.
  */
-export function ToolbarSkeleton() {
+export function ToolbarSkeleton({ bare = false }: { bare?: boolean } = {}) {
   return (
-    <div className="ui-toolbar flex flex-col gap-2 p-2.5 sm:flex-row sm:flex-wrap sm:items-center">
+    <div className={`ui-toolbar flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center ${bare ? "ui-toolbar-bare p-0" : "p-2.5"}`}>
       <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
         <FieldBox className="sm:min-w-[220px] sm:flex-1" bar="w-2/5" />
         <div className="grid grid-cols-2 gap-2 sm:flex">
@@ -182,15 +186,15 @@ export function ToolbarSkeleton() {
   );
 }
 
-/** StatStrip ile aynı kutu ve sütun düzeni. */
+/** StatStrip ile aynı tek çerçeveli şerit, ayırıcılar ve sütun düzeni. */
 export function StatsSkeleton({ count = 4 }: { count?: number }) {
   const shown = Math.max(1, count);
   const columns = Math.min(Math.max(shown, 2), 5) as 2 | 3 | 4 | 5;
   return (
-    // StatStrip gibi: telefonda tek sayıda kutuda son kutu tam genişlik.
-    <div className={`grid gap-2 ${STAT_COLUMNS[columns]} max-sm:[&>*:last-child:nth-child(odd)]:col-span-2`}>
+    // StatStrip gibi: telefonda tek sayıda hücrede son hücre tam genişlik.
+    <div className={`ui-stat-strip ui-surface grid overflow-hidden ${STAT_COLUMNS[columns]} max-sm:[&>*:last-child:nth-child(odd)]:col-span-2`}>
       {Array.from({ length: shown }).map((_, index) => (
-        <div key={index} className="rounded-[var(--radius-surface)] border border-slate-200 bg-white px-3.5 py-3">
+        <div key={index} className="ui-stat-strip-item px-4 py-3">
           <div className="flex h-4 items-center"><Skeleton className={`h-3 max-w-full ${LABEL_WIDTHS[index % LABEL_WIDTHS.length]}`} /></div>
           <Skeleton className="mt-1.5 h-6 w-16" />
         </div>
@@ -203,11 +207,13 @@ export function StatsSkeleton({ count = 4 }: { count?: number }) {
  * ListTable'ın kendi yükleme görünümüyle birebir: aynı kap, başlık satırı ve
  * TableRowsSkeleton; mobilde (md altı) mobil kart yüklenirken görünen şeritler.
  */
-export function TableSkeleton({ rows = 8, columns = 5 }: { rows?: number; columns?: number }) {
+export function TableSkeleton({ rows = 8, columns = 5, toolbar = false }: { rows?: number; columns?: number; toolbar?: boolean }) {
   const rowCount = clamp(rows, 8, 1, 50);
   const columnCount = clamp(columns, 5, 1, 12);
   return (
     <div className="ui-list-table ui-surface overflow-hidden">
+      {/* ListTable "toolbar" yuvasıyla aynı: araç çubuğu listenin kartının üst şeridi. */}
+      {toolbar && <div className="ui-list-table-toolbar border-b border-slate-100"><ToolbarSkeleton /></div>}
       <div className="md:hidden">
         <ListRowSkeleton rows={Math.min(rowCount, 5)} />
       </div>
@@ -216,7 +222,7 @@ export function TableSkeleton({ rows = 8, columns = 5 }: { rows?: number; column
           <thead>
             <tr className="border-b border-slate-200/80">
               {Array.from({ length: columnCount }).map((_, index) => (
-                <th key={index} className="px-3 py-2.5 text-left sm:px-4">
+                <th key={index} className="px-3 py-2 text-left sm:px-4">
                   <span aria-hidden="true" className={`ui-skeleton-shimmer inline-block h-2.5 rounded bg-slate-100 align-middle ${HEAD_WIDTHS[index % HEAD_WIDTHS.length]}`} />
                 </th>
               ))}
@@ -403,7 +409,7 @@ export function PageSkeleton({
 }: PageSkeletonProps) {
   const content = (kind: PageSkeletonBody) => (
     <>
-      {kind === "table" && <TableSkeleton rows={rows} columns={columns} />}
+      {kind === "table" && <TableSkeleton rows={rows} columns={columns} toolbar={toolbar === "inset"} />}
       {kind === "cards" && <CardsSkeleton count={rows} columns={columns} />}
       {/* Sayfa formunda kartta düğme yok (SaveBar yalnız değişiklikte çıkar); iskelet düğme yeri çizerse veri gelince ekran zıplar. */}
       {kind === "form" && <FormSkeleton fields={rows} columns={columns} footer={false} />}
@@ -420,7 +426,8 @@ export function PageSkeleton({
       <div aria-hidden="true" className="space-y-4">
         {header && <HeaderSkeleton action={headerAction} stats={headerStats} />}
         {tabs > 0 && <TabsSkeleton count={tabs} />}
-        {toolbar && <ToolbarSkeleton />}
+        {/* "inset": araç çubuğu tablo kartının içinde; "bare": çerçevesiz sayfa zemininde. */}
+        {toolbar && toolbar !== "inset" && <ToolbarSkeleton bare={toolbar === "bare"} />}
         {stats > 0 && <StatsSkeleton count={stats} />}
         {responsive ? (
           <>

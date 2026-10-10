@@ -106,18 +106,19 @@ export function SmsMessageEditor({
       </FormField>
       {!disabled && placeholders.length > 0 && (
         // role="group": aria-label rolsüz <div>'de yok sayılıyordu. Çipler ortak
-        // Button (odak halkası, dokunma alanı ve görünüm her yerdekiyle aynı).
-        <div role="group" className="flex flex-wrap items-center gap-1.5" aria-label="Metne bilgi ekle">
-          <span className="text-xs font-semibold text-slate-500">Ekle:</span>
+        // Button (odak halkası, dokunma alanı ve görünüm her yerdekiyle aynı);
+        // çerçevesiz (ghost): metin kutusunun altında üç ayrı kutu kalabalığı olmasın.
+        <div role="group" className="flex flex-wrap items-center gap-x-0.5 gap-y-1" aria-label="Metne bilgi ekle">
+          <span className="mr-1 text-xs font-semibold text-slate-500">Ekle:</span>
           {placeholders.map((p) => (
-            <Button key={p.token} variant="secondary" size="sm" icon={Plus} onClick={() => insertPlaceholder(p)}>
+            <Button key={p.token} variant="ghost" size="sm" icon={Plus} onClick={() => insertPlaceholder(p)}>
               {p.label}
             </Button>
           ))}
         </div>
       )}
       {previewVisible && (
-        <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+        <div className="rounded-lg bg-slate-50 px-3 py-2.5">
           <p className="mb-1 text-xs font-semibold text-slate-500">Hastaya böyle görünür</p>
           <p className="whitespace-pre-wrap break-words text-sm leading-5 text-slate-800">
             {value.trim() ? renderSmsPreview(toStoredText(value), { ...previewContext, ...blanks }) : "Metin yazdıkça örnek bir hastaya nasıl görüneceği burada çıkar."}

@@ -2,8 +2,9 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { CreditCard, Pencil, Plus, Power, Trash2 } from "lucide-react";
+import { ActionMenu, type ActionMenuItem } from "@/components/ui/ActionMenu";
 import { Badge } from "@/components/ui/Badge";
-import { Button, IconButton } from "@/components/ui/Button";
+import { Button } from "@/components/ui/Button";
 import { FormField } from "@/components/ui/FormField";
 import { FormModal } from "@/components/ui/FormModal";
 import { Input } from "@/components/ui/Input";
@@ -142,24 +143,37 @@ export default function PosTab({ canWrite, scopeBadge }: { canWrite: boolean; sc
     </span>
   );
 
+  // Yalnız kullanılmış cihazda kullanım yazılır ("Kullanılmadı" her satırda tekrar etmez).
   const usageText = (device: PosDevice) => (device.paymentCount
     ? `${device.paymentCount.toLocaleString("tr-TR")} tahsilat`
-    : device.inUse ? "Taksitte kullanıldı" : "Kullanılmadı");
+    : device.inUse ? "Taksitte kullanıldı" : "");
 
-  const rowActions = (device: PosDevice) => (
-    <div className="flex shrink-0 justify-end gap-1.5">
-      <IconButton icon={Pencil} title="Adını düzenle" size="sm" disabled={busyId === device.id} onClick={() => { setFormError(null); setForm({ id: device.id, name: device.name }); }} />
-      <IconButton icon={Power} title={device.isActive ? "Pasife al" : "Yeniden kullanıma aç"} size="sm" disabled={busyId === device.id} onClick={() => void toggleActive(device)} />
-      {device.inUse === false && (
-        <IconButton icon={Trash2} title="Sil (hiç kullanılmadı)" tone="danger" size="sm" disabled={busyId === device.id} onClick={() => void remove(device)} />
-      )}
-    </div>
-  );
+  const openEdit = (device: PosDevice) => { setFormError(null); setForm({ id: device.id, name: device.name }); };
+
+  // Eylemler satır sonundaki çerçevesiz "…" menüsünde (sadelik K3).
+  const menuItems = (device: PosDevice): ActionMenuItem[] => {
+    const busy = busyId === device.id;
+    return [
+      { key: "edit", label: "Adını düzenle", icon: Pencil, disabled: busy, onSelect: () => openEdit(device) },
+      {
+        key: "toggle",
+        label: device.isActive ? "Pasife al" : "Yeniden kullanıma aç",
+        description: device.isActive ? "Yeni tahsilatta seçilemez" : undefined,
+        icon: Power,
+        disabled: busy,
+        onSelect: () => void toggleActive(device),
+      },
+      ...(device.inUse === false
+        ? [{ key: "delete", label: "Sil", description: "Hiç kullanılmadı", icon: Trash2, danger: true, separatorBefore: true, disabled: busy, onSelect: () => void remove(device) }]
+        : []),
+    ];
+  };
+  const rowMenu = (device: PosDevice) => <ActionMenu items={menuItems(device)} label={`${device.name} işlemleri`} />;
 
   const columns: ListTableColumn<PosDevice>[] = [
     { key: "name", header: "Cihaz", render: nameCell },
-    { key: "usage", header: "Kullanım", align: "right", render: (device) => <span className="text-sm tabular-nums text-slate-600">{usageText(device)}</span> },
-    ...(canWrite ? [{ key: "actions", header: "", align: "right" as const, render: rowActions }] : []),
+    { key: "usage", header: "Kullanım", align: "right", render: (device) => <span className="text-sm tabular-nums text-slate-500">{usageText(device)}</span> },
+    ...(canWrite ? [{ key: "actions", header: "İşlemler", align: "right" as const, render: rowMenu }] : []),
   ];
 
   return (
@@ -182,15 +196,16 @@ export default function PosTab({ canWrite, scopeBadge }: { canWrite: boolean; sc
         emptyText="Henüz POS cihazı yok"
         emptyDescription={canWrite ? "Kartla tahsilat alıyorsanız kullandığınız POS cihazını ekleyin." : undefined}
         rowClassName={(device) => (device.isActive ? "" : "opacity-70")}
+        // Satıra tıklamak ad düzenleme penceresini açar (menüdeki "Adını düzenle" ile aynı).
+        onRowClick={canWrite ? openEdit : undefined}
+        getRowAriaLabel={(device) => `${device.name} POS cihazının adını düzenle`}
         mobileCard={(device) => (
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              {nameCell(device)}
-              <p className="mt-1 text-xs text-slate-500">{usageText(device)}</p>
-            </div>
-            {canWrite && rowActions(device)}
+          <div className="flex min-h-7 min-w-0 items-center justify-between gap-3">
+            {nameCell(device)}
+            {usageText(device) && <span className="shrink-0 text-xs tabular-nums text-slate-500">{usageText(device)}</span>}
           </div>
         )}
+        mobileCardActions={canWrite ? rowMenu : undefined}
       />
 
       <FormModal

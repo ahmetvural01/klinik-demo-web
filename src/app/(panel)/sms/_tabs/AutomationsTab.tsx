@@ -452,9 +452,11 @@ export default function AutomationsTab({
               muted={paymentOff}
               actions={textAction("ODEME_VADE_GUNU")}
               toggle={{
-                checked: schedule.onDueDate,
-                // Grup kapalıyken alt anahtar da kapalı (önceden soluk ama
-                // tıklanabiliyordu ve "hatırlatma gidecek" diyordu).
+                // Grup kapalıyken alt anahtar KAPALI görünür ve pasiftir (önceden
+                // soluk ama "açık" görünüyordu; hiçbir hatırlatma gitmezken
+                // gidecekmiş gibi okunuyordu). Kayıtlı seçim korunur: grup
+                // açılınca anahtar eski durumuyla geri gelir.
+                checked: !paymentOff && schedule.onDueDate,
                 disabled: busy || paymentOff,
                 label: "Vade gününde hatırlatma gönderilsin",
                 onChange: (on) => setSchedule("due", { onDueDate: on }, { paymentReminderOnDueDate: on },
@@ -469,7 +471,7 @@ export default function AutomationsTab({
               muted={paymentOff}
               actions={scheduleAction("ODEME_GECIKTI", openOverdue)}
               toggle={{
-                checked: schedule.overdueEnabled,
+                checked: !paymentOff && schedule.overdueEnabled,
                 disabled: busy || paymentOff,
                 label: "Geciken ödeme hatırlatması gönderilsin",
                 onChange: (on) => setSchedule("overdue", { overdueEnabled: on }, { paymentReminderOverdueEnabled: on },

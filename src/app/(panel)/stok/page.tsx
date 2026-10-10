@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
-import { MinusCircle, Plus, RotateCcw, ShoppingCart } from "lucide-react";
+import { Archive, MinusCircle, Pencil, Plus, Printer, RotateCcw, ShoppingCart } from "lucide-react";
 import { showToastSafe } from "@/lib/toast-client";
 import { confirmDialog } from "@/lib/confirm-client";
 import { formatCurrency } from "@/lib/format";
@@ -12,10 +12,11 @@ import { Tabs, useTabParam } from "@/components/ui/Tabs";
 import { Toolbar, ActiveFilters } from "@/components/ui/Toolbar";
 import { SearchInput } from "@/components/ui/SearchInput";
 import { Select } from "@/components/ui/Input";
-import { Button, IconButton } from "@/components/ui/Button";
+import { Button } from "@/components/ui/Button";
+import { ActionMenu, type ActionMenuItem } from "@/components/ui/ActionMenu";
 import { ExportMenu } from "@/components/ui/ExportMenu";
 import { Badge } from "@/components/ui/Badge";
-import { ListTable, EmptyValue, type ListSort, type ListTableColumn } from "@/components/ui/ListTable";
+import { ListTable, type ListSort, type ListTableColumn } from "@/components/ui/ListTable";
 import { DateText, Money, formatDateText } from "@/components/ui/Money";
 import { createSceneIllustration } from "@/components/ui/SceneIllustration";
 import { usePermissions } from "@/components/auth/PermissionProvider";
@@ -340,22 +341,39 @@ function StokContent() {
     );
   };
 
-  function rowActions(item: StockItem) {
+  // Satırın "…" menüsü (K3): sipariş, düzenleme, barkod ve arşiv — ayrıntı
+  // penceresindeki aynı eylemler, satırdan da bir tık uzakta. Görünür tek eylem "Stoktan düş".
+  const menuItems = (item: StockItem): ActionMenuItem[] => [
+    ...(canOrder && isCriticalStock(item)
+      ? [{ key: "order", label: "Sipariş ver", description: "Son tedarikçi ve fiyatla", icon: ShoppingCart, onSelect: () => openOrder(item) }]
+      : []),
+    ...(canWriteStock ? [{ key: "edit", label: "Düzenle", icon: Pencil, onSelect: () => { setFormItem(item); setFormOpen(true); } }] : []),
+    { key: "barcode", label: "Barkod yazdır", icon: Printer, onSelect: () => void printBarcode(item) },
+    ...(canDeleteStock ? [{ key: "archive", label: "Arşivle", icon: Archive, danger: true, separatorBefore: true, onSelect: () => void archiveItem(item) }] : []),
+  ];
+
+  const rowMenu = (item: StockItem) => (view === "arsiv" ? null : (
+    <ActionMenu label={`${item.name} için diğer işlemler`} items={menuItems(item)} />
+  ));
+
+  function primaryAction(item: StockItem) {
     if (view === "arsiv") {
       return canDeleteStock ? (
         <Button size="sm" variant="secondary" icon={RotateCcw} onClick={() => void restoreItem(item)}>Geri al</Button>
       ) : null;
     }
+    return canWriteStock ? (
+      <Button size="sm" variant="secondary" icon={MinusCircle} onClick={() => openMove(item)} aria-label={`${item.name} stoktan düş`}>
+        Stoktan düş
+      </Button>
+    ) : null;
+  }
+
+  function rowActions(item: StockItem) {
     return (
-      <div className="flex justify-end gap-1.5">
-        {canOrder && isCriticalStock(item) && (
-          <IconButton icon={ShoppingCart} title={`${item.name} için sipariş ver (son tedarikçi ve fiyatla)`} tone="primary" size="sm" onClick={() => openOrder(item)} />
-        )}
-        {canWriteStock && (
-          <Button size="sm" variant="secondary" icon={MinusCircle} onClick={() => openMove(item)} aria-label={`${item.name} stoktan düş`}>
-            Stoktan düş
-          </Button>
-        )}
+      <div className="flex items-center justify-end gap-1">
+        {primaryAction(item)}
+        {rowMenu(item)}
       </div>
     );
   }
@@ -383,7 +401,8 @@ function StokContent() {
       render: (item) => (
         <div className="whitespace-nowrap">
           <span className={`font-bold tabular-nums ${isLowStock(item) ? "text-red-700" : "text-slate-900"}`}>{formatQuantity(item.quantity, item.unit)}</span>
-          <p className="text-xs text-slate-500">min {item.minQuantity}</p>
+          {/* Minimum tanımlanmamışsa (0) yazılmaz (K5). */}
+          {item.minQuantity > 0 && <p className="text-xs text-slate-500">min {item.minQuantity}</p>}
         </div>
       ),
     },
@@ -392,9 +411,10 @@ function StokContent() {
       key: "expiry",
       header: "En yakın SKT",
       sortKey: "expiry",
+      // Boş değer yazılmaz (K5): SKT'siz ürünün hücresi boş kalır, "—" ile dolmaz.
       render: (item) => {
         const expiry = itemExpiry(item);
-        if (!expiry) return <EmptyValue />;
+        if (!expiry) return null;
         const state = expiryState(expiry);
         return <DateText value={expiry} className={state === "expired" ? "font-semibold text-red-700" : state === "soon" ? "font-semibold text-amber-700" : "text-slate-600"} />;
       },
@@ -404,7 +424,9 @@ function StokContent() {
       header: "Ort. maliyet",
       align: "right" as const,
       sortKey: "cost",
-      render: (item: StockItem) => <Money value={item.averageUnitPrice ?? null} className="text-slate-700" />,
+      render: (item: StockItem) => (item.averageUnitPrice === null || item.averageUnitPrice === undefined
+        ? null
+        : <Money value={item.averageUnitPrice} className="text-slate-700" />),
     }] : []),
     {
       key: "actions",
@@ -453,39 +475,39 @@ function StokContent() {
         ]}
       />
 
-      <Toolbar
-        filters={(
-          <div className="sm:w-48">
-            <Select aria-label="Kategori" value={category} onChange={(event) => setCategory(event.target.value)}>
-              <option value="">Tüm kategoriler</option>
-              {categoryOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-            </Select>
-          </div>
-        )}
-        filterCount={activeFilters.length}
-        actions={<ExportMenu onExcel={exportCsv} disabled={filtered.length === 0} disabledReason="Dışa aktarılacak ürün yok" />}
-      >
-        <SearchInput
-          value={search}
-          onChange={setSearch}
-          onKeyDown={onSearchKeyDown}
-          placeholder="Ürün, barkod, raf veya tedarikçi ara"
-          slashShortcut
-          wrapperClassName="flex-1 min-w-[220px]"
-        />
-      </Toolbar>
-      {(activeFilters.length > 0 || (singleMatch && canWriteStock)) && (
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <ActiveFilters filters={activeFilters} onClearAll={() => setCategory("")} />
-          {singleMatch && canWriteStock && (
-            <p className="text-xs text-slate-500">
-              <kbd className="rounded border border-slate-200 bg-white px-1 font-sans text-[11px] text-slate-600">Enter</kbd> ile <span className="font-semibold text-slate-700">{singleMatch.name}</span> stoktan düşülür
-            </p>
-          )}
-        </div>
-      )}
-
       <ListTable<StockItem>
+        // Arama, kategori ve dışa aktarma listenin kartının üst şeridi (K1: ayrı kart değil).
+        toolbar={(
+          <>
+            <Toolbar
+              filters={(
+                <div className="sm:w-48">
+                  <Select aria-label="Kategori" value={category} onChange={(event) => setCategory(event.target.value)}>
+                    <option value="">Tüm kategoriler</option>
+                    {categoryOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </Select>
+                </div>
+              )}
+              filterCount={activeFilters.length}
+              actions={<ExportMenu onExcel={exportCsv} disabled={filtered.length === 0} disabledReason="Dışa aktarılacak ürün yok" />}
+            >
+              <SearchInput
+                value={search}
+                onChange={setSearch}
+                onKeyDown={onSearchKeyDown}
+                placeholder="Ürün, barkod, raf veya tedarikçi ara"
+                slashShortcut
+                wrapperClassName="flex-1 min-w-[220px]"
+              />
+            </Toolbar>
+            <ActiveFilters filters={activeFilters} onClearAll={() => setCategory("")} />
+            {singleMatch && canWriteStock && (
+              <p className="px-3 pb-2.5 text-xs text-slate-500 sm:px-4 sm:pb-3">
+                <kbd className="rounded border border-slate-200 bg-white px-1 font-sans text-[11px] text-slate-600">Enter</kbd> ile <span className="font-semibold text-slate-700">{singleMatch.name}</span> stoktan düşülür
+              </p>
+            )}
+          </>
+        )}
         columns={columns}
         rows={pageRows}
         rowKey={(item) => item.id}
@@ -503,23 +525,38 @@ function StokContent() {
         sort={activeSort}
         onSortChange={(key) => setSort({ key, dir: activeSort.key === key && activeSort.dir === "asc" ? "desc" : "asc" })}
         pager={filtered.length > PAGE_SIZE ? { page, pageCount, pageSize: PAGE_SIZE, total: filtered.length, onPageChange: setPage } : undefined}
+        // Telefon kartı (K9): "…" menüsü sağ üstte; "Stoktan düş" miktar
+        // satırının yanında — eylemler ayrı bir sıra oluşturmaz, ad sıkışmaz.
+        mobileCardActions={view === "arsiv" ? undefined : (item) => rowMenu(item)}
         mobileCard={(item) => {
           const expiry = itemExpiry(item);
           const expiryWarn = expiry ? expiryState(expiry) : null;
+          const action = primaryAction(item);
+          const badges = statusBadges(item);
+          // SKT tarihi rozetin yanında (miktar satırı uzayıp sarmasın).
+          const sktDate = expiry && (expiryWarn === "expired" || expiryWarn === "soon")
+            ? <DateText value={expiry} className={`text-xs font-semibold ${expiryWarn === "expired" ? "text-red-700" : "text-amber-700"}`} />
+            : null;
           return (
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                {/* Telefonda ad kesilmez, alt satıra geçer (yanında eylem düğmeleri var). */}
-                <p className="break-words font-semibold text-slate-900">{item.name}</p>
-                <p className="text-xs text-slate-500">
-                  <span className={isLowStock(item) ? "font-bold text-red-700" : "font-semibold text-slate-700"}>{formatQuantity(item.quantity, item.unit)}</span>
-                  {` · min ${item.minQuantity}`}
-                  {item.storageLocation ? ` · Raf ${item.storageLocation}` : ""}
-                  {expiry && (expiryWarn === "expired" || expiryWarn === "soon") ? <> · SKT <DateText value={expiry} /></> : null}
-                </p>
-                <div className="mt-1">{statusBadges(item)}</div>
+            <div className="space-y-1">
+              {/* Telefonda ad kesilmez, alt satıra geçer. */}
+              <p className="break-words font-semibold text-slate-900">{item.name}</p>
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0 space-y-1">
+                  <p className="text-xs text-slate-500">
+                    <span className={isLowStock(item) ? "font-bold text-red-700" : "font-semibold text-slate-700"}>{formatQuantity(item.quantity, item.unit)}</span>
+                    {item.minQuantity > 0 ? ` · min ${item.minQuantity}` : ""}
+                    {item.storageLocation ? ` · Raf ${item.storageLocation}` : ""}
+                  </p>
+                  {(badges || sktDate) && (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {badges}
+                      {sktDate}
+                    </div>
+                  )}
+                </div>
+                {action && <div className="shrink-0">{action}</div>}
               </div>
-              <div className="shrink-0">{rowActions(item)}</div>
             </div>
           );
         }}

@@ -29,7 +29,7 @@ export type ActionMenuItem = {
 type ActionMenuProps = {
   items: ActionMenuItem[];
   /**
-   * "icon": satır sonundaki "…" düğmesi (ekran okuyucu adı `label`).
+   * "icon": satır sonundaki çerçevesiz "…" düğmesi (ekran okuyucu adı `label`).
    * "button": görünür etiketli ikincil düğme ("İşlem ekle ▾").
    */
   trigger?: "icon" | "button";
@@ -157,8 +157,11 @@ export function ActionMenu({
   if (visible.length === 0) return null;
 
   // `.panel-content button { min-height: 36px }` kare ikon düğmesini bozmasın.
+  // "…" tetikleyicisi ÇERÇEVESİZ (sadelik K3): satırda/kartta kutu kalabalığı
+  // yapmaz; zemin yalnız üzerine gelince ve menü açıkken belirir. Liste
+  // satırında (ListTable) 32px'e iner (globals.css).
   const triggerClass = trigger === "icon"
-    ? `ui-icon-button-premium inline-flex shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 !min-h-0 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${size === "sm" ? "h-9 w-9" : "h-10 w-10"}`
+    ? `ui-icon-button-premium inline-flex shrink-0 items-center justify-center rounded-md border border-transparent text-slate-500 !min-h-0 !shadow-none hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${open ? "bg-slate-100 text-slate-900" : "bg-transparent"} ${size === "sm" ? "h-9 w-9" : "h-10 w-10"}`
     // sm, Button sm ile aynı 36px: pencere ve çekmecede de (panel tabanı dışında) satırdaki düğmelerle hizalı.
     : `inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md border font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${size === "sm" ? "h-9 px-3 text-xs" : "h-10 px-4 text-sm"} ${variant === "primary" ? "border-primary-800/25 bg-primary text-white hover:bg-primary-800" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50"}`;
   // Telefonda kare ikon düğmesi (üst bardaki "Yeni" gibi): etiket görsel olarak gizlenir, adı kalır.
@@ -193,6 +196,7 @@ export function ActionMenu({
         aria-controls={open ? menuId : undefined}
         aria-label={trigger === "icon" ? label : undefined}
         title={trigger === "icon" ? label : undefined}
+        data-tone={trigger === "icon" ? "ghost" : undefined}
         onClick={() => setOpen((current) => !current)}
         className={`${triggerClass} ${iconOnlyClass} ${className}`}
       >

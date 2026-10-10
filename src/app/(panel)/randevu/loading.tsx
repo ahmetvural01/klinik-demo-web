@@ -5,5 +5,5 @@ import { PageSkeleton } from "@/components/ui/PageSkeleton";
 // görünümüyle açılır: ilk karede takvim görünüp listeye geçmesin diye telefonda
 // liste, geniş ekranda takvim iskeleti (CSS ile seçilir).
 export default function Loading() {
-  return <PageSkeleton toolbar body="calendar" mobileBody="table" columns={3} label="Randevular yükleniyor" />;
+  return <PageSkeleton toolbar="bare" body="calendar" mobileBody="table" columns={3} label="Randevular yükleniyor" />;
 }

@@ -12,7 +12,7 @@ import { ActionMenu, type ActionMenuItem } from "@/components/ui/ActionMenu";
 import { Badge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Input";
-import { EmptyValue, ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { formatDateText } from "@/components/ui/Money";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { SearchInput } from "@/components/ui/SearchInput";
@@ -20,7 +20,7 @@ import { StatusPage } from "@/components/ui/StatusPage";
 import { ActiveFilters, Toolbar, type ActiveFilter } from "@/components/ui/Toolbar";
 import { cachedGet } from "@/lib/client-cache";
 import { formatCurrency } from "@/lib/format";
-import { formatPatientPhone, healthFlagLabels, maskedIdentityLabel, patientFacts, patientTelHref, type HealthFlagKey } from "@/lib/patient-display";
+import { formatPatientPhone, healthFlagLabels, patientTelHref, type HealthFlagKey } from "@/lib/patient-display";
 import type { StaffLike } from "@/lib/staff-roles";
 import { showToastSafe } from "@/lib/toast-client";
 import { rememberPatientListAddress } from "@/components/patient/patient-list-address";
@@ -72,32 +72,44 @@ function initialValuesFromQuery(query: string): PatientFormInitialValues | undef
   return { fullName: text };
 }
 
-/** Pozitif bakiye = hastanın borcu (kırmızı); negatif = hastanın avansı (yeşil). */
+/**
+ * Pozitif bakiye = hastanın borcu (kırmızı); negatif = hastanın avansı (yeşil).
+ * Bakiye yoksa hücre boş kalır (her satırda "—" yazılmaz).
+ */
 function BalanceText({ value }: { value: number | null | undefined }) {
-  if (value === null || value === undefined || Math.abs(value) < 0.005) return <EmptyValue />;
+  if (value === null || value === undefined || Math.abs(value) < 0.005) return null;
   if (value > 0) return <span className="font-semibold tabular-nums text-red-700">{formatCurrency(value)} borç</span>;
   return <span className="tabular-nums text-emerald-700">{formatCurrency(Math.abs(value))} avans</span>;
 }
 
 /**
- * Satırdaki sağlık işaretleri. Bulaşıcı hastalık enfeksiyon kontrolü için
- * ayrı ve belirgin kalır (notu listeye gelmez); diğer uyarılar tek rozette,
- * hangi uyarı olduğu üzerine gelince görünür. "% indirim" rozeti kaldırıldı:
- * uyarı değil, hasta dosyasında ve Muhasebe'de görünüyor.
+ * Adın yanındaki sağlık işaretleri (ayrı satır açmaz). Bulaşıcı hastalık
+ * enfeksiyon kontrolü için ayrı ve belirgin kalır (notu listeye gelmez);
+ * diğer uyarılar tek rozette, hangi uyarı olduğu üzerine gelince görünür.
  */
 function RiskBadges({ patient }: { patient: Patient }) {
   const labels = healthFlagLabels(patient).filter((label) => label !== "Bulaşıcı hastalık");
   const hasRisk = labels.length > 0 || Boolean(patient.hasMedicalRisk);
   if (!patient.hasContagiousDisease && !hasRisk) return null;
   return (
-    <div className="mt-1 flex flex-wrap gap-1">
+    <>
       {patient.hasContagiousDisease && <Badge tone="critical" solid icon={ShieldAlert}>Bulaşıcı hastalık</Badge>}
       {hasRisk && (
         <Badge tone="critical" icon={ShieldAlert} title={labels.length > 0 ? labels.join(", ") : "İlaç, ameliyat ya da hastalık notu var"}>
           Sağlık uyarısı
         </Badge>
       )}
-    </div>
+    </>
+  );
+}
+
+/** Ad + (varsa) sağlık rozetleri tek satırda. */
+function PatientName({ patient }: { patient: Patient }) {
+  return (
+    <p className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+      <span className="font-bold text-slate-900">{patient.fullName}</span>
+      <RiskBadges patient={patient} />
+    </p>
   );
 }
 
@@ -404,9 +416,13 @@ function HastaContent() {
   // Yetkiye göre gelen ek alanlar: yetki yoksa API alanı hiç göndermez.
   const showVisits = patients.some((patient) => patient.nextAppointment !== undefined);
   const showBalance = patients.some((patient) => patient.balance !== undefined);
+  // Sonraki randevuların doktoru tek kişiyse ("Dr. Demo Doktor" her satırda) ad gösterilmez.
+  const showNextDoctor = new Set(patients.map((patient) => patient.nextAppointment?.doctorName).filter(Boolean)).size > 1;
 
-  const menuItems = (patient: Patient): ActionMenuItem[] => {
+  /** `withBooking`: telefonda "Randevu ver" de menüde (kartta ayrı düğme sırası olmasın). */
+  const menuItems = (patient: Patient, withBooking = false): ActionMenuItem[] => {
     const items: ActionMenuItem[] = [];
+    if (withBooking && canBookAppointments) items.push({ key: "book", label: "Randevu ver", icon: CalendarPlus, href: appointmentHref(patient) });
     if (canWritePatients) items.push({ key: "edit", label: "Bilgileri düzenle", icon: Pencil, onSelect: () => setEditPatientId(patient.id) });
     if (canMessage) {
       items.push({
@@ -429,29 +445,26 @@ function HastaContent() {
     return items;
   };
 
-  // Satırda en sık eylem görünür (randevu ver); düzenleme, mesaj ve nadir
-  // arşivleme "…" menüsünde. Önceden her satırda kırmızı arşiv düğmesi vardı.
+  // Satırda en sık eylem görünür (randevu ver — çerçevesiz ikon); düzenleme,
+  // mesaj ve nadir arşivleme "…" menüsünde.
   const rowActions = (patient: Patient) => (
-    <div className="flex items-center justify-end gap-1.5">
+    <div className="flex items-center justify-end gap-1">
       {canBookAppointments && (
-        <IconButton icon={CalendarPlus} title="Randevu ver" tone="primary" href={appointmentHref(patient)} />
+        <IconButton icon={CalendarPlus} title="Randevu ver" tone="ghost" size="sm" href={appointmentHref(patient)} />
       )}
       <ActionMenu items={menuItems(patient)} label={`${patient.fullName} için diğer işlemler`} />
     </div>
   );
 
-  const factsLine = (patient: Patient) =>
-    [patientFacts(patient), maskedIdentityLabel(patient)].filter(Boolean).join(" · ");
-
+  // Hasta hücresi tek satır: ad + sağlık rozeti. Cinsiyet ve maskeli TC her
+  // satırda tekrar ediyordu; hasta dosyasında görünür, TC ile arama sürer.
   const columns: ListTableColumn<Patient>[] = [
     {
       key: "fullName",
       header: "Hasta",
       render: (patient) => (
         <div className="min-w-0" data-patient-id={patient.id}>
-          <p className="font-bold text-slate-900">{patient.fullName}</p>
-          <p className="text-xs text-slate-500">{factsLine(patient) || "—"}</p>
-          <RiskBadges patient={patient} />
+          <PatientName patient={patient} />
         </div>
       ),
     },
@@ -462,7 +475,7 @@ function HastaContent() {
       render: (patient: Patient) => {
         const text = formatPatientPhone(patient.phone, patient.phoneCountryCode);
         const href = patientTelHref(patient.phone, patient.phoneCountryCode);
-        if (!text) return <EmptyValue />;
+        if (!text) return null;
         return href
           ? <a href={href} className="tabular-nums text-slate-700 hover:text-primary hover:underline">{text}</a>
           : <span className="tabular-nums text-slate-700">{text}</span>;
@@ -474,16 +487,24 @@ function HastaContent() {
       cellClassName: "whitespace-nowrap",
       render: (patient: Patient) => patient.lastVisitAt
         ? <span className="tabular-nums text-slate-600">{formatDateText(patient.lastVisitAt)}</span>
-        : <EmptyValue />,
+        : null,
     }, {
       key: "nextAppointment",
       header: "Sonraki randevu",
       render: (patient: Patient) => patient.nextAppointment ? (
         <div className="whitespace-nowrap">
-          <p className="font-semibold tabular-nums text-slate-800">{formatDateText(patient.nextAppointment.startAt, "datetime")}</p>
-          {patient.nextAppointment.doctorName && <p className="text-xs text-slate-500">{patient.nextAppointment.doctorName}</p>}
+          <p
+            className="font-semibold tabular-nums text-slate-800"
+            title={!showNextDoctor && patient.nextAppointment.doctorName ? patient.nextAppointment.doctorName : undefined}
+          >
+            {formatDateText(patient.nextAppointment.startAt, "datetime")}
+          </p>
+          {/* Listedeki randevuların hepsi aynı doktordaysa ad her satırda tekrar etmez (üzerine gelince görünür). */}
+          {patient.nextAppointment.doctorName && (showNextDoctor
+            ? <p className="text-xs text-slate-500">{patient.nextAppointment.doctorName}</p>
+            : <span className="sr-only"> · {patient.nextAppointment.doctorName}</span>)}
         </div>
-      ) : <EmptyValue />,
+      ) : null,
     }] : []),
     ...(showBalance ? [{
       key: "balance",
@@ -500,40 +521,35 @@ function HastaContent() {
     },
   ];
 
+  // Telefonda kart: ad (+ sağlık rozeti); sağ üst köşede "…" (Randevu ver
+  // dahil, ListTable mobileCardActions); altında telefon ve bakiye tek satır;
+  // varsa sonraki randevu. Eylemler ayrı bir düğme sırası oluşturmaz.
   const mobileCard = (patient: Patient) => {
-    const phoneText = formatPatientPhone(patient.phone, patient.phoneCountryCode);
-    const phoneHref = patientTelHref(patient.phone, patient.phoneCountryCode);
+    const phoneText = hidePhone ? "" : formatPatientPhone(patient.phone, patient.phoneCountryCode);
+    const phoneHref = hidePhone ? null : patientTelHref(patient.phone, patient.phoneCountryCode);
+    const hasBalance = typeof patient.balance === "number" && Math.abs(patient.balance) >= 0.005;
     return (
-      <div className="space-y-1.5" data-patient-id={patient.id}>
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <p className="font-bold text-slate-900">{patient.fullName}</p>
-            <p className="text-xs text-slate-500">{patientFacts(patient) || "—"}</p>
+      <div className="space-y-1" data-patient-id={patient.id}>
+        <div className="min-h-7 pt-1"><PatientName patient={patient} /></div>
+        {(phoneText || hasBalance) && (
+          <div className="flex items-center justify-between gap-2">
+            {phoneText ? (
+              phoneHref ? (
+                <a href={phoneHref} className="inline-flex min-h-9 items-center gap-1.5 text-sm font-semibold tabular-nums text-primary">
+                  <Phone className="h-4 w-4" aria-hidden="true" />
+                  {phoneText}
+                </a>
+              ) : <span className="text-sm tabular-nums text-slate-700">{phoneText}</span>
+            ) : <span />}
+            {hasBalance && <span className="shrink-0 text-sm"><BalanceText value={patient.balance} /></span>}
           </div>
-          {/* Kartta etiketsiz "—" anlam taşımaz: yalnız borç ya da avans varsa yazılır. */}
-          {typeof patient.balance === "number" && Math.abs(patient.balance) >= 0.005 && (
-            <span className="shrink-0 text-sm"><BalanceText value={patient.balance} /></span>
-          )}
-        </div>
-        <RiskBadges patient={patient} />
+        )}
         {patient.nextAppointment && (
           <p className="text-xs text-slate-600">
             Sonraki randevu: <span className="font-semibold tabular-nums text-slate-800">{formatDateText(patient.nextAppointment.startAt, "datetime")}</span>
-            {patient.nextAppointment.doctorName ? ` · ${patient.nextAppointment.doctorName}` : ""}
+            {patient.nextAppointment.doctorName && showNextDoctor ? ` · ${patient.nextAppointment.doctorName}` : ""}
           </p>
         )}
-        <div className="flex items-center gap-1.5">
-          {!hidePhone && phoneText ? (
-            phoneHref ? (
-              <a href={phoneHref} className="inline-flex min-h-9 items-center gap-1.5 text-sm font-semibold tabular-nums text-primary">
-                <Phone className="h-4 w-4" aria-hidden="true" />
-                {phoneText}
-              </a>
-            ) : <span className="text-sm tabular-nums text-slate-700">{phoneText}</span>
-          ) : null}
-          <span className="flex-1" />
-          {rowActions(patient)}
-        </div>
       </div>
     );
   };
@@ -546,6 +562,56 @@ function HastaContent() {
       </section>
     );
   }
+
+  // Arama ve süzgeçler listenin kartında üst şerit (ListTable `toolbar` yuvası);
+  // önceden ayrı kart + altında tablo kartıydı. Uygulanan süzgeç etiketleri
+  // de aynı kartta, şeridin altında.
+  const listToolbar = (
+    <Toolbar
+      filterCount={activeFilters.length}
+      filters={(
+        <>
+          <DoctorSelect
+            value={doctorId}
+            onChange={(id, doctor) => {
+              setDoctorName(doctor?.fullName || "");
+              setParams({ doktor: id || null, sayfa: null });
+            }}
+            emptyLabel="Tüm doktorlar"
+            aria-label="Doktora göre: bu doktordan randevu ya da tedavi almış hastalar"
+            className="sm:w-52"
+          />
+          <Select
+            value={sortNameDesc ? "ad-za" : sortByName ? "ad" : ""}
+            onChange={(event) => setParams({ sirala: event.target.value || null, sayfa: null })}
+            aria-label="Sıralama"
+            className="sm:w-48"
+          >
+            <option value="">Son eklenen önce</option>
+            <option value="ad">Ada göre (A–Z)</option>
+            <option value="ad-za">Ada göre (Z–A)</option>
+          </Select>
+        </>
+      )}
+    >
+      <SearchInput
+        value={query}
+        onChange={setQuery}
+        // Telefonu/TC'yi göremeyen rolde arama numarayla eşleşmez (sunucu kuralı).
+        placeholder={hidePhone ? "Ad veya kurum ara" : "Ad, TC, telefon veya kurum ara"}
+        aria-label={hidePhone
+          ? "Hasta ara: ad, anlaşmalı kurum, meslek ya da yönlendiren"
+          : "Hasta ara: ad, TC, telefon, anlaşmalı kurum, meslek ya da yönlendiren"}
+        slashShortcut
+        wrapperClassName="flex-1 min-w-[220px]"
+      />
+    </Toolbar>
+  );
+  const filterChips = hasFilters ? (
+    <div className="border-b border-slate-100 px-3 py-2 sm:px-4">
+      <ActiveFilters filters={activeFilters} onClearAll={clearFilters} />
+    </div>
+  ) : undefined;
 
   const searchEmpty = Boolean(urlQuery);
   const emptyAction = searchEmpty || hasFilters ? (
@@ -569,47 +635,6 @@ function HastaContent() {
         actions={canWritePatients ? <Button icon={UserPlus} onClick={() => openCreate()}>Yeni hasta</Button> : undefined}
       />
 
-      <Toolbar
-        filterCount={activeFilters.length}
-        filters={(
-          <>
-            <DoctorSelect
-              value={doctorId}
-              onChange={(id, doctor) => {
-                setDoctorName(doctor?.fullName || "");
-                setParams({ doktor: id || null, sayfa: null });
-              }}
-              emptyLabel="Tüm doktorlar"
-              aria-label="Doktora göre: bu doktordan randevu ya da tedavi almış hastalar"
-              className="sm:w-52"
-            />
-            <Select
-              value={sortNameDesc ? "ad-za" : sortByName ? "ad" : ""}
-              onChange={(event) => setParams({ sirala: event.target.value || null, sayfa: null })}
-              aria-label="Sıralama"
-              className="sm:w-48"
-            >
-              <option value="">Son eklenen önce</option>
-              <option value="ad">Ada göre (A–Z)</option>
-              <option value="ad-za">Ada göre (Z–A)</option>
-            </Select>
-          </>
-        )}
-      >
-        <SearchInput
-          value={query}
-          onChange={setQuery}
-          // Telefonu/TC'yi göremeyen rolde arama numarayla eşleşmez (sunucu kuralı).
-          placeholder={hidePhone ? "Ad veya kurum ara" : "Ad, TC, telefon veya kurum ara"}
-          aria-label={hidePhone
-            ? "Hasta ara: ad, anlaşmalı kurum, meslek ya da yönlendiren"
-            : "Hasta ara: ad, TC, telefon, anlaşmalı kurum, meslek ya da yönlendiren"}
-          slashShortcut
-          wrapperClassName="flex-1 min-w-[220px]"
-        />
-      </Toolbar>
-      <ActiveFilters filters={activeFilters} onClearAll={clearFilters} />
-
       <div
         ref={listTopRef}
         className="scroll-mt-4"
@@ -628,7 +653,10 @@ function HastaContent() {
           onRetry={() => void load(error ? "user" : "silent")}
           onRowClick={openPatient}
           getRowAriaLabel={(patient) => `${patient.fullName} hasta dosyasını aç`}
+          toolbar={listToolbar}
+          header={filterChips}
           mobileCard={mobileCard}
+          mobileCardActions={(patient) => <ActionMenu items={menuItems(patient, true)} label={`${patient.fullName} için işlemler`} />}
           emptyText={searchEmpty ? "Aramanıza uyan hasta yok" : hasFilters ? "Bu filtreye uyan hasta yok" : "Henüz hasta kaydı yok"}
           emptyDescription={searchEmpty
             ? "Yazımı kontrol edin; hasta kayıtlı değilse yeni hasta olarak kaydedin."

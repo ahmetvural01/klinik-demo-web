@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Check, ClipboardList, Plus } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
-import { ListTable, EmptyValue, type ListTableColumn } from "@/components/ui/ListTable";
+import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { DueLabel, PriorityBadge, TASK_STATUS_LABELS, TASK_TYPE_LABELS, isOpenTask } from "@/components/takip/takip-labels";
 import { showToastSafe } from "@/lib/toast-client";
 import { usePatientFile } from "./PatientFileContext";
@@ -59,27 +59,31 @@ export function TasksSection() {
     }
   };
 
-  const titleCell = (task: ClinicTask) => (
-    <div className="min-w-0">
-      <p className={`font-semibold ${isOpenTask(task) ? "text-slate-800" : "text-slate-500 line-through decoration-slate-300"}`}>{task.title}</p>
-      <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
-        <span>{TASK_TYPE_LABELS[task.type] || task.type}</span>
-        <PriorityBadge value={task.priority} />
-        {!isOpenTask(task) && <Badge tone={task.status === "TAMAMLANDI" ? "success" : "neutral"}>{TASK_STATUS_LABELS[task.status]}</Badge>}
-      </p>
-      {(task.details || task.vendorName) && (
-        <p className="mt-0.5 line-clamp-1 text-xs text-slate-500">{[task.vendorName ? `Firma: ${task.vendorName}` : "", task.details || ""].filter(Boolean).join(" · ")}</p>
-      )}
-    </div>
-  );
+  // En fazla iki satır: başlık; tür · öncelik · (firma / ayrıntı) tek satırda.
+  // Önceden ayrıntı üçüncü satıra iniyordu.
+  const titleCell = (task: ClinicTask) => {
+    const extra = [task.vendorName ? `Firma: ${task.vendorName}` : "", task.details || ""].filter(Boolean).join(" · ");
+    return (
+      <div className="min-w-0">
+        <p className={`font-semibold ${isOpenTask(task) ? "text-slate-800" : "text-slate-500 line-through decoration-slate-300"}`}>{task.title}</p>
+        <p className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-slate-500">
+          <span className="shrink-0">{TASK_TYPE_LABELS[task.type] || task.type}</span>
+          <PriorityBadge value={task.priority} />
+          {!isOpenTask(task) && <Badge tone={task.status === "TAMAMLANDI" ? "success" : "neutral"}>{TASK_STATUS_LABELS[task.status]}</Badge>}
+          {extra && <span className="min-w-0 truncate" title={extra}>· {extra}</span>}
+        </p>
+      </div>
+    );
+  };
 
+  // Satırdaki tek eylem; kutusuz (satıra tıklamak görevi açar).
   const action = (task: ClinicTask) => (canWrite && isOpenTask(task)
-    ? <IconButton icon={Check} title="Tamamlandı olarak işaretle" tone="primary" size="sm" disabled={busyId === task.id} onClick={() => void complete(task)} />
+    ? <IconButton icon={Check} title="Tamamlandı olarak işaretle" tone="ghost" size="sm" className="!text-primary" disabled={busyId === task.id} onClick={() => void complete(task)} />
     : null);
 
   const columns: ListTableColumn<ClinicTask>[] = [
     { key: "title", header: "Görev", render: titleCell },
-    { key: "assignee", header: "Sorumlu", render: (task) => assigneeNames(task) || <EmptyValue /> },
+    { key: "assignee", header: "Sorumlu", render: (task) => assigneeNames(task) || null },
     { key: "due", header: "Son tarih", render: (task) => <DueLabel at={task.dueAt} open={isOpenTask(task)} /> },
     ...(canWrite ? [{ key: "actions", header: "", align: "right" as const, render: action }] : []),
   ];

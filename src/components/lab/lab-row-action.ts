@@ -1,4 +1,45 @@
-import { LAB_LABELS, type LabOrderSummary } from "@/lib/lab-workflow";
+import {
+  LAB_LABELS,
+  expectedReturnAt,
+  formatShortLabDate,
+  getReceivedItemFromNote,
+  parseDesc,
+  type LabOrderSummary,
+} from "@/lib/lab-workflow";
+
+/**
+ * Listedeki durum rozetinin ALTINDAKİ tek kısa satır: "sıradaki adım · tarih"
+ * (sadelik K4). Rozetin zaten söylediği kelime tekrar edilmez: "Gecikiyor"
+ * rozetinin altında "bekleniyor" yazmaz, "Gönderilmedi" / "İptal edildi"
+ * rozetinin altı boş kalır. Uzun cümlenin tamamı (kaçıncı gün dahil)
+ * `stageDetail` ile ipucunda ve iş ayrıntısında durur.
+ *
+ * İki parça döner: `what` (iş adımı — dar ekranda kesilebilir) ve `when`
+ * (tarih — hiç kesilmez; satırın asıl karar verdiren kısmı).
+ */
+export function labStatusLine(
+  summary: Pick<LabOrderSummary, "stage" | "pendingTrip" | "lastReceivedTrip" | "lastActivityAt">,
+): { what: string; when: string } | null {
+  switch (summary.stage) {
+    case "late":
+    case "atLab": {
+      if (!summary.pendingTrip) return null;
+      const { sentItem, requestedItem } = parseDesc(summary.pendingTrip.description);
+      const due = formatShortLabDate(expectedReturnAt(summary.pendingTrip));
+      return { what: (requestedItem || sentItem).trim(), when: summary.stage === "late" ? `dönüş ${due} idi` : `dönüş ${due}` };
+    }
+    case "clinic": {
+      if (!summary.lastReceivedTrip) return null;
+      const parts = parseDesc(summary.lastReceivedTrip.description);
+      const received = getReceivedItemFromNote(summary.lastReceivedTrip.receivedNote, parts.requestedItem || parts.sentItem);
+      return { what: received ? `${received} geldi` : "Geldi", when: formatShortLabDate(summary.lastReceivedTrip.receivedAt) };
+    }
+    case "done":
+      return summary.lastActivityAt ? { what: "", when: `Son işlem ${formatShortLabDate(summary.lastActivityAt)}` } : null;
+    default:
+      return null;
+  }
+}
 
 export type LabRowActionKind = "send" | "receive" | "complete" | "awaitComplete";
 

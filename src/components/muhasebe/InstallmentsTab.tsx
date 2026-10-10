@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bell, CalendarPlus, Wallet } from "lucide-react";
-import { ListTable, EmptyValue, type ListTableColumn } from "@/components/ui/ListTable";
+import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import { ActionMenu } from "@/components/ui/ActionMenu";
 import { Toolbar, ActiveFilters, type ActiveFilter } from "@/components/ui/Toolbar";
 import { SearchInput } from "@/components/ui/SearchInput";
 import { ChoiceCards } from "@/components/ui/ChoiceCards";
@@ -10,7 +11,7 @@ import { StatStrip, type StatItem } from "@/components/ui/StatStrip";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { formatPhoneNumber } from "@/lib/format";
-import { FINANCE_TOOLBAR_CLASS, doctorLabel, money, shortDate } from "@/components/muhasebe/muhasebe-utils";
+import { FINANCE_TOOLBAR_CLASS, doctorLabel, money, sharedValue, shortDate } from "@/components/muhasebe/muhasebe-utils";
 import {
   isOpenPlan,
   planState,
@@ -195,9 +196,14 @@ export function InstallmentsTab({
     },
   ];
 
+  // Bütün planlar bu sayfadaysa ve hepsi aynı doktorunsa doktor adı her satırda tekrar
+  // etmez (plan penceresinin başlığında yazar).
+  const plans = data?.items || [];
+  const sharedDoctor = data && data.pageCount <= 1 ? sharedValue(plans.map((plan) => plan.doctor.fullName)) : null;
+
   const patientCell = (plan: InstallmentPlan) => {
     const phone = canSeePatientPhone && plan.patient.phone && plan.patient.phone !== "***" ? formatPhoneNumber(plan.patient.phone) : "";
-    const detail = [plan.baslik, doctorLabel(plan.doctor.fullName), phone].filter(Boolean).join(" · ");
+    const detail = [plan.baslik, sharedDoctor ? "" : doctorLabel(plan.doctor.fullName), phone].filter(Boolean).join(" · ");
     return (
       <div className="min-w-0">
         <p className="truncate font-semibold text-slate-900">{plan.patient.fullName}</p>
@@ -208,7 +214,7 @@ export function InstallmentsTab({
 
   const nextCell = (plan: InstallmentPlan) => {
     const summary = planSummary(plan);
-    if (!isOpenPlan(plan) || !summary.next) return <EmptyValue />;
+    if (!isOpenPlan(plan) || !summary.next) return null;
     return (
       <div>
         <p className="text-sm tabular-nums text-slate-700">{shortDate(summary.next.vadeDate)} · {money(summary.next.kalan)}</p>
@@ -220,6 +226,17 @@ export function InstallmentsTab({
   const statusBadge = (plan: InstallmentPlan) => {
     const state = planState(plan);
     return <Badge tone={state.tone}>{state.label}</Badge>;
+  };
+
+  // Telefon: tahsilat kartın sağ üst köşesindeki "…" menüsünde (ayrı eylem sırası yok).
+  const payMenu = (plan: InstallmentPlan) => {
+    const next = planSummary(plan).next;
+    return canWriteInstallments && isOpenPlan(plan) && next ? (
+      <ActionMenu
+        label={`${plan.patient.fullName} için işlemler`}
+        items={[{ key: "pay", label: `${next.siraNo}. taksiti tahsil et`, icon: Wallet, onSelect: () => setPayTarget({ plan, installment: next }) }]}
+      />
+    ) : null;
   };
 
   const payButton = (plan: InstallmentPlan) => {
@@ -249,7 +266,7 @@ export function InstallmentsTab({
         const summary = planSummary(plan);
         return (
           <div className="text-right">
-            <p className="font-bold tabular-nums text-slate-900">{summary.kalan > 0.005 ? money(summary.kalan) : "—"}</p>
+            {summary.kalan > 0.005 && <p className="font-bold tabular-nums text-slate-900">{money(summary.kalan)}</p>}
             <p className="text-xs text-slate-400">{summary.paidCount}/{summary.activeCount} ödendi</p>
           </div>
         );
@@ -273,7 +290,9 @@ export function InstallmentsTab({
 
   return (
     <div className="space-y-3">
+      {/* Araç çubuğu çerçevesiz (sayfa zemininde): ayrı kart değil. */}
       <Toolbar
+        bare
         className={FINANCE_TOOLBAR_CLASS}
         filterCount={status !== "ACIK" ? 1 : 0}
         filters={(
@@ -320,26 +339,26 @@ export function InstallmentsTab({
         getRowAriaLabel={(plan) => `${plan.patient.fullName} taksit planını aç`}
         emptyText={emptyText}
         emptyDescription={emptyDescription}
+        // Telefon kartı iki satır: hasta + kalan; durum rozeti + sıradaki taksit. Plan adı,
+        // doktor ve telefon karta dokununca açılan plan penceresinde; tahsilat sağ üstte "…".
         mobileCard={(plan) => {
           const summary = planSummary(plan);
+          const next = isOpenPlan(plan) ? summary.next : null;
+          const detail = next ? `Sıradaki ${shortDate(next.vadeDate)} · ${money(next.kalan)}` : plan.baslik || "";
           return (
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                {patientCell(plan)}
-                {isOpenPlan(plan) && summary.next && (
-                  <p className="mt-0.5 text-xs tabular-nums text-slate-500">
-                    Sıradaki {shortDate(summary.next.vadeDate)} · {money(summary.next.kalan)}
-                  </p>
-                )}
-                <div className="mt-1">{statusBadge(plan)}</div>
+                <p className="truncate font-semibold text-slate-900">{plan.patient.fullName}</p>
+                <p className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-slate-500">
+                  {statusBadge(plan)}
+                  {detail && <span className="truncate tabular-nums">{detail}</span>}
+                </p>
               </div>
-              <div className="flex shrink-0 flex-col items-end gap-1.5">
-                <span className="font-bold tabular-nums text-slate-900">{summary.kalan > 0.005 ? money(summary.kalan) : "—"}</span>
-                {payButton(plan)}
-              </div>
+              {summary.kalan > 0.005 && <span className="shrink-0 font-bold tabular-nums text-slate-900">{money(summary.kalan)}</span>}
             </div>
           );
         }}
+        mobileCardActions={canWriteInstallments ? payMenu : undefined}
         pager={data && data.total > PAGE_SIZE ? { page: data.page, pageCount: data.pageCount, pageSize: PAGE_SIZE, total: data.total, onPageChange: (next) => setPageState({ key: queryKey, page: next }), loading } : undefined}
       />
 

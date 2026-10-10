@@ -201,7 +201,7 @@ export function TodayAppointments({
   const firstLoadFailed = firstLoad && !loading && Boolean(error);
 
   const filterBar = listReady && rows.length > 0 ? (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-slate-100 px-4 py-3">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-slate-100 px-4 py-2.5">
       {hasMine && hasOthers && (
         <ChoiceCards<ScopeKey>
           label="Kimin randevuları"
@@ -236,11 +236,12 @@ export function TodayAppointments({
           <h2 id={headingId} className="text-sm font-extrabold text-slate-900">{headingOf(dayOffset)}</h2>
           {!isToday && dayKey && <p className="text-xs font-semibold text-slate-500">{dayLabelOf(dayKey)}</p>}
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div role="group" aria-label="Gün seçimi" className="flex items-center gap-1">
-            <IconButton size="sm" icon={ChevronLeft} title="Önceki gün" onClick={() => navigate(dayOffset - 1)} disabled={!todayKey} />
-            <Button size="sm" variant="secondary" onClick={() => navigate(0)} disabled={isToday}>Bugün</Button>
-            <IconButton size="sm" icon={ChevronRight} title="Sonraki gün" onClick={() => navigate(dayOffset + 1)} disabled={!todayKey} />
+        <div className="flex flex-wrap items-center gap-1">
+          {/* Gün düğmeleri çerçevesiz: başlık satırında üç ayrı kutu görünmesin. */}
+          <div role="group" aria-label="Gün seçimi" className="flex items-center">
+            <IconButton size="sm" tone="ghost" icon={ChevronLeft} title="Önceki gün" onClick={() => navigate(dayOffset - 1)} disabled={!todayKey} />
+            <Button size="sm" variant="ghost" onClick={() => navigate(0)} disabled={isToday}>Bugün</Button>
+            <IconButton size="sm" tone="ghost" icon={ChevronRight} title="Sonraki gün" onClick={() => navigate(dayOffset + 1)} disabled={!todayKey} />
           </div>
           <Button size="sm" variant="ghost" icon={CalendarDays} href={calendarHref}>Takvimde aç</Button>
         </div>

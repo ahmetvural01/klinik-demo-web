@@ -3,11 +3,12 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Pill, Plus, Printer, Trash2, XCircle } from "lucide-react";
+import { ActionMenu } from "@/components/ui/ActionMenu";
 import { Badge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
 import { FormModal, submitIntent } from "@/components/ui/FormModal";
-import { ListTable, EmptyValue, type ListTableColumn } from "@/components/ui/ListTable";
+import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { FormField } from "@/components/ui/FormField";
 import { Input, Textarea } from "@/components/ui/Input";
 import { SearchSelect } from "@/components/ui/SearchSelect";
@@ -17,7 +18,7 @@ import { MEDICATION_TEMPLATES, medicationMatches } from "@/lib/medications";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
 import { usePatientFile } from "./PatientFileContext";
-import { errorMessageOf, healthFlagsOf, newIdempotencyKey, type Rx } from "./patient-file-shared";
+import { errorMessageOf, healthFlagsOf, newIdempotencyKey, sharedName, type Rx } from "./patient-file-shared";
 
 type Drug = { key: string; name: string; dose: string; usage: string; duration: string; note: string };
 
@@ -55,6 +56,7 @@ const nextDrugKey = () => `ilac-${(drugKeySeed += 1)}`;
  * yalnız 10 sabit ilaç seçilebiliyor, doz/kullanım/süre değiştirilemiyordu.
  */
 export function PrescriptionTab() {
+  const router = useRouter();
   const { data, patientId, reload, can, intent, clearIntent, lockDoctorToSelf, currentUserId } = usePatientFile();
   const canWrite = can("prescriptions:write");
   // Doktor yalnız kendi yazdığı reçeteyi iptal eder (sunucu kuralı).
@@ -90,24 +92,34 @@ export function PrescriptionTab() {
   type HistoryRow = (typeof history)[number];
 
   const drugNames = (row: HistoryRow) => row.drugs.map((drug) => [drug.name, drug.dose].filter(Boolean).join(" ")).join(", ");
+  const rxHref = (row: HistoryRow) => `/recete?id=${row.rx.id}&patientId=${patientId}`;
+  // Satıra tıklamak reçeteyi açar (yazdırma orada); satırda kutulu ikon yok,
+  // eylemler çerçevesiz "…" menüsünde.
   const rowActions = (row: HistoryRow) => (
-    <div className="flex justify-end gap-1.5">
-      <IconButton icon={Printer} title="Reçeteyi aç / yazdır" size="sm" href={`/recete?id=${row.rx.id}&patientId=${patientId}`} />
-      {canVoid(row.rx) && <IconButton icon={XCircle} title="Reçeteyi iptal et" tone="danger" size="sm" disabled={busyId === row.rx.id} onClick={() => void voidPrescription(row.rx)} />}
+    <div className="flex justify-end">
+      <ActionMenu
+        label={`${formatDateText(row.rx.createdAt)} reçetesi için işlemler`}
+        items={[
+          { key: "open", label: "Reçeteyi aç / yazdır", icon: Printer, href: rxHref(row) },
+          ...(canVoid(row.rx) ? [{ key: "void", label: "Reçeteyi iptal et", icon: XCircle, danger: true, disabled: busyId === row.rx.id, onSelect: () => void voidPrescription(row.rx) }] : []),
+        ]}
+      />
     </div>
   );
 
+  // İptal rozeti yeterli: üstü çizili + soluk satır + rozet üç kez aynı şeyi söylüyordu.
   const drugsCell = (row: HistoryRow) => (
     <span className="inline-flex flex-wrap items-center gap-1.5">
-      <span className={isVoid(row.rx) ? "text-slate-400 line-through" : "text-slate-800"}>{drugNames(row) || <EmptyValue />}</span>
+      <span className={isVoid(row.rx) ? "text-slate-500" : "text-slate-800"}>{drugNames(row) || null}</span>
       {isVoid(row.rx) && <Badge tone="neutral">İptal edildi</Badge>}
     </span>
   );
 
+  const rxDoctor = sharedName(history, (row) => row.rx.doctor?.fullName);
   const historyColumns: ListTableColumn<HistoryRow>[] = [
     { key: "date", header: "Tarih", render: (row) => <span className="whitespace-nowrap">{formatDateText(row.rx.createdAt)}</span> },
     { key: "drugs", header: "İlaçlar", render: drugsCell },
-    { key: "doctor", header: "Hekim", render: (row) => row.rx.doctor?.fullName || <EmptyValue /> },
+    ...(rxDoctor ? [] : [{ key: "doctor", header: "Hekim", render: (row: HistoryRow) => row.rx.doctor?.fullName || null }]),
     { key: "actions", header: "", align: "right", render: rowActions },
   ];
 
@@ -115,18 +127,24 @@ export function PrescriptionTab() {
     <div className="space-y-4">
       <ListTable
         title="Reçeteler"
+        subtitle={rxDoctor ? `Hekim: ${rxDoctor}` : undefined}
         actions={canWrite ? <Button size="sm" variant="secondary" icon={Plus} onClick={() => setFormOpen(true)}>Yeni reçete</Button> : undefined}
         columns={historyColumns}
         rows={history}
         rowKey={(row) => row.rx.id}
+        onRowClick={(row) => router.push(rxHref(row))}
+        getRowAriaLabel={(row) => `${formatDateText(row.rx.createdAt)} reçetesini aç`}
         rowClassName={(row) => (isVoid(row.rx) ? "opacity-70" : "")}
         emptyIcon={Pill}
         emptyText="Henüz reçete yazılmamış"
         mobileCard={(row) => (
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <p className={`text-sm font-semibold ${isVoid(row.rx) ? "text-slate-400 line-through" : "text-slate-800"}`}>{drugNames(row) || "Reçete"}</p>
-              <p className="text-xs text-slate-500">{[formatDateText(row.rx.createdAt), row.rx.doctor?.fullName, isVoid(row.rx) ? "İptal edildi" : ""].filter(Boolean).join(" · ")}</p>
+              <p className={`text-sm font-semibold ${isVoid(row.rx) ? "text-slate-500" : "text-slate-800"}`}>{drugNames(row) || "Reçete"}</p>
+              <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-slate-500">
+                <span>{[formatDateText(row.rx.createdAt), rxDoctor ? "" : row.rx.doctor?.fullName].filter(Boolean).join(" · ")}</span>
+                {isVoid(row.rx) && <Badge tone="neutral">İptal edildi</Badge>}
+              </p>
             </div>
             {rowActions(row)}
           </div>

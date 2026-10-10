@@ -3,7 +3,6 @@
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { ScrollText } from "lucide-react";
 import { usePermissions } from "@/components/auth/PermissionProvider";
-import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { DateRangeFilter } from "@/components/ui/DateRangeFilter";
 import { DescriptionList, type DescriptionItem } from "@/components/ui/DescriptionList";
@@ -77,6 +76,39 @@ function parseDetail(detail: string | null | undefined) {
     after: split(afterLine, AFTER_PATTERN),
     extra: lines.filter((line) => line !== summary && line !== beforeLine && line !== afterLine),
   };
+}
+
+// Kayıt kimliği (cuid) parantezi: "(cmv28np8t00fh3axbx3ilos5d)". Listede okunmaz;
+// ayrıntı penceresinde özet olduğu gibi durur.
+const RECORD_ID_PATTERN = /\s*\(c[a-z0-9]{20,}\)/g;
+const normalized = (text: string) => text.toLocaleLowerCase("tr-TR").replace(/[.\s]+$/, "");
+/** Özet işlem adının aynısı ya da kısa yeniden söylenişi mi ("Gider güncellendi" ~ "Gider kaydı güncellendi"). */
+const sameText = (summary: string, label: string) => {
+  const a = normalized(summary);
+  const b = normalized(label);
+  if (a === b) return true;
+  const words = a.split(/\s+/);
+  return words.length <= 3 && words[words.length - 1] === b.split(/\s+/).pop();
+};
+// Özetin başındaki işlem cümlesi ("Randevu oluşturuldu: Hakan Çelik · …"):
+// en çok dört sözcük, geçmiş zaman fiiliyle biter. Üst satırdaki işlem adını tekrar eder.
+const ACTION_PREFIX_PATTERN = /^(?:\S+\s){0,3}\S+(?:dı|di|du|dü|tı|ti|tu|tü):\s+(?=\S)/u;
+const capitalize = (text: string) => (text ? text.charAt(0).toLocaleUpperCase("tr-TR") + text.slice(1) : "");
+
+/**
+ * Listedeki ikinci satır (sadelik K4): teknik kayıt kimliği atılır; "Kim"
+ * sütununda zaten yazan "<ad> tarafından" öneki ve üst satırdaki işlem adını
+ * tekrar eden "… oluşturuldu:" öneki düşer; işlem adının aynısıysa hiç
+ * gösterilmez. Tam özet ayrıntı penceresinde kalır — bilgi kaybolmaz.
+ */
+function listSummary(log: Log) {
+  let text = parseDetail(log.detail).summary.replace(RECORD_ID_PATTERN, "").trim();
+  const name = log.user?.fullName?.trim();
+  if (name && text.startsWith(`${name} tarafından `)) {
+    text = capitalize(text.slice(name.length + " tarafından ".length).trim());
+  }
+  text = text.replace(ACTION_PREFIX_PATTERN, "");
+  return sameText(text, auditActionLabel(log.action, log.detail)) ? "" : text;
 }
 
 type ChangeRow = { field: string; before: string; after: string };
@@ -227,18 +259,14 @@ function LogsTab() {
     {
       key: "user",
       header: "Kim",
-      render: (log) => log.user ? (
-        <div>
-          <p className="text-sm font-medium text-slate-800">{log.user.fullName}</p>
-          {log.user.role && <p className="text-xs text-slate-500">{roleLabel(log.user.role)}</p>}
-        </div>
-      ) : <EmptyValue />,
+      // Tek satır: ad. Rol her satırda tekrar ediyordu; ayrıntı penceresinde ve "Kim yaptı" süzgecinde yazar.
+      render: (log) => log.user ? <span className="text-sm font-medium text-slate-800">{log.user.fullName}</span> : <EmptyValue />,
     },
     {
       key: "action",
       header: "Ne yaptı",
       render: (log) => {
-        const summary = parseDetail(log.detail).summary;
+        const summary = listSummary(log);
         return (
           <div className="min-w-0 max-w-xl">
             <p className="text-sm font-semibold text-slate-900">{auditActionLabel(log.action, log.detail)}</p>
@@ -250,7 +278,9 @@ function LogsTab() {
     {
       key: "scope",
       header: "Bölüm",
-      render: (log) => <Badge tone="neutral">{auditCategoryLabel(auditCategoryOf(log.action, log.detail))}</Badge>,
+      // Düz soluk metin: her satırda çerçeveli rozet kutu kalabalığı yapıyordu.
+      cellClassName: "whitespace-nowrap text-xs text-slate-500",
+      render: (log) => auditCategoryLabel(auditCategoryOf(log.action, log.detail)),
     },
   ], [today]);
 
@@ -279,65 +309,69 @@ function LogsTab() {
 
   return (
     <div className="space-y-3">
-      <Toolbar
-        filters={(
+      {/* Arama ve süzgeçler listenin kartının üst şeridinde (sadelik K1: ayrı süzgeç kartı yok). */}
+      <ListTable<Log>
+        toolbar={(
           <>
-            <DateRangeFilter {...period.filterProps} />
-            <Select aria-label="Bölüm" value={category} onChange={(event) => setCategory(event.target.value as AuditCategoryKey | "")} className="sm:w-52">
-              <option value="">Tüm bölümler</option>
-              {AUDIT_CATEGORIES.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
-            </Select>
-            {staff.length > 0 && (
-              <Select aria-label="Kim yaptı" value={userId} onChange={(event) => setUserId(event.target.value)} className="sm:w-56">
-                <option value="">Tüm personel</option>
-                {staff.map((person) => <option key={person.id} value={person.id}>{staffLabel(person)}</option>)}
-              </Select>
-            )}
+            <Toolbar
+              filters={(
+                <>
+                  <DateRangeFilter {...period.filterProps} />
+                  <Select aria-label="Bölüm" value={category} onChange={(event) => setCategory(event.target.value as AuditCategoryKey | "")} className="sm:w-52">
+                    <option value="">Tüm bölümler</option>
+                    {AUDIT_CATEGORIES.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
+                  </Select>
+                  {staff.length > 0 && (
+                    <Select aria-label="Kim yaptı" value={userId} onChange={(event) => setUserId(event.target.value)} className="sm:w-56">
+                      <option value="">Tüm personel</option>
+                      {staff.map((person) => <option key={person.id} value={person.id}>{staffLabel(person)}</option>)}
+                    </Select>
+                  )}
+                </>
+              )}
+              filterCount={activeFilters.length}
+            >
+              <SearchInput value={search} onChange={setSearch} placeholder="Hasta, personel veya işlem ara" slashShortcut wrapperClassName="flex-1 min-w-[220px]" />
+            </Toolbar>
+            <ActiveFilters filters={activeFilters} onClearAll={clearFilters} />
           </>
         )}
-        filterCount={activeFilters.length}
-      >
-        <SearchInput value={search} onChange={setSearch} placeholder="Hasta, personel veya işlem ara" slashShortcut wrapperClassName="flex-1 min-w-[220px]" />
-      </Toolbar>
-      <ActiveFilters filters={activeFilters} onClearAll={clearFilters} />
-
-      <div className={`transition-opacity ${period.error ? "opacity-50" : ""}`}>
-        <ListTable<Log>
-          columns={columns}
-          rows={logs}
-          rowKey={(log) => log.id}
-          loading={loading && !period.error}
-          error={loaded ? null : loadError}
-          staleError={loaded ? loadError : null}
-          onRetry={() => void fetchLogs()}
-          emptyIcon={ScrollText}
-          emptyText={hasFilters ? "Bu filtrelerle kayıt yok" : "Bu dönemde kayıt yok"}
-          emptyDescription={hasFilters ? "Tarih aralığını genişletin veya filtreleri kaldırın." : "Seçili tarihlerde klinikte kayıtlı işlem yok."}
-          emptyAction={hasFilters ? <Button variant="secondary" onClick={clearFilters}>Filtreleri temizle</Button> : undefined}
-          onRowClick={setDetailLog}
-          getRowAriaLabel={(log) => `${auditActionLabel(log.action, log.detail)} ayrıntısını aç`}
-          mobileCard={(log) => {
-            const summary = parseDetail(log.detail).summary;
-            return (
-              <div className="space-y-0.5">
-                <p className="text-sm font-semibold text-slate-900">{auditActionLabel(log.action, log.detail)}</p>
-                {summary && <p className="truncate text-xs text-slate-600">{summary}</p>}
-                <p className="text-xs text-slate-400">{today ? shortWhen(log.createdAt, today) : formatDateText(log.createdAt, "datetime")}{log.user ? ` · ${log.user.fullName}` : ""}</p>
-              </div>
-            );
-          }}
-          pager={{
-            page,
-            pageCount,
-            pageSize,
-            pageSizeOptions: PAGE_SIZES,
-            total,
-            onPageChange: setPage,
-            onPageSizeChange: setPageSize,
-            loading,
-          }}
-        />
-      </div>
+        columns={columns}
+        rows={logs}
+        rowKey={(log) => log.id}
+        loading={loading && !period.error}
+        error={loaded ? null : loadError}
+        staleError={loaded ? loadError : null}
+        onRetry={() => void fetchLogs()}
+        emptyIcon={ScrollText}
+        emptyText={hasFilters ? "Bu filtrelerle kayıt yok" : "Bu dönemde kayıt yok"}
+        emptyDescription={hasFilters ? "Tarih aralığını genişletin veya filtreleri kaldırın." : "Seçili tarihlerde klinikte kayıtlı işlem yok."}
+        emptyAction={hasFilters ? <Button variant="secondary" onClick={clearFilters}>Filtreleri temizle</Button> : undefined}
+        onRowClick={setDetailLog}
+        getRowAriaLabel={(log) => `${auditActionLabel(log.action, log.detail)} ayrıntısını aç`}
+        // Geçersiz tarih aralığında eldeki satırlar soluklaşır (süzgeç şeridi soluklaşmaz; hata orada okunur).
+        rowClassName={() => (period.error ? "opacity-50" : "")}
+        mobileCard={(log) => {
+          const summary = listSummary(log);
+          return (
+            <div className="space-y-0.5">
+              <p className="text-sm font-semibold text-slate-900">{auditActionLabel(log.action, log.detail)}</p>
+              {summary && <p className="truncate text-xs text-slate-600">{summary}</p>}
+              <p className="text-xs text-slate-400">{today ? shortWhen(log.createdAt, today) : formatDateText(log.createdAt, "datetime")}{log.user ? ` · ${log.user.fullName}` : ""}</p>
+            </div>
+          );
+        }}
+        pager={{
+          page,
+          pageCount,
+          pageSize,
+          pageSizeOptions: PAGE_SIZES,
+          total,
+          onPageChange: setPage,
+          onPageSizeChange: setPageSize,
+          loading,
+        }}
+      />
 
       <Modal
         open={Boolean(detailLog)}

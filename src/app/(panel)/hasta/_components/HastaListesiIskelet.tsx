@@ -22,7 +22,7 @@ export function HastaListesiIskelet() {
         title="Hastalar"
         actions={can("patients:write") ? <Skeleton className="h-10 w-32 rounded-md !bg-slate-200" /> : undefined}
       />
-      <PageSkeleton header={false} toolbar body="table" rows={8} columns={6} label="Hastalar yükleniyor" />
+      <PageSkeleton header={false} toolbar="inset" body="table" rows={8} columns={6} label="Hastalar yükleniyor" />
     </div>
   );
 }

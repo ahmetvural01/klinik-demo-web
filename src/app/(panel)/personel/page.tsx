@@ -2,10 +2,10 @@
 
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Pencil, RotateCcw, UserPlus } from "lucide-react";
+import { RotateCcw, UserPlus } from "lucide-react";
 import { Avatar } from "@/components/ui/Avatar";
 import { Badge } from "@/components/ui/Badge";
-import { Button, IconButton } from "@/components/ui/Button";
+import { Button } from "@/components/ui/Button";
 import { ChoiceCards } from "@/components/ui/ChoiceCards";
 import { Select } from "@/components/ui/Input";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
@@ -258,6 +258,9 @@ export default function PersonelPage() {
 
   const filterCount = (filterRole ? 1 : 0) + (filterStatus !== "aktif" ? 1 : 0);
 
+  // Satırda görünür tek eylem: pasif personeli yeniden aktif etmek. Aktif
+  // personelin kaydı satıra tıklayınca açılır; ayrıca kutulu kalem düğmesi
+  // gerekmez (sadelik K3).
   const rowAction = (person: Staff) => {
     if (person.passive) {
       return canManageBranch ? (
@@ -274,7 +277,7 @@ export default function PersonelPage() {
         </Button>
       ) : null;
     }
-    return canWriteStaff ? <IconButton icon={Pencil} title={`${person.fullName} kaydını düzenle`} size="sm" onClick={() => openEdit(person.id)} /> : null;
+    return null;
   };
 
   const roleCell = (person: Staff) => {
@@ -302,7 +305,8 @@ export default function PersonelPage() {
       ),
     },
     { key: "rol", header: "Rol", render: roleCell },
-    ...(canWriteStaff || canManageBranch ? [{
+    // Eylem sütunu yalnız pasif personel listelenebiliyorken (yeniden aktif etme) gerekir.
+    ...(canManageBranch && filterStatus !== "aktif" ? [{
       key: "islem",
       header: "",
       align: "right" as const,
@@ -345,40 +349,42 @@ export default function PersonelPage() {
         />
       ) : (
         <>
-          <Toolbar
-            filters={(
-              <>
-                <Select aria-label="Rol" value={filterRole} onChange={(event) => setFilterRole(event.target.value)} className="sm:w-52">
-                  {ROLE_FILTERS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-                </Select>
-                {passiveAvailable && (
-                  <ChoiceCards
-                    label="Durum"
-                    labelHidden
-                    variant="pills"
-                    value={filterStatus}
-                    onChange={setFilterStatus}
-                    options={[
-                      { value: "aktif", label: "Çalışanlar" },
-                      { value: "pasif", label: "Pasif", count: manage ? passiveStaff.length : undefined },
-                      { value: "tumu", label: "Tümü" },
-                    ]}
-                  />
-                )}
-              </>
-            )}
-            filterCount={filterCount}
-          >
-            <SearchInput
-              value={search}
-              onChange={setSearch}
-              placeholder={canWriteStaff ? "Ad, rol veya TC kimlik no ara" : "Ad veya rol ara"}
-              slashShortcut
-              wrapperClassName="flex-1 min-w-[220px]"
-            />
-          </Toolbar>
-
+          {/* Arama ve süzgeçler listenin kartının üst şeridinde (sadelik K1: ayrı süzgeç kartı yok). */}
           <ListTable
+            toolbar={(
+              <Toolbar
+                filters={(
+                  <>
+                    <Select aria-label="Rol" value={filterRole} onChange={(event) => setFilterRole(event.target.value)} className="sm:w-52">
+                      {ROLE_FILTERS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                    </Select>
+                    {passiveAvailable && (
+                      <ChoiceCards
+                        label="Durum"
+                        labelHidden
+                        variant="pills"
+                        value={filterStatus}
+                        onChange={setFilterStatus}
+                        options={[
+                          { value: "aktif", label: "Çalışanlar" },
+                          { value: "pasif", label: "Pasif", count: manage ? passiveStaff.length : undefined },
+                          { value: "tumu", label: "Tümü" },
+                        ]}
+                      />
+                    )}
+                  </>
+                )}
+                filterCount={filterCount}
+              >
+                <SearchInput
+                  value={search}
+                  onChange={setSearch}
+                  placeholder={canWriteStaff ? "Ad, rol veya TC kimlik no ara" : "Ad veya rol ara"}
+                  slashShortcut
+                  wrapperClassName="flex-1 min-w-[220px]"
+                />
+              </Toolbar>
+            )}
             columns={columns}
             rows={filtered}
             rowKey={(person) => `${person.passive ? "p" : "a"}-${person.id}`}

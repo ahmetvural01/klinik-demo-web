@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useMemo, useRef, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { CountBadge, type CountBadgeTone } from "@/components/ui/CountBadge";
 
@@ -34,7 +34,11 @@ type TabsProps<K extends string> = {
   /** Ekran okuyucu için sekme grubunun adı (ör. "Hasta dosyası bölümleri"). */
   ariaLabel: string;
   className?: string;
-  /** "sm": modal/kart içi alt sekmeler için daha küçük ölçü. */
+  /**
+   * "md" (varsayılan): sayfa bölümleri — alt çizgili düz sekme.
+   * "sm": kart/pencere içi alt bölüm ya da görünüm seçimi — küçük, çerçevesiz
+   * "segment" (seçili olan açık dolgulu). İki kat alt çizgili sekme görünmesin.
+   */
   size?: "sm" | "md";
   /** Sekme panellerinin id öneki — verilirse aria-controls bağlanır. */
   panelIdPrefix?: string;
@@ -44,8 +48,12 @@ type TabsProps<K extends string> = {
  * Uygulama genelinde TEK sekme çubuğu. Önceden her sayfa (Muhasebe, Ayarlar,
  * İletişim, Raporlar, Hasta dosyası...) sekmelerini farklı renk/şekil/boyutla
  * elle yazıyordu; kullanıcı her ekranda "bu bir sekme mi, düğme mi" diye
- * yeniden öğrenmek zorunda kalıyordu. Görünüm: gri zemin üzerinde seçili
- * sekme beyaz ve marka renginde. Sol/sağ ok, Home/End tuşlarıyla gezilir.
+ * yeniden öğrenmek zorunda kalıyordu. Görünüm (sadelik turu, K2): çerçeveli
+ * "hap" kutusu yok — md alt çizgili düz sekme (seçili sekme marka renginde,
+ * altında 2px çizgi); sm çerçevesiz segment. Bilgi amaçlı (neutral) sayaç
+ * düz soluk rakamdır; yalnız eylem gerektiren (critical/warning) sayaç renkli
+ * rozettir. Dar ekranda kayan sekme çubuğunun kenarı solarak devamını
+ * gösterir. Sol/sağ ok, Home/End tuşlarıyla gezilir.
  */
 export function Tabs<K extends string>({ items, value, onChange, ariaLabel, className = "", size = "md", panelIdPrefix }: TabsProps<K>) {
   const listRef = useRef<HTMLDivElement>(null);
@@ -66,6 +74,29 @@ export function Tabs<K extends string>({ items, value, onChange, ariaLabel, clas
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     list.scrollTo({ left: Math.max(0, target), behavior: reduceMotion ? "auto" : "smooth" });
   }, [value]);
+
+  // Kayan sekme çubuğunda devamı olan kenar solar (CSS mask; zemin rengine
+  // bağlı değil — sayfa zemininde de kart içinde de çalışır).
+  const [more, setMore] = useState<"start" | "end" | "both" | undefined>(undefined);
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const update = () => {
+      const max = list.scrollWidth - list.clientWidth;
+      if (max <= 1) { setMore(undefined); return; }
+      const atStart = list.scrollLeft <= 1;
+      const atEnd = list.scrollLeft >= max - 1;
+      setMore(atStart ? "end" : atEnd ? "start" : "both");
+    };
+    update();
+    list.addEventListener("scroll", update, { passive: true });
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
+    observer?.observe(list);
+    return () => {
+      list.removeEventListener("scroll", update);
+      observer?.disconnect();
+    };
+  }, [items.length]);
 
   const focusTab = (key: K) => {
     const el = listRef.current?.querySelector<HTMLButtonElement>(`[data-tab-key="${CSS.escape(key)}"]`);
@@ -91,6 +122,7 @@ export function Tabs<K extends string>({ items, value, onChange, ariaLabel, clas
       role="tablist"
       aria-label={ariaLabel}
       onKeyDown={onKeyDown}
+      data-more={more}
       className={`ui-tabs ${size === "sm" ? "ui-tabs-sm" : ""} ${className}`}
     >
       {items.map((item) => {
@@ -124,8 +156,14 @@ export function Tabs<K extends string>({ items, value, onChange, ariaLabel, clas
                 <span className="sr-only">(kaydedilmemiş değişiklik)</span>
               </>
             )}
-            {/* Sekme sayacı ortak CountBadge'dir; `ui-tab-count` eski CSS kancası olarak kalır. */}
-            <CountBadge count={item.count} tone={item.countTone || "neutral"} label={item.countLabel} className="ui-tab-count" />
+            {/* Sekme sayacı ortak CountBadge'dir; `ui-tab-count` eski CSS kancası olarak kalır.
+                Bilgi amaçlı (neutral) sayaç rozet değil, düz soluk rakamdır (ui-tab-count-plain). */}
+            <CountBadge
+              count={item.count}
+              tone={item.countTone || "neutral"}
+              label={item.countLabel}
+              className={`ui-tab-count ${(item.countTone || "neutral") === "neutral" ? "ui-tab-count-plain" : ""}`}
+            />
           </button>
         );
       })}

@@ -205,6 +205,8 @@ export default function HistoryTab({ showChannel, canResendConsent }: { showChan
 
   return (
     <section className="space-y-3" aria-label="Gönderim geçmişi">
+      {/* Durum çipleri çerçevesiz, sayfa zemininde; arama ve süzgeçler listenin
+          kartının üst şeridinde (sadelik K1: ayrı süzgeç kartı yok). */}
       <ChoiceCards<string>
         label="Gönderim sonucu"
         labelHidden
@@ -214,37 +216,40 @@ export default function HistoryTab({ showChannel, canResendConsent }: { showChan
         onChange={(value) => setParams({ durum: value === "tum" ? "" : value })}
       />
 
-      <Toolbar
-        filterCount={filterCount}
-        filters={(
+      <ListTable<DispatchRow>
+        toolbar={(
           <>
-            <Select aria-label="Mesaj türü" value={event} onChange={(e) => setParams({ tur: e.target.value })} className="sm:w-56">
-              <option value="">Tüm mesaj türleri</option>
-              {EVENT_FILTER_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </Select>
-            {showChannel && (
-              <Select aria-label="Kanal" value={channel} onChange={(e) => setParams({ kanal: e.target.value })} className="sm:w-44">
-                <option value="">Tüm kanallar</option>
-                <option value="SMS">Yalnız SMS</option>
-                <option value="WHATSAPP">Yalnız WhatsApp</option>
-              </Select>
-            )}
-            <DateRangeFilter
-              presets={PERIODS}
-              value={periodValue}
-              onChange={(value) => setParams({ donem: value.preset === defaultPeriod ? "" : value.preset })}
+            <Toolbar
+              filterCount={filterCount}
+              filters={(
+                <>
+                  <Select aria-label="Mesaj türü" value={event} onChange={(e) => setParams({ tur: e.target.value })} className="sm:w-56">
+                    <option value="">Tüm mesaj türleri</option>
+                    {EVENT_FILTER_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </Select>
+                  {showChannel && (
+                    <Select aria-label="Kanal" value={channel} onChange={(e) => setParams({ kanal: e.target.value })} className="sm:w-44">
+                      <option value="">Tüm kanallar</option>
+                      <option value="SMS">Yalnız SMS</option>
+                      <option value="WHATSAPP">Yalnız WhatsApp</option>
+                    </Select>
+                  )}
+                  <DateRangeFilter
+                    presets={PERIODS}
+                    value={periodValue}
+                    onChange={(value) => setParams({ donem: value.preset === defaultPeriod ? "" : value.preset })}
+                  />
+                </>
+              )}
+            >
+              <SearchInput value={query} onChange={setQuery} placeholder="Hasta adı veya telefonun son 4 hanesi" wrapperClassName="flex-1 min-w-[220px]" />
+            </Toolbar>
+            <ActiveFilters
+              filters={activeFilters}
+              onClearAll={() => setParams({ tur: "", kanal: "", donem: "", paket: "" })}
             />
           </>
         )}
-      >
-        <SearchInput value={query} onChange={setQuery} placeholder="Hasta adı veya telefonun son 4 hanesi" wrapperClassName="flex-1 min-w-[220px]" />
-      </Toolbar>
-      <ActiveFilters
-        filters={activeFilters}
-        onClearAll={() => setParams({ tur: "", kanal: "", donem: "", paket: "" })}
-      />
-
-      <ListTable<DispatchRow>
         columns={columns}
         rows={rows}
         rowKey={(row) => row.id}
@@ -256,6 +261,7 @@ export default function HistoryTab({ showChannel, canResendConsent }: { showChan
         emptyDescription={hasFilters ? "Süzgeçleri kaldırarak tüm gönderimleri görebilirsiniz." : "Otomatik ya da elle gönderilen mesajlar burada listelenir."}
         onRowClick={setDetail}
         getRowAriaLabel={(row) => `${row.patient?.fullName || "Hasta"} — ${eventLabel(row.eventType)} ayrıntısı`}
+        // Telefonda kart üç satır: hasta + zaman; mesaj · gönderen; sonuç + kısa neden.
         mobileCard={(row) => (
           <div className="space-y-1">
             <div className="flex items-baseline justify-between gap-3">

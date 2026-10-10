@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import { ArrowLeft, Wallet } from "lucide-react";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import { ActionMenu } from "@/components/ui/ActionMenu";
 import { Toolbar } from "@/components/ui/Toolbar";
 import { StatStrip, type StatItem } from "@/components/ui/StatStrip";
 import { Callout } from "@/components/ui/Callout";
@@ -74,7 +75,8 @@ export function HakedisTab({ active, refreshKey, selectedDoctorId, onSelectDocto
   if (selectedDoctorId) {
     return (
       <div className="space-y-3">
-        <Toolbar>
+        {/* Çerçevesiz: dönüş ve doktor seçici sayfa zemininde (ayrı kart değil). */}
+        <Toolbar bare>
           <Button variant="ghost" size="sm" icon={ArrowLeft} onClick={() => onSelectDoctor("")}>Tüm doktorlar</Button>
           {canOpenStatement && (
             <div className="sm:w-72">
@@ -102,6 +104,19 @@ export function HakedisTab({ active, refreshKey, selectedDoctorId, onSelectDocto
     if (!row.enEskiOdenmemis) return;
     onPay(row.doctor.id, row.enEskiOdenmemis.year, row.enEskiOdenmemis.month, row.enEskiOdenmemis.kalan);
   };
+
+  // Telefon: ödeme kartın sağ üst köşesindeki "…" menüsünde (ayrı eylem sırası yok).
+  const payMenu = (row: OverviewRow) => (canPay && row.enEskiOdenmemis ? (
+    <ActionMenu
+      label={`${row.doctor.fullName} için işlemler`}
+      items={[{
+        key: "pay",
+        label: `${monthName(row.enEskiOdenmemis.year, row.enEskiOdenmemis.month)} hakedişini öde`,
+        icon: Wallet,
+        onSelect: () => payOldest(row),
+      }]}
+    />
+  ) : null);
 
   const payButton = (row: OverviewRow) => (canPay && row.enEskiOdenmemis ? (
     <Button
@@ -132,7 +147,7 @@ export function HakedisTab({ active, refreshKey, selectedDoctorId, onSelectDocto
         {row.odenecekAy} ay{row.enEskiOdenmemis ? ` · en eskisi ${monthName(row.enEskiOdenmemis.year, row.enEskiOdenmemis.month)}` : ""}
       </p>
     </div>
-  ) : <span className="text-sm text-slate-500">Ödenecek yok</span>);
+  ) : null); // Ödenecek yoksa hücre boş (her satırda "Ödenecek yok" tekrar etmez).
 
   const columns: ListTableColumn<OverviewRow>[] = [
     { key: "doktor", header: "Doktor", render: doctorCell },
@@ -148,7 +163,10 @@ export function HakedisTab({ active, refreshKey, selectedDoctorId, onSelectDocto
       header: "Bu ay biriken",
       headerHint: "İçinde bulunulan ayın hakedişi; yalnız bilgi.",
       align: "right",
-      render: (row) => <span className="text-sm tabular-nums text-slate-500">{money(row.buAy?.hakedilen ?? 0)}</span>,
+      // Sıfır ise boş: yalnız biriken tutar göze çarpar.
+      render: (row) => (Math.abs(row.buAy?.hakedilen ?? 0) >= 0.005
+        ? <span className="text-sm tabular-nums text-slate-500">{money(row.buAy.hakedilen)}</span>
+        : null),
     },
     ...(canPay ? [{ key: "islem", header: "", align: "right" as const, render: payButton }] : []),
   ];
@@ -173,21 +191,23 @@ export function HakedisTab({ active, refreshKey, selectedDoctorId, onSelectDocto
         getRowAriaLabel={(row) => `${row.doctor.fullName} hakediş dökümünü aç`}
         emptyText="Hakediş hesaplanacak doktor yok"
         emptyDescription="Personel ekranında doktor tanımlandığında burada görünür."
-        mobileCard={(row) => (
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              {doctorCell(row)}
-              <p className="mt-0.5 text-xs text-slate-500">
-                {row.enEskiOdenmemis ? `En eski: ${monthName(row.enEskiOdenmemis.year, row.enEskiOdenmemis.month)}` : "Ödenecek ay yok"}
-                {" · "}Bu ay {money(row.buAy?.hakedilen ?? 0)}
-              </p>
+        // Telefon kartı: yalnız istisna olan bilgi (en eski ödenmemiş ay, bu ay biriken > 0); ödeme sağ üstte "…".
+        mobileCard={(row) => {
+          const meta = [
+            row.enEskiOdenmemis ? `En eski: ${monthName(row.enEskiOdenmemis.year, row.enEskiOdenmemis.month)}` : "",
+            Math.abs(row.buAy?.hakedilen ?? 0) >= 0.005 ? `Bu ay ${money(row.buAy.hakedilen)}` : "",
+          ].filter(Boolean).join(" · ");
+          return (
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                {doctorCell(row)}
+                {meta && <p className="mt-0.5 text-xs text-slate-500">{meta}</p>}
+              </div>
+              {row.odenecek > 0.5 && <span className="shrink-0 font-bold tabular-nums text-slate-900">{money(row.odenecek)}</span>}
             </div>
-            <div className="flex shrink-0 flex-col items-end gap-1.5">
-              <span className={`font-bold tabular-nums ${row.odenecek > 0.5 ? "text-slate-900" : "text-slate-400"}`}>{money(row.odenecek)}</span>
-              {payButton(row)}
-            </div>
-          </div>
-        )}
+          );
+        }}
+        mobileCardActions={canPay ? payMenu : undefined}
       />
     </div>
   );

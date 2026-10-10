@@ -5,7 +5,7 @@ import { CalendarDays, CalendarPlus, ExternalLink } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { DescriptionList } from "@/components/ui/DescriptionList";
-import { ListTable, EmptyValue, type ListTableColumn } from "@/components/ui/ListTable";
+import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { Modal } from "@/components/ui/Modal";
 import { ChoiceCards } from "@/components/ui/ChoiceCards";
 import { formatDateText } from "@/components/ui/Money";
@@ -16,7 +16,7 @@ import { canMarkNoShow, isStaleWaitingAppointment } from "@/lib/appointment-stat
 import { parseAppointmentNote } from "@/lib/appointment-follow-up";
 import { turkeyDateKey } from "@/lib/tz";
 import { usePatientFile } from "./PatientFileContext";
-import { appointmentStatusView, appointmentTypeLabel, type Appt } from "./patient-file-shared";
+import { appointmentStatusView, appointmentTypeLabel, sharedName, type Appt } from "./patient-file-shared";
 
 // Ham durum → ekrandaki ad. Ham BEKLIYOR "Planlandı", ham GELDI "Bekliyor"
 // (hasta geldi, bekleme salonunda) yazar — kullanıcı geri bildirimiyle
@@ -33,16 +33,14 @@ const PAST_PREVIEW = 10;
 
 const timeRange = (appointment: Appt) => `${formatDateText(appointment.startAt, "time")}–${formatDateText(appointment.endAt, "time")}`;
 
+// Tek rozet: günü geçmiş ama işaretlenmemiş randevuda durum adı ve uyarı aynı
+// rozette ("Planlandı · işaretlenmedi"); önceden yan yana iki rozet vardı.
 function StatusCell({ appointment }: { appointment: Appt }) {
   const view = appointmentStatusView(appointment.status);
-  return (
-    <span className="inline-flex flex-wrap items-center gap-1.5">
-      <Badge tone={view.tone}>{view.label}</Badge>
-      {isStaleWaitingAppointment(appointment.status, appointment.startAt) && (
-        <Badge tone="warning" title="Randevu günü geçti ama geldi/gelmedi işaretlenmedi">İşaretlenmedi</Badge>
-      )}
-    </span>
-  );
+  if (isStaleWaitingAppointment(appointment.status, appointment.startAt)) {
+    return <Badge tone="warning" title="Randevu günü geçti ama geldi/gelmedi işaretlenmedi">{view.label} · işaretlenmedi</Badge>;
+  }
+  return <Badge tone={view.tone}>{view.label}</Badge>;
 }
 
 /**
@@ -68,7 +66,8 @@ export function AppointmentsTab() {
     };
   }, [data.appointments]);
 
-  const columns: ListTableColumn<Appt>[] = [
+  // Bütün satırlar aynı hekimdeyse ad başlık altında bir kez (sütun kalkar).
+  const columns = (sameDoctor: string | null): ListTableColumn<Appt>[] => [
     {
       key: "date",
       header: "Tarih",
@@ -79,16 +78,16 @@ export function AppointmentsTab() {
         </span>
       ),
     },
-    { key: "doctor", header: "Hekim", render: (appointment) => appointment.doctor?.fullName || <EmptyValue /> },
+    ...(sameDoctor ? [] : [{ key: "doctor", header: "Hekim", render: (appointment: Appt) => appointment.doctor?.fullName || null }]),
     { key: "type", header: "Tür", render: (appointment) => appointmentTypeLabel(appointment.type) },
     { key: "status", header: "Durum", render: (appointment) => <StatusCell appointment={appointment} /> },
   ];
 
-  const mobileCard = (appointment: Appt) => (
+  const renderMobileCard = (appointment: Appt, sameDoctor: string | null) => (
     <div className="flex items-start justify-between gap-3">
       <div className="min-w-0">
         <p className="text-sm font-semibold text-slate-800">{formatDateText(appointment.startAt, "long")} · <span className="tabular-nums">{timeRange(appointment)}</span></p>
-        <p className="mt-0.5 text-xs text-slate-500">{[appointment.doctor?.fullName, appointmentTypeLabel(appointment.type)].filter(Boolean).join(" · ")}</p>
+        <p className="mt-0.5 text-xs text-slate-500">{[sameDoctor ? "" : appointment.doctor?.fullName, appointmentTypeLabel(appointment.type)].filter(Boolean).join(" · ")}</p>
       </div>
       <StatusCell appointment={appointment} />
     </div>
@@ -145,18 +144,21 @@ export function AppointmentsTab() {
       })
     : [];
   const shownPast = showAllPast ? past : past.slice(0, PAST_PREVIEW);
+  const upcomingDoctor = sharedName(upcoming, (appointment) => appointment.doctor?.fullName);
+  const pastDoctor = sharedName(shownPast, (appointment) => appointment.doctor?.fullName);
 
   return (
     <div className="space-y-4">
       <ListTable
         title="Yaklaşan randevular"
+        subtitle={upcomingDoctor ? `Hekim: ${upcomingDoctor}` : undefined}
         actions={canWrite ? <Button size="sm" variant="secondary" icon={CalendarPlus} href={appointmentHref}>Yeni randevu</Button> : undefined}
-        columns={columns}
+        columns={columns(upcomingDoctor)}
         rows={upcoming}
         rowKey={(appointment) => appointment.id}
         onRowClick={setSelected}
         getRowAriaLabel={(appointment) => `${formatDateText(appointment.startAt, "datetime")} randevusunun ayrıntısı`}
-        mobileCard={mobileCard}
+        mobileCard={(appointment) => renderMobileCard(appointment, upcomingDoctor)}
         emptyIcon={CalendarDays}
         emptyText="Yaklaşan randevu yok"
       />
@@ -165,13 +167,13 @@ export function AppointmentsTab() {
         <div className="space-y-2">
           <ListTable
             title="Geçmiş randevular"
-            subtitle={noShowCount > 0 ? `${noShowCount} kez gelmedi` : undefined}
-            columns={columns}
+            subtitle={[noShowCount > 0 ? `${noShowCount} kez gelmedi` : "", pastDoctor ? `Hekim: ${pastDoctor}` : ""].filter(Boolean).join(" · ") || undefined}
+            columns={columns(pastDoctor)}
             rows={shownPast}
             rowKey={(appointment) => appointment.id}
             onRowClick={setSelected}
             getRowAriaLabel={(appointment) => `${formatDateText(appointment.startAt, "datetime")} randevusunun ayrıntısı`}
-            mobileCard={mobileCard}
+            mobileCard={(appointment) => renderMobileCard(appointment, pastDoctor)}
           />
           {past.length > PAST_PREVIEW && (
             <Button variant="ghost" size="sm" onClick={() => setShowAllPast((current) => !current)} aria-expanded={showAllPast}>

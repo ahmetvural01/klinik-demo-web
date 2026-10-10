@@ -70,7 +70,7 @@ export default function RandevuAraligi({ canWrite }: { canWrite: boolean }) {
     : [...APPOINTMENT_INTERVAL_OPTIONS];
 
   return (
-    <Section icon={CalendarClock} title="Randevu aralığı" description="Takvimde saatler bu aralıkla listelenir; yeni randevunun süresi olarak da önerilir.">
+    <Section icon={CalendarClock} title="Randevu aralığı" description="Takvimin saat aralığı; yeni randevuya süre olarak da önerilir.">
       {loadError ? (
         <LoadErrorState compact message={loadError} onRetry={() => setReloadKey((key) => key + 1)} />
       ) : value === null ? (

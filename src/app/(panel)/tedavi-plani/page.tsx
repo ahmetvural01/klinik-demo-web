@@ -152,7 +152,8 @@ export default function TedaviPlaniPage() {
 
   const progressCell = (plan: TreatmentPlan) => {
     const progress = planProgress(plan);
-    if (progress.activeCount === 0) return <span className="text-xs text-slate-400">—</span>;
+    // Adımı olmayan planda hücre boş kalır ("—" yazılmaz).
+    if (progress.activeCount === 0) return null;
     return (
       <ProgressBar
         className="min-w-[8rem]"
@@ -171,15 +172,17 @@ export default function TedaviPlaniPage() {
     return <Badge tone={status.tone} className="whitespace-nowrap">{status.label}</Badge>;
   };
 
+  // Hekime süzülmüş listede hekim adı her satırda tekrar etmez (süzgeç
+  // etiketinde yazıyor); yalnız tarih kalır.
   const columns: ListTableColumn<TreatmentPlan>[] = [
     {
       key: "plan",
       header: "Plan",
       render: (plan) => (
         <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-slate-900">{plan.title}</p>
+          <p className="truncate text-sm font-semibold text-slate-900" title={plan.title}>{plan.title}</p>
           <p className="truncate text-xs text-slate-500">
-            {plan.doctor.fullName} · <DateText value={plan.createdAt} />
+            {doctorFilter ? null : <>{plan.doctor.fullName} · </>}<DateText value={plan.createdAt} />
           </p>
         </div>
       ),
@@ -196,7 +199,6 @@ export default function TedaviPlaniPage() {
       <PageHeader
         icon="tedavi"
         title="Tedavi planları"
-        description="Hastalara hazırlanan planlar ve ilerlemesi."
         back={patientId ? { href: `/hasta-detay?id=${encodeURIComponent(patientId)}&tab=tedavi`, label: "Hasta dosyası" } : undefined}
         actions={canWrite ? <Button icon={Plus} onClick={openNew}>Yeni tedavi planı</Button> : undefined}
       />
@@ -215,29 +217,32 @@ export default function TedaviPlaniPage() {
         ]}
       />
 
-      <Toolbar
-        filterCount={doctorFilter ? 1 : 0}
-        filters={(
-          <DoctorSelect
-            value={doctorFilter}
-            onChange={(doctorId, doctor) => { setDoctorFilter(doctorId); setDoctorFilterName(doctor?.fullName || ""); }}
-            emptyLabel="Tüm hekimler"
-            aria-label="Hekim"
-            className="sm:w-56"
-          />
-        )}
-      >
-        <SearchInput
-          value={search}
-          onChange={setSearch}
-          placeholder="Hasta veya plan adı ara"
-          slashShortcut
-          wrapperClassName="flex-1 min-w-[220px]"
-        />
-      </Toolbar>
       <ActiveFilters filters={filters} onClearAll={() => { clearPatient(); setDoctorFilter(""); setDoctorFilterName(""); }} />
 
+      {/* Arama ve hekim süzgeci listenin kartının üst şeridi (ayrı kart değil). */}
       <ListTable<TreatmentPlan>
+        toolbar={(
+          <Toolbar
+            filterCount={doctorFilter ? 1 : 0}
+            filters={(
+              <DoctorSelect
+                value={doctorFilter}
+                onChange={(doctorId, doctor) => { setDoctorFilter(doctorId); setDoctorFilterName(doctor?.fullName || ""); }}
+                emptyLabel="Tüm hekimler"
+                aria-label="Hekim"
+                className="sm:w-56"
+              />
+            )}
+          >
+            <SearchInput
+              value={search}
+              onChange={setSearch}
+              placeholder="Hasta veya plan adı ara"
+              slashShortcut
+              wrapperClassName="flex-1 min-w-[220px]"
+            />
+          </Toolbar>
+        )}
         columns={columns}
         rows={plans}
         rowKey={(plan) => plan.id}
@@ -257,7 +262,7 @@ export default function TedaviPlaniPage() {
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <p className="truncate text-sm font-semibold text-slate-900">{plan.title}</p>
-                <p className="truncate text-xs text-slate-500">{[patientId ? "" : plan.patient.fullName, plan.doctor.fullName].filter(Boolean).join(" · ")}</p>
+                <p className="truncate text-xs text-slate-500">{[patientId ? "" : plan.patient.fullName, doctorFilter ? "" : plan.doctor.fullName].filter(Boolean).join(" · ")}</p>
               </div>
               {statusBadge(plan)}
             </div>

@@ -18,6 +18,12 @@ type ToolbarProps = {
   filters?: ReactNode;
   /** Varsayılandan farklı filtre sayısı — telefondaki düğmede sayaç olarak görünür (arama sayılmaz). */
   filterCount?: number;
+  /**
+   * Çerçevesiz, zeminsiz görünüm (sadelik K1): araç çubuğu ayrı kart
+   * olmasın — sayfa zemininde doğrudan durur. ListTable `toolbar` yuvasında
+   * listenin kartının üst şeridi olur (yuvada `bare` verilmese de çerçeve kalkar).
+   */
+  bare?: boolean;
   className?: string;
 };
 
@@ -30,7 +36,13 @@ type ToolbarProps = {
  * `absolute` açılır kutunuzu koymayın (eskiden `.ui-toolbar` overflow:hidden
  * idi ve bu yüzden Muhasebe "Dışa aktar" menüsü kırpılıyordu).
  *
+ * Liste sayfasında araç çubuğu ve tablo TEK kart görünsün: Toolbar'ı
+ * ListTable'ın `toolbar` yuvasına verin (kartın üst şeridi olur); listenin
+ * üstüne ayrı kart olarak koymayın. Liste yoksa `bare` ile sayfa zemininde
+ * çerçevesiz durur.
+ *
  * Kullanım:
+ *   <ListTable toolbar={<Toolbar …>…</Toolbar>} … />
  *   <Toolbar
  *     actions={<ExportMenu size="md" … />}   // araç çubuğunda md: arama/seçicilerle aynı 40px
  *     filters={<><DateRangeFilter {...period.filterProps} /><DoctorSelect … /></>}
@@ -39,13 +51,14 @@ type ToolbarProps = {
  *     <SearchInput ... wrapperClassName="flex-1 min-w-[220px]" />
  *   </Toolbar>
  */
-export function Toolbar({ children, actions, filters, filterCount = 0, className = "" }: ToolbarProps) {
+export function Toolbar({ children, actions, filters, filterCount = 0, bare = false, className = "" }: ToolbarProps) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const filtersId = useId();
+  const frame = bare ? "ui-toolbar ui-toolbar-bare p-0" : "ui-toolbar p-2.5";
 
   if (!filters) {
     return (
-      <div className={`ui-toolbar flex flex-col gap-2 p-2.5 sm:flex-row sm:flex-wrap sm:items-center ${className}`}>
+      <div className={`${frame} flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center ${className}`}>
         <div className="flex min-w-0 flex-1 flex-col gap-2 sm:min-w-[220px] sm:flex-row sm:flex-wrap sm:items-center">{children}</div>
         {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
       </div>
@@ -56,7 +69,7 @@ export function Toolbar({ children, actions, filters, filterCount = 0, className
   // Masaüstünde (sm+) `order` sıfırlanır, filtre kutusu `contents` olur ve
   // kontroller aramanın yanında tek satıra dizilir; düğme gizlenir.
   return (
-    <div className={`ui-toolbar flex flex-col gap-2 p-2.5 sm:flex-row sm:flex-wrap sm:items-center ${className}`}>
+    <div className={`${frame} flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center ${className}`}>
       {children && (
         // sm:min-w-[220px]: süzgeçler sığmayınca arama ezilmesin; süzgeçler alt satıra iner.
         <div className="order-1 flex min-w-0 flex-1 flex-col gap-2 sm:order-none sm:min-w-[220px] sm:flex-row sm:flex-wrap sm:items-center">{children}</div>
@@ -94,7 +107,8 @@ export function ActiveFilters({ filters, onClearAll }: { filters: ActiveFilter[]
   if (filters.length === 0) return null;
   return (
     // role="group": aria-label rolsüz <div>'de yok sayılıyordu.
-    <div role="group" className="flex flex-wrap items-center gap-1.5" aria-label="Uygulanan filtreler">
+    // ui-active-filters: ListTable `toolbar` yuvasında araç çubuğuyla aynı iç boşluğu alır.
+    <div role="group" className="ui-active-filters flex flex-wrap items-center gap-1.5" aria-label="Uygulanan filtreler">
       {filters.map((filter) => (
         <span key={filter.key} className="inline-flex items-center gap-1 rounded-full border border-primary/20 bg-primary/5 py-1 pl-3 pr-1 text-xs font-semibold text-primary">
           {filter.label}

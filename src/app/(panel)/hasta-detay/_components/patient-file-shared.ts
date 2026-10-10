@@ -418,6 +418,19 @@ export const newIdempotencyKey = (prefix = "hd") =>
     ? crypto.randomUUID()
     : `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
+/**
+ * Listedeki bütün satırlar aynı kişiye aitse o kişinin adı (yoksa null).
+ * Hasta dosyasındaki listelerde "Hekim" sütunu her satırda aynı adı tekrar
+ * ediyordu ("Dr. Demo Doktor" × 7): ad bir kez liste başlığının altında
+ * yazılır, sütun kalkar. Farklı hekimler varsa sütun yerinde kalır.
+ */
+export function sharedName<T>(rows: readonly T[], nameOf: (row: T) => string | null | undefined): string | null {
+  if (rows.length < 2) return null;
+  const first = nameOf(rows[0])?.trim();
+  if (!first) return null;
+  return rows.every((row) => nameOf(row)?.trim() === first) ? first : null;
+}
+
 /** Sunucu hata gövdesinden kullanıcıya gösterilecek mesaj. */
 export function errorMessageOf(body: unknown, fallback: string) {
   if (body && typeof body === "object") {

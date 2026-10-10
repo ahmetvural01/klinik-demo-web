@@ -77,7 +77,7 @@ export function ChoiceCards<V extends string>({ label, options, value, onChange,
   };
 
   const grid = variant === "pills"
-    ? "flex flex-wrap gap-2"
+    ? "flex flex-wrap gap-1.5"
     : `grid gap-2 ${columns === 1 ? "grid-cols-1" : columns === 3 ? "grid-cols-1 sm:grid-cols-3" : "grid-cols-1 sm:grid-cols-2"}`;
   // Hatalı grupta seçilebilir (seçilmemiş) seçeneklerin kenarı kırmızılaşır
   // (FormField'daki hatalı alan görünümüyle aynı dil).
@@ -123,8 +123,11 @@ export function ChoiceCards<V extends string>({ label, options, value, onChange,
               disabled={option.disabled}
               title={option.disabled ? option.disabledReason : undefined}
               onClick={() => onChange(option.value)}
+              // Çipler sakin (sadelik): 32px, seçili açık marka dolgusu, seçili olmayan
+              // çerçevesiz açık gri; hatalı grupta kırmızı kenar kalır. Dokunmatikte
+              // dokunma alanı ui-touch-target ile 36px'e genişler.
               className={variant === "pills"
-                ? `inline-flex min-h-9 items-center gap-1.5 rounded-full border px-3.5 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-50 ${selected ? "border-primary bg-primary/10 text-primary" : `${idleBorder(option)} bg-white text-slate-700 hover:border-slate-300`}`
+                ? `ui-touch-target inline-flex !min-h-8 items-center gap-1.5 rounded-full border px-3 py-1 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-50 ${selected ? "border-transparent bg-primary/[0.12] text-primary" : `${error && !option.disabled ? "border-red-300 bg-white" : "border-transparent bg-slate-100"} text-slate-700 hover:bg-slate-200/70`}`
                 : `flex items-start gap-3 rounded-[var(--radius-surface)] border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed ${selected ? "border-primary bg-primary/[0.06]" : `${idleBorder(option)} bg-white hover:border-slate-300`}`}
             >
               {variant === "cards" && (
@@ -135,7 +138,7 @@ export function ChoiceCards<V extends string>({ label, options, value, onChange,
               {variant === "pills" ? (
                 <>
                   <span className="min-w-0">
-                    <span className={`block text-sm font-semibold ${selected ? "text-primary" : "text-slate-800"}`}>{option.label}</span>
+                    <span className={`block text-sm leading-5 ${selected ? "font-semibold text-primary" : "font-medium text-slate-700"}`}>{option.label}</span>
                   </span>
                   {countBadge(option, selected)}
                 </>

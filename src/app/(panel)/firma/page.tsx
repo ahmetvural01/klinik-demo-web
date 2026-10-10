@@ -2,7 +2,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { FlaskConical, Plus, ShoppingCart } from "lucide-react";
+import { FlaskConical, PackageCheck, Plus, ShoppingCart, Wallet } from "lucide-react";
 import { showToastSafe } from "@/lib/toast-client";
 import { formatCurrency, formatPhoneNumber } from "@/lib/format";
 import { DATE_PRESET_LABELS } from "@/lib/date-presets";
@@ -17,7 +17,7 @@ import { ExportMenu } from "@/components/ui/ExportMenu";
 import { DateRangeFilter } from "@/components/ui/DateRangeFilter";
 import { Badge } from "@/components/ui/Badge";
 import { Select } from "@/components/ui/Input";
-import { ListTable, EmptyValue, type ListSort, type ListTableColumn } from "@/components/ui/ListTable";
+import { ListTable, type ListSort, type ListTableColumn } from "@/components/ui/ListTable";
 import { DateText, Money } from "@/components/ui/Money";
 import { createSceneIllustration } from "@/components/ui/SceneIllustration";
 import { usePermissions } from "@/components/auth/PermissionProvider";
@@ -46,6 +46,12 @@ type FirmaView = typeof VIEW_KEYS[number];
 type DurumFilter = "aktif" | "pasif" | "tumu";
 const PURCHASE_PRESETS = ["ay", "gecen-ay", "3ay", "yil", "ozel"] as const;
 const DAY_MS = 86_400_000;
+
+/**
+ * Satırda gösterilecek tür: olağan "Tedarikçi" her satırda tekrar etmez
+ * (sadelik K5); yalnız farklı türler (Laboratuvar, Hizmet sağlayıcı…) yazılır.
+ */
+const kategoriText = (kategori: string) => (kategori === "TEDARICI" ? "" : FIRMA_KATEGORILERI[kategori] || kategori);
 
 /** Siparişin kaç gündür beklediği (yalnız istemcide, veri gelince hesaplanır). */
 function waitingDays(tarih: string) {
@@ -243,18 +249,21 @@ function FirmaContent() {
     showToastSafe({ title: "Dosya indirildi", message: `${filteredFirmas.length} tedarikçi Excel'de açılabilir CSV olarak indirildi.`, type: "success" });
   };
 
+  const canPayFirma = (firma: Firma) => canWriteFinance && firma.isActive && firma.bakiye > 0;
+  const firmaMenuItems = (firma: Firma): ActionMenuItem[] => [
+    ...(firma.isActive && firma.kategori !== "LAB" && canPurchase
+      ? [{ key: "satinalma", label: "Satın alma ekle", icon: ShoppingCart, onSelect: () => purchaseManager.openAddPurchase(firma.id) }]
+      : []),
+    ...(firma.isActive && firma.kategori === "LAB" && canWriteLab
+      ? [{ key: "lab", label: "Laboratuvar işi ekle", icon: FlaskConical, href: `/lab?yeni=1&labName=${encodeURIComponent(firma.name)}` }]
+      : []),
+  ];
+
   const firmaActions = (firma: Firma) => {
-    const menu: ActionMenuItem[] = [
-      ...(firma.isActive && firma.kategori !== "LAB" && canPurchase
-        ? [{ key: "satinalma", label: "Satın alma ekle", icon: ShoppingCart, onSelect: () => purchaseManager.openAddPurchase(firma.id) }]
-        : []),
-      ...(firma.isActive && firma.kategori === "LAB" && canWriteLab
-        ? [{ key: "lab", label: "Laboratuvar işi ekle", icon: FlaskConical, href: `/lab?yeni=1&labName=${encodeURIComponent(firma.name)}` }]
-        : []),
-    ];
+    const menu = firmaMenuItems(firma);
     return (
       <div className="flex justify-end gap-1.5">
-        {canWriteFinance && firma.isActive && firma.bakiye > 0 && (
+        {canPayFirma(firma) && (
           <Button size="sm" variant="secondary" onClick={() => void purchaseManager.openFirmaPayment(firma.id)} aria-label={`${firma.name} için ödeme yap`}>Ödeme yap</Button>
         )}
         {menu.length > 0 && <ActionMenu items={menu} label={`${firma.name} işlemleri`} />}
@@ -262,13 +271,21 @@ function FirmaContent() {
     );
   };
 
+  // Telefon: bütün satır eylemleri kartın sağ üst köşesindeki "…" menüsünde (ayrı eylem sırası yok).
+  const firmaMobileMenu = (firma: Firma) => {
+    const items: ActionMenuItem[] = [
+      ...(canPayFirma(firma) ? [{ key: "odeme", label: "Ödeme yap", icon: Wallet, onSelect: () => void purchaseManager.openFirmaPayment(firma.id) }] : []),
+      ...firmaMenuItems(firma),
+    ];
+    return items.length > 0 ? <ActionMenu items={items} label={`${firma.name} işlemleri`} /> : null;
+  };
+
+  // Borcu olmayan tedarikçide hücre boş (her satırda "Borç yok" tekrar etmez); fazla ödeme yazılır.
   const balanceCell = (firma: Firma) => firma.bakiye > 0
     ? <Money value={firma.bakiye} className="font-bold text-slate-900" />
     : firma.bakiye < 0
-      // Fazla ödeme: önceden "—" ile gizleniyordu.
       ? <span className="whitespace-nowrap text-xs font-semibold text-primary">Alacak <Money value={-firma.bakiye} /></span>
-      // Borcu olmayan tedarikçide "—" eksik bilgi gibi okunuyordu.
-      : <span className="whitespace-nowrap text-xs text-slate-500">Borç yok</span>;
+      : null;
 
   const firmaColumns: ListTableColumn<Firma>[] = [
     {
@@ -276,34 +293,40 @@ function FirmaContent() {
       header: "Tedarikçi",
       sortKey: "name",
       cellClassName: "max-w-[300px]",
-      render: (firma) => (
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <Link href={`/firma-detay?id=${firma.id}`} className="truncate font-semibold text-slate-900 hover:text-primary">{firma.name}</Link>
-            {!firma.isActive && <Badge tone="neutral">Pasif</Badge>}
+      render: (firma) => {
+        // İkinci satır yalnız bilgi varsa: farklı tür, yetkili kişi, bekleyen sipariş.
+        const detail = [
+          kategoriText(firma.kategori),
+          firma.primaryKontakt?.ad,
+          firma.bekleyenSiparis ? `${firma.bekleyenSiparis} sipariş bekliyor` : "",
+        ].filter(Boolean).join(" · ");
+        return (
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <Link href={`/firma-detay?id=${firma.id}`} className="truncate font-semibold text-slate-900 hover:text-primary">{firma.name}</Link>
+              {!firma.isActive && <Badge tone="neutral">Pasif</Badge>}
+            </div>
+            {detail && <p className="truncate text-xs text-slate-500">{detail}</p>}
           </div>
-          <p className="truncate text-xs text-slate-500">
-            {[FIRMA_KATEGORILERI[firma.kategori] || firma.kategori, firma.primaryKontakt?.ad].filter(Boolean).join(" · ")}
-            {firma.bekleyenSiparis ? ` · ${firma.bekleyenSiparis} sipariş bekliyor` : ""}
-          </p>
-        </div>
-      ),
+        );
+      },
     },
     {
       key: "phone",
       header: "Telefon",
       render: (firma) => firma.phone
         ? <a href={telHref(firma.phone)} className="whitespace-nowrap text-slate-700 hover:text-primary">{formatPhoneNumber(firma.phone)}</a>
-        : <EmptyValue />,
+        : null,
     },
     { key: "bakiye", header: "Kalan borç", align: "right", sortKey: "bakiye", render: balanceCell },
     {
       key: "son",
       header: "Son işlem",
       sortKey: "son",
+      // İşlemi olmayan tedarikçide hücre boş ("İşlem yok" her satırda tekrar etmez).
       render: (firma) => firma.sonIslemTarihi
         ? <DateText value={firma.sonIslemTarihi} className="text-slate-600" />
-        : <span className="whitespace-nowrap text-xs text-slate-500">İşlem yok</span>,
+        : null,
     },
     { key: "actions", header: "", align: "right", render: firmaActions },
   ];
@@ -340,10 +363,20 @@ function FirmaContent() {
     },
   ];
 
+  const isAwaitingDelivery = (row: Purchase) => row.receiptStatus === "SIPARIS_VERILDI";
+  const receiptBadge = (row: Purchase) => <Badge tone={RECEIPT_STATUS_META[row.receiptStatus].tone}>{RECEIPT_STATUS_META[row.receiptStatus].label}</Badge>;
+  // Telefon: "Teslim al" kartın sağ üst köşesindeki "…" menüsünde (ayrı eylem sırası yok).
+  const orderMobileMenu = (order: Purchase) => (canPurchase ? (
+    <ActionMenu
+      label={`${order.firma?.name || "Tedarikçi"} siparişi işlemleri`}
+      items={[{ key: "teslim", label: "Teslim al", icon: PackageCheck, onSelect: () => void purchaseManager.openReceivePurchase(order.id) }]}
+    />
+  ) : null);
+
   const purchaseColumns: ListTableColumn<Purchase>[] = [
     { key: "tarih", header: "Tarih", render: (row) => <DateText value={row.tarih} className="whitespace-nowrap" /> },
     { key: "firma", header: "Tedarikçi", render: (row) => <span className="font-semibold text-slate-900">{row.firma?.name || "—"}</span> },
-    { key: "fatura", header: "Fatura no", render: (row) => row.faturaNo ? <span className="text-slate-700">{row.faturaNo}</span> : <EmptyValue /> },
+    { key: "fatura", header: "Fatura no", render: (row) => row.faturaNo ? <span className="text-slate-700">{row.faturaNo}</span> : null },
     {
       key: "urunler",
       header: "Ürünler",
@@ -351,7 +384,11 @@ function FirmaContent() {
       render: (row) => <span className="block truncate text-slate-700">{summarizeLines(row.lines) || `${row._count?.items ?? 0} kalem`}</span>,
     },
     { key: "tutar", header: "Tutar", align: "right", render: (row) => <Money value={row.total ?? null} className="font-semibold text-slate-900" /> },
-    { key: "durum", header: "Durum", render: (row) => <Badge tone={RECEIPT_STATUS_META[row.receiptStatus].tone}>{RECEIPT_STATUS_META[row.receiptStatus].label}</Badge> },
+    // Olağan durum (teslim alındı) her satırda rozet olarak tekrar etmez; yalnız teslimat
+    // bekleyen kayıt işaretlenir. Hiç bekleyen yoksa sütun da yok.
+    ...(filteredPurchases.some(isAwaitingDelivery)
+      ? [{ key: "durum", header: "Durum", render: (row: Purchase) => (isAwaitingDelivery(row) ? receiptBadge(row) : null) }]
+      : []),
   ];
 
   const firmaFilters = [
@@ -386,6 +423,26 @@ function FirmaContent() {
     </>
   ) : undefined;
 
+  // Arama ve süzgeçler listenin kartının üst şeridi: araç çubuğu ayrı kart değil (sadelik K1).
+  const toolbar = (
+    <>
+      <Toolbar
+        filters={toolbarFilters}
+        filterCount={firmaFilters.length}
+        actions={toolbarActions}
+      >
+        <SearchInput
+          value={search}
+          onChange={setSearch}
+          placeholder={view === "firmalar" ? "Tedarikçi, telefon, IBAN veya yetkili ara" : "Tedarikçi, ürün veya fatura no ara"}
+          slashShortcut
+          wrapperClassName="flex-1 min-w-[220px]"
+        />
+      </Toolbar>
+      <ActiveFilters filters={firmaFilters} onClearAll={() => { setDurum("aktif"); setKategori(""); period.reset(); }} />
+    </>
+  );
+
   return (
     <div className="space-y-3">
       <PageHeader
@@ -408,23 +465,9 @@ function FirmaContent() {
         ]}
       />
 
-      <Toolbar
-        filters={toolbarFilters}
-        filterCount={firmaFilters.length}
-        actions={toolbarActions}
-      >
-        <SearchInput
-          value={search}
-          onChange={setSearch}
-          placeholder={view === "firmalar" ? "Tedarikçi, telefon, IBAN veya yetkili ara" : "Tedarikçi, ürün veya fatura no ara"}
-          slashShortcut
-          wrapperClassName="flex-1 min-w-[220px]"
-        />
-      </Toolbar>
-      <ActiveFilters filters={firmaFilters} onClearAll={() => { setDurum("aktif"); setKategori(""); period.reset(); }} />
-
       {view === "firmalar" && (
         <ListTable<Firma>
+          toolbar={toolbar}
           columns={firmaColumns}
           rows={filteredFirmas}
           rowKey={(firma) => firma.id}
@@ -441,26 +484,31 @@ function FirmaContent() {
           getRowAriaLabel={(firma) => `${firma.name} tedarikçi sayfasını aç`}
           sort={sort}
           onSortChange={(key) => setSort((current) => ({ key, dir: current.key === key && current.dir === "desc" ? "asc" : "desc" }))}
-          mobileCard={(firma) => (
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="truncate font-semibold text-slate-900">{firma.name}{!firma.isActive ? " · Pasif" : ""}</p>
-                <p className="truncate text-xs text-slate-500">
-                  {FIRMA_KATEGORILERI[firma.kategori] || firma.kategori}
-                  {firma.phone ? ` · ${formatPhoneNumber(firma.phone)}` : ""}
-                  {firma.bekleyenSiparis ? ` · ${firma.bekleyenSiparis} sipariş bekliyor` : ""}
-                </p>
+          mobileCard={(firma) => {
+            const detail = [
+              kategoriText(firma.kategori),
+              firma.phone ? formatPhoneNumber(firma.phone) : "",
+              firma.bekleyenSiparis ? `${firma.bekleyenSiparis} sipariş bekliyor` : "",
+            ].filter(Boolean).join(" · ");
+            return (
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate font-semibold text-slate-900">{firma.name}{!firma.isActive ? " · Pasif" : ""}</p>
+                  {detail && <p className="truncate text-xs text-slate-500">{detail}</p>}
+                </div>
+                <div className="shrink-0 text-right">
+                  {balanceCell(firma)}
+                </div>
               </div>
-              <div className="shrink-0 text-right">
-                {balanceCell(firma)}
-              </div>
-            </div>
-          )}
+            );
+          }}
+          mobileCardActions={firmaMobileMenu}
         />
       )}
 
       {view === "satinalmalar" && (
         <ListTable<Purchase>
+          toolbar={toolbar}
           columns={purchaseColumns}
           rows={filteredPurchases}
           rowKey={(row) => row.id}
@@ -476,8 +524,10 @@ function FirmaContent() {
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="truncate font-semibold text-slate-900">{row.firma?.name}</p>
-                <p className="truncate text-xs text-slate-500"><DateText value={row.tarih} />{row.faturaNo ? ` · ${row.faturaNo}` : ""} · {summarizeLines(row.lines) || `${row._count?.items ?? 0} kalem`}</p>
-                <Badge tone={RECEIPT_STATUS_META[row.receiptStatus].tone} className="mt-1">{RECEIPT_STATUS_META[row.receiptStatus].label}</Badge>
+                <p className="flex min-w-0 items-center gap-1.5 text-xs text-slate-500">
+                  {isAwaitingDelivery(row) && receiptBadge(row)}
+                  <span className="truncate"><DateText value={row.tarih} />{row.faturaNo ? ` · ${row.faturaNo}` : ""} · {summarizeLines(row.lines) || `${row._count?.items ?? 0} kalem`}</span>
+                </p>
               </div>
               <Money value={row.total ?? null} className="shrink-0 font-semibold text-slate-900" />
             </div>
@@ -487,6 +537,7 @@ function FirmaContent() {
 
       {view === "siparisler" && (
         <ListTable<Purchase>
+          toolbar={toolbar}
           columns={orderColumns}
           rows={filteredOrders}
           rowKey={(order) => order.id}
@@ -498,16 +549,17 @@ function FirmaContent() {
           emptyDescription={searchActive ? undefined : "“Yeni satın alma”da durum “Sipariş verildi” seçilen kayıtlar ürünler gelene kadar burada bekler."}
           onRowClick={(order) => void purchaseManager.openPurchaseDetail(order.id)}
           getRowAriaLabel={(order) => `${order.firma?.name || "Tedarikçi"} siparişini aç`}
+          // Telefon kartı iki satır: tedarikçi + tutar; tarih · ürünler. "Teslim al" sağ üstte "…".
           mobileCard={(order) => (
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="truncate font-semibold text-slate-900">{order.firma?.name}</p>
                 <p className="truncate text-xs text-slate-500"><DateText value={order.tarih} /> · {summarizeLines(order.lines) || `${order._count?.items ?? 0} kalem`}</p>
-                <Money value={order.total ?? null} className="text-xs text-slate-600" />
               </div>
-              {canPurchase && <Button size="sm" variant="secondary" onClick={() => void purchaseManager.openReceivePurchase(order.id)}>Teslim al</Button>}
+              <Money value={order.total ?? null} className="shrink-0 text-sm font-semibold text-slate-900" />
             </div>
           )}
+          mobileCardActions={canPurchase ? orderMobileMenu : undefined}
         />
       )}
 

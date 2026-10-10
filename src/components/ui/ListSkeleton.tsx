@@ -58,7 +58,7 @@ export function TableRowsSkeleton({ rows = 6, columns = 5 }: { rows?: number; co
       {Array.from({ length: rows }).map((_, rowIndex) => (
         <tr key={rowIndex}>
           {Array.from({ length: columns }).map((_, columnIndex) => (
-            <td key={columnIndex} className="px-4 py-3">
+            <td key={columnIndex} className="h-12 px-4 py-2">
               <div
                 className="ui-skeleton-shimmer h-3.5 rounded bg-slate-100"
               />

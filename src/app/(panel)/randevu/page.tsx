@@ -7,10 +7,10 @@ import { CalendarOff, ClipboardCheck, FileSpreadsheet, Inbox, ListChecks, Lock, 
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Tabs } from "@/components/ui/Tabs";
 import { Toolbar } from "@/components/ui/Toolbar";
+import { ActionMenu, type ActionMenuItem } from "@/components/ui/ActionMenu";
 import { Button } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
 import { ChoiceCards } from "@/components/ui/ChoiceCards";
-import { ExportMenu } from "@/components/ui/ExportMenu";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { LoadErrorState } from "@/components/ui/LoadErrorState";
 import { CalendarSkeleton, TableSkeleton } from "@/components/ui/PageSkeleton";
@@ -720,6 +720,44 @@ export default function RandevuPage() {
   const canExport = shownView !== "AY" && !showingStale && hasData;
   const printFailed = () => showToastSafe({ message: "Yazdırma penceresi açılamadı. Tarayıcının açılır pencere iznini kontrol edin.", type: "error" });
   const exportUnavailable = "Gün, hafta ya da liste görünümünde";
+  // Araç çubuğundaki "…" menüsü: kapalı zaman (yönetici) ve dışa aktarım. Ay
+  // görünümünde dışa aktarım pasif ve nedenini söyler (önceden "Dışa aktar" düğmesi).
+  const exportReason = canExport ? undefined : exportUnavailable;
+  const calendarMenuItems: ActionMenuItem[] = [
+    ...(permissions.canManageBlocks ? [{
+      key: "block",
+      label: "Zaman kapat",
+      description: "Bu aralıkta doktora randevu verilemez (izin, toplantı…)",
+      icon: Lock,
+      onSelect: () => setBlockModalOpen(true),
+    }] : []),
+    {
+      key: "print",
+      label: "Çizelgeyi yazdır",
+      icon: Printer,
+      separatorBefore: permissions.canManageBlocks,
+      disabled: !canExport,
+      disabledReason: exportReason,
+      onSelect: () => { if (!printSchedule(exportRows, treatments, exportMeta())) printFailed(); },
+    },
+    {
+      key: "excel",
+      label: "Excel olarak indir",
+      icon: FileSpreadsheet,
+      disabled: !canExport,
+      disabledReason: exportReason,
+      onSelect: () => downloadExcel(exportRows, treatments, exportMeta()),
+    },
+    {
+      key: "room",
+      label: "Oda listesi yazdır",
+      description: "Odalara asılacak sade liste (doktor başına sayfa)",
+      icon: Rows3,
+      disabled: !canExport || shownView === "HAFTA",
+      disabledReason: canExport ? "Gün ya da liste görünümünde" : exportReason,
+      onSelect: () => { if (!printRoomList(dayAppointments, treatments, exportMeta())) printFailed(); },
+    },
+  ];
 
   const pendingTotal = counts.onlineRequests + counts.waitlist;
   // Kapalı gün ama randevu var (ör. Pazar'a verilmiş randevular): takvim
@@ -878,7 +916,11 @@ export default function RandevuPage() {
         )}
       />
 
+      {/* Takvim araç çubuğu sayfa zemininde, çerçevesiz (önceden ayrı bir kartta
+          beş kontrol yan yanaydı): tarih gezinmesi, görünüm, doktor; seyrek
+          işler (Zaman kapat, yazdırma, Excel) satır sonundaki "…" menüsünde. */}
       <Toolbar
+        bare
         filters={(
           <DoctorSelect
             size="sm"
@@ -910,28 +952,7 @@ export default function RandevuPage() {
                 <span className="max-sm:sr-only">Açık kalanlar</span>
               </Button>
             )}
-            {permissions.canManageBlocks && (
-              <Button variant="secondary" size="sm" icon={Lock} onClick={() => setBlockModalOpen(true)}>Zaman kapat</Button>
-            )}
-            {/* Yazdırma/Excel masaüstü işi: telefonda araç çubuğu kalabalıklaşmasın. */}
-            <ExportMenu
-              className="hidden sm:inline-flex"
-              disabled={!canExport}
-              disabledReason={exportUnavailable}
-              items={[
-                { key: "print", label: "Çizelgeyi yazdır", icon: Printer, onSelect: () => { if (!printSchedule(exportRows, treatments, exportMeta())) printFailed(); } },
-                { key: "excel", label: "Excel olarak indir", icon: FileSpreadsheet, onSelect: () => downloadExcel(exportRows, treatments, exportMeta()) },
-                {
-                  key: "room",
-                  label: "Oda listesi yazdır",
-                  description: "Odalara asılacak sade liste (doktor başına sayfa)",
-                  icon: Rows3,
-                  disabled: shownView === "HAFTA",
-                  disabledReason: "Gün ya da liste görünümünde",
-                  onSelect: () => { if (!printRoomList(dayAppointments, treatments, exportMeta())) printFailed(); },
-                },
-              ]}
-            />
+            <ActionMenu label="Takvim işlemleri" items={calendarMenuItems} />
           </>
         )}
       >

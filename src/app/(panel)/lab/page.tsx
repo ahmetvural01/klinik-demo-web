@@ -23,7 +23,7 @@ import { LabOrderDetailModal } from "@/components/lab/LabOrderDetailModal";
 import { LabNewOrderModal } from "@/components/lab/LabNewOrderModal";
 import { LabStatusBadge } from "@/components/lab/LabStatusBadge";
 import { useLabOrderActions } from "@/components/lab/useLabOrderActions";
-import { getLabRowAction } from "@/components/lab/lab-row-action";
+import { getLabRowAction, labStatusLine } from "@/components/lab/lab-row-action";
 import { fetchJson, normalizeLabOrder, normalizeLabOrders, phoneSearchKey, type LabOrderView, type LabTripView } from "@/components/lab/lab-order-model";
 import { cachedGet } from "@/lib/client-cache";
 import { formatPhoneNumber } from "@/lib/format";
@@ -411,23 +411,35 @@ export default function LabPage() {
     );
   };
 
-  const stageLine = (summary: ViewSummary) => (
-    <span className={summary.stage === "late" ? "font-semibold text-red-700" : "text-slate-500"}>{stageDetail(summary)}</span>
-  );
-
-  const workLine = (order: LabOrderView) => {
-    const teeth = teethList(order.teeth);
-    return [teeth.length ? `Diş ${teeth.join(", ")}` : "", order.labName, order.doctor.fullName].filter(Boolean).join(" · ");
+  // Rozetin altındaki TEK kısa satır ("Zirkonyum Alt Yapı · dönüş 14 Eki").
+  // Satır hiçbir zaman ikinciye taşmaz: uzun iş adı kesilir, tarih kesilmez;
+  // cümlenin tamamı (kaçıncı gün dahil) ipucunda ve iş ayrıntısında. Rozetle
+  // aynı anlamı taşıyan metin ("Henüz gönderilmedi", "İş iptal edildi") yazılmaz.
+  const stageLine = (summary: ViewSummary, className = "") => {
+    const line = labStatusLine(summary);
+    if (!line) return null;
+    return (
+      <p title={stageDetail(summary)} className={`flex min-w-0 text-xs ${summary.stage === "late" ? "font-semibold text-red-700" : "text-slate-500"} ${className}`}>
+        {line.what && <span className="truncate">{line.what}</span>}
+        {line.when && <span className="shrink-0 whitespace-nowrap">{line.what ? ` · ${line.when}` : line.when}</span>}
+      </p>
+    );
   };
 
-  // Durum tek sütunda: rozet + o aşamanın tek cümlesi (önceden "Şu an" ve "Durum" iki sütunda aynı şeyi söylüyordu).
+  // Hekim süzgeci seçiliyken her satırda aynı hekim adı yazılmaz (süzgeç etiketinde görünür).
+  const workLine = (order: LabOrderView) => {
+    const teeth = teethList(order.teeth);
+    return [teeth.length ? `Diş ${teeth.join(", ")}` : "", order.labName, doctorFilter ? "" : order.doctor.fullName].filter(Boolean).join(" · ");
+  };
+
+  // Durum tek sütunda, en fazla iki satır: rozet + "sıradaki adım · tarih".
   const statusCell = ({ summary }: Row) => (
-    <div className="min-w-0 space-y-0.5">
-      <div className="flex flex-wrap items-center gap-1">
+    <div className="min-w-0 max-w-[320px] space-y-0.5">
+      <div className="flex items-center gap-1">
         <LabStatusBadge stage={summary.stage} />
         {summary.rework && <Badge tone="neutral" size="sm">Yeniden yapım</Badge>}
       </div>
-      <p className="max-w-[340px] text-xs">{stageLine(summary)}</p>
+      {stageLine(summary)}
     </div>
   );
 
@@ -474,7 +486,6 @@ export default function LabPage() {
       <PageHeader
         icon="flask"
         title="Laboratuvar"
-        description="Laboratuvara giden işler ve sıradaki adım."
         actions={canWriteLab ? <Button icon={Plus} onClick={openNew}>{LAB_LABELS.newOrder}</Button> : undefined}
       />
 
@@ -512,64 +523,71 @@ export default function LabPage() {
           {labOptions.length > 0 && " Yeni lab işi için Laboratuvar türünde firma kartı gerekli; eski işlerdeki adlar firma kartına bağlı değil."}
         </Callout>
       )}
+      {/* Tek satırlık şerit (K7): eylem telefonda da metnin yanında kalır. */}
       {tab === "acik" && counts.late > 0 && (
         <Callout
           tone="critical"
           compact
-          action={<Button size="sm" variant="secondary" onClick={() => setTab("laboratuvarda")}>Gecikenleri göster</Button>}
+          inline
+          action={<Button size="sm" variant="ghost" onClick={() => setTab("laboratuvarda")}>Gecikenleri göster</Button>}
         >
-          {counts.late} iş laboratuvardan zamanında dönmedi.
+          <span className="font-semibold">{counts.late} iş</span> zamanında dönmedi.
         </Callout>
       )}
 
-      <Toolbar
-        filterCount={filters.length}
-        filters={(
+      <ListTable<Row>
+        // Arama + süzgeçler listenin kartının üst şeridi (K1: ayrı kart değil).
+        toolbar={(
           <>
-            <Select aria-label="Laboratuvar" value={labFilter} onChange={(event) => setLabFilter(event.target.value)} className="sm:w-56">
-              <option value="">Tüm laboratuvarlar</option>
-              {labOptions.map(([name, info]) => (
-                <option key={name} value={name}>
-                  {name}{info.open ? ` — ${info.open} açık` : ""}{info.late ? `, ${info.late} gecikmiş` : ""}
-                </option>
-              ))}
-            </Select>
-            <DoctorSelect
-              value={doctorFilter}
-              onChange={(doctorId, doctor) => { setDoctorFilter(doctorId); setDoctorFilterName(doctor?.fullName || ""); }}
-              emptyLabel="Tüm hekimler"
-              aria-label="Hekim"
-              className="sm:w-52"
-            />
+            <Toolbar
+              filterCount={filters.length}
+              filters={(
+                <>
+                  <Select aria-label="Laboratuvar" value={labFilter} onChange={(event) => setLabFilter(event.target.value)} className="sm:w-56">
+                    <option value="">Tüm laboratuvarlar</option>
+                    {labOptions.map(([name, info]) => (
+                      <option key={name} value={name}>
+                        {name}{info.open ? ` — ${info.open} açık` : ""}{info.late ? `, ${info.late} gecikmiş` : ""}
+                      </option>
+                    ))}
+                  </Select>
+                  <DoctorSelect
+                    value={doctorFilter}
+                    onChange={(doctorId, doctor) => { setDoctorFilter(doctorId); setDoctorFilterName(doctor?.fullName || ""); }}
+                    emptyLabel="Tüm hekimler"
+                    aria-label="Hekim"
+                    className="sm:w-52"
+                  />
+                </>
+              )}
+            >
+              <SearchInput
+                value={search}
+                onChange={setSearch}
+                placeholder="Hasta, telefon, hekim, laboratuvar veya iş türü ara"
+                slashShortcut
+                wrapperClassName="flex-1 min-w-[220px]"
+              />
+              {/* Kapanan sekmesinde hangi kapanış türü gösterilsin — telefonda da görünür kalır. */}
+              {isClosedTab && (
+                <ChoiceCards<ClosedKind>
+                  label="Kapanan işler"
+                  labelHidden
+                  variant="pills"
+                  value={closedKind}
+                  onChange={setClosedKind}
+                  options={[{ value: "done", label: "Hastaya takılan" }, { value: "cancelled", label: "İptal edilen" }]}
+                />
+              )}
+            </Toolbar>
+            <ActiveFilters filters={filters} onClearAll={() => { setLabFilter(""); setDoctorFilter(""); setDoctorFilterName(""); }} />
           </>
         )}
-      >
-        <SearchInput
-          value={search}
-          onChange={setSearch}
-          placeholder="Hasta, telefon, hekim, laboratuvar veya iş türü ara"
-          slashShortcut
-          wrapperClassName="flex-1 min-w-[220px]"
-        />
-        {/* Kapanan sekmesinde hangi kapanış türü gösterilsin — telefonda da görünür kalır. */}
-        {isClosedTab && (
-          <ChoiceCards<ClosedKind>
-            label="Kapanan işler"
-            labelHidden
-            variant="pills"
-            value={closedKind}
-            onChange={setClosedKind}
-            options={[{ value: "done", label: "Hastaya takılan" }, { value: "cancelled", label: "İptal edilen" }]}
-          />
-        )}
-      </Toolbar>
-      <ActiveFilters filters={filters} onClearAll={() => { setLabFilter(""); setDoctorFilter(""); setDoctorFilterName(""); }} />
-
-      {closedCapped && (
-        <p className="text-xs text-slate-500">Son {CLOSED_LIMIT} kayıt gösteriliyor. Daha eski bir işi hastanın dosyasındaki Laboratuvar bölümünden açabilirsiniz.</p>
-      )}
-
-      <ListTable<Row>
+        header={closedCapped ? (
+          <p className="border-b border-slate-100 px-4 py-2 text-xs text-slate-500">
+            Son {CLOSED_LIMIT} kayıt gösteriliyor. Daha eski bir işi hastanın dosyasındaki Laboratuvar bölümünden açabilirsiniz.
+          </p>
+        ) : undefined}
         columns={columns}
         rows={pageRows}
         rowKey={({ order }) => order.id}
@@ -585,19 +603,29 @@ export default function LabPage() {
         onRowClick={({ order }) => setDetailOrderId(order.id)}
         getRowAriaLabel={({ order }) => `${order.patient.fullName} — ${order.labType} işinin ayrıntısını aç`}
         rowClassName={({ summary }) => (summary.stage === "late" ? "bg-red-50/40" : summary.stage === "cancelled" ? "opacity-75" : "")}
-        mobileCard={(row) => (
-          <div className="space-y-1.5">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-semibold text-slate-900">{row.order.patient.fullName}</p>
-                <p className="truncate text-xs text-slate-500">{row.order.labType} · {row.order.labName}</p>
+        // Telefon kartı: ad + rozet, iş, ve "sıradaki adım · tarih" ile aynı
+        // satırda tek eylem — eylem ayrı bir sıra oluşturmaz (K9).
+        mobileCard={(row) => {
+          const action = actionCell(row);
+          const line = stageLine(row.summary, "min-w-0 flex-1");
+          return (
+            <div className="space-y-1">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-slate-900">{row.order.patient.fullName}</p>
+                  <p className="truncate text-xs text-slate-500">{row.order.labType} · {row.order.labName}</p>
+                </div>
+                <LabStatusBadge stage={row.summary.stage} />
               </div>
-              <LabStatusBadge stage={row.summary.stage} />
+              {(line || action) && (
+                <div className={`flex items-center justify-between gap-2 ${action ? "min-h-9" : ""}`}>
+                  {line || <span />}
+                  {action && <div className="shrink-0">{action}</div>}
+                </div>
+              )}
             </div>
-            <p className="text-xs">{stageLine(row.summary)}</p>
-            {actionCell(row) && <div className="pt-0.5">{actionCell(row)}</div>}
-          </div>
-        )}
+          );
+        }}
         pager={tabRows.length > PAGE_SIZE ? { page: Math.min(page, pageCount), pageCount, pageSize: PAGE_SIZE, total: tabRows.length, onPageChange: setPage } : undefined}
       />
 

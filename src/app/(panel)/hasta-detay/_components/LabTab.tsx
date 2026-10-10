@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { FlaskConical, Plus } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
-import { ListTable, EmptyValue, type ListTableColumn } from "@/components/ui/ListTable";
+import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { formatDateText } from "@/components/ui/Money";
 import { LabOrderDetailModal } from "@/components/lab/LabOrderDetailModal";
 import { LabStatusBadge } from "@/components/lab/LabStatusBadge";
@@ -101,9 +101,9 @@ export function LabTab() {
 
   const columns: ListTableColumn<Row>[] = [
     { key: "work", header: "İş", render: workCell },
-    { key: "lab", header: "Laboratuvar", render: ({ order }) => order.labName || <EmptyValue /> },
+    { key: "lab", header: "Laboratuvar", render: ({ order }) => order.labName || null },
     { key: "status", header: "Durum", render: statusCell },
-    { key: "date", header: "Açılış", render: ({ order }) => (order.createdAt ? <span className="whitespace-nowrap">{formatDateText(order.createdAt)}</span> : <EmptyValue />) },
+    { key: "date", header: "Açılış", render: ({ order }) => (order.createdAt ? <span className="whitespace-nowrap">{formatDateText(order.createdAt)}</span> : null) },
     ...(canWrite || canComplete ? [{ key: "actions", header: "", align: "right" as const, render: actionButton }] : []),
   ];
 
@@ -121,16 +121,25 @@ export function LabTab() {
         emptyIcon={FlaskConical}
         emptyText="Laboratuvar işi yok"
         emptyDescription={canWrite ? "Kron, protez, plak gibi işleri buradan laboratuvara gönderin ve takip edin." : undefined}
-        mobileCard={(row) => (
-          <div className="space-y-2">
+        // Telefonda eylem sağ üstte (ayrı düğme sırası yok); durum rozeti ikinci satırın başında.
+        mobileCard={(row) => {
+          const teeth = teethList(row.order.teeth);
+          return (
             <div className="flex items-start justify-between gap-3">
-              {workCell(row)}
-              <LabStatusBadge stage={row.summary.stage} />
+              <div className="min-w-0 space-y-1">
+                <p className="text-sm font-semibold text-slate-800">
+                  {row.order.labType}
+                  <span className="font-normal text-slate-500"> · {[teeth.length ? `Diş ${teeth.join(", ")}` : "", row.order.doctor.fullName].filter(Boolean).join(" · ")}</span>
+                </p>
+                <p className={`flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs ${row.summary.stage === "late" ? "font-semibold text-red-700" : "text-slate-500"}`}>
+                  <LabStatusBadge stage={row.summary.stage} />
+                  <span>{[row.order.labName, stageDetail(row.summary)].filter(Boolean).join(" · ")}</span>
+                </p>
+              </div>
+              {actionButton(row) && <div className="shrink-0">{actionButton(row)}</div>}
             </div>
-            <p className={`text-xs ${row.summary.stage === "late" ? "font-semibold text-red-700" : "text-slate-500"}`}>{[row.order.labName, stageDetail(row.summary)].filter(Boolean).join(" · ")}</p>
-            {actionButton(row) && <div>{actionButton(row)}</div>}
-          </div>
-        )}
+          );
+        }}
       />
 
       {/* İş ayrıntısı — Laboratuvar sayfasıyla aynı pencere ve aynı yetki

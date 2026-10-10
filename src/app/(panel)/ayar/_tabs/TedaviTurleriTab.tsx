@@ -2,8 +2,9 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { Palette, Pencil, Plus, Power, Trash2 } from "lucide-react";
+import { ActionMenu, type ActionMenuItem } from "@/components/ui/ActionMenu";
 import { Badge } from "@/components/ui/Badge";
-import { Button, IconButton } from "@/components/ui/Button";
+import { Button } from "@/components/ui/Button";
 import { FormField } from "@/components/ui/FormField";
 import { FormModal } from "@/components/ui/FormModal";
 import { Input } from "@/components/ui/Input";
@@ -173,16 +174,27 @@ export default function RandevuTurleri({ canWrite, scopeBadge }: { canWrite: boo
     }
   };
 
-  // Sil yalnız hiç kullanılmamış türde görünür; kullanılmış tür pasife alınır.
-  const rowActions = (item: AppointmentType) => (
-    <div className="flex shrink-0 justify-end gap-1.5">
-      <IconButton icon={Pencil} title="Düzenle" size="sm" disabled={busyId === item.id} onClick={() => openForm(item)} />
-      <IconButton icon={Power} title={item.isActive ? "Pasife al" : "Yeniden kullanıma aç"} size="sm" disabled={busyId === item.id} onClick={() => void toggleActive(item)} />
-      {!item.appointmentCount && (
-        <IconButton icon={Trash2} title="Sil (hiç kullanılmadı)" tone="danger" size="sm" disabled={busyId === item.id} onClick={() => void remove(item)} />
-      )}
-    </div>
-  );
+  // Satırda çerçeveli ikon kutusu yok (sadelik K3): tüm eylemler satır
+  // sonundaki çerçevesiz "…" menüsünde. Sil yalnız hiç kullanılmamış türde
+  // görünür; kullanılmış tür pasife alınır.
+  const menuItems = (item: AppointmentType): ActionMenuItem[] => {
+    const busy = busyId === item.id;
+    return [
+      { key: "edit", label: "Düzenle", icon: Pencil, disabled: busy, onSelect: () => openForm(item) },
+      {
+        key: "toggle",
+        label: item.isActive ? "Pasife al" : "Yeniden kullanıma aç",
+        description: item.isActive ? "Yeni randevuda seçilemez" : undefined,
+        icon: Power,
+        disabled: busy,
+        onSelect: () => void toggleActive(item),
+      },
+      ...(!item.appointmentCount
+        ? [{ key: "delete", label: "Sil", description: "Hiç kullanılmadı", icon: Trash2, danger: true, separatorBefore: true, disabled: busy, onSelect: () => void remove(item) }]
+        : []),
+    ];
+  };
+  const rowMenu = (item: AppointmentType) => <ActionMenu items={menuItems(item)} label={`${item.label} işlemleri`} />;
 
   // Yalnız istisna (pasif) işaretlenir.
   const nameCell = (item: AppointmentType) => (
@@ -193,7 +205,8 @@ export default function RandevuTurleri({ canWrite, scopeBadge }: { canWrite: boo
     </span>
   );
 
-  const usageText = (item: AppointmentType) => (item.appointmentCount ? `${item.appointmentCount.toLocaleString("tr-TR")} randevu` : "Kullanılmadı");
+  // Yalnız kullanılmış türde sayı görünür; "Kullanılmadı" her satırda tekrar etmez (sadelik K5).
+  const usageText = (item: AppointmentType) => (item.appointmentCount ? `${item.appointmentCount.toLocaleString("tr-TR")} randevu` : "");
 
   const columns: ListTableColumn<AppointmentType>[] = [
     { key: "label", header: "Randevu türü", render: nameCell },
@@ -201,9 +214,9 @@ export default function RandevuTurleri({ canWrite, scopeBadge }: { canWrite: boo
       key: "usage",
       header: "Randevu",
       align: "right",
-      render: (item) => <span className="text-sm tabular-nums text-slate-600">{usageText(item)}</span>,
+      render: (item) => <span className="text-sm tabular-nums text-slate-500">{usageText(item)}</span>,
     },
-    ...(canWrite ? [{ key: "actions", header: "", align: "right" as const, render: rowActions }] : []),
+    ...(canWrite ? [{ key: "actions", header: "İşlemler", align: "right" as const, render: rowMenu }] : []),
   ];
 
   const presetSelected = COLOR_PRESETS.some((preset) => preset.value === form?.color.toLowerCase());
@@ -225,15 +238,16 @@ export default function RandevuTurleri({ canWrite, scopeBadge }: { canWrite: boo
         emptyIcon={Palette}
         emptyText="Henüz randevu türü yok"
         rowClassName={(item) => (item.isActive ? "" : "opacity-70")}
+        // Satıra tıklamak düzenleme penceresini açar (menüdeki "Düzenle" ile aynı).
+        onRowClick={canWrite ? openForm : undefined}
+        getRowAriaLabel={(item) => `${item.label} randevu türünü düzenle`}
         mobileCard={(item) => (
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              {nameCell(item)}
-              <p className="mt-1 text-xs text-slate-500">{usageText(item)}</p>
-            </div>
-            {canWrite && rowActions(item)}
+          <div className="flex min-h-7 min-w-0 items-center justify-between gap-3">
+            {nameCell(item)}
+            {usageText(item) && <span className="shrink-0 text-xs tabular-nums text-slate-500">{usageText(item)}</span>}
           </div>
         )}
+        mobileCardActions={canWrite ? rowMenu : undefined}
       />
 
       <FormModal

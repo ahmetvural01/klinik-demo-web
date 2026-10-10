@@ -27,6 +27,7 @@ import { TodayAppointments } from "./_components/TodayAppointments";
 import { OpenPastModal } from "./_components/OpenPastModal";
 import { AnnouncementsCard } from "./_components/Announcements";
 import { TeamMessages } from "./_components/TeamMessages";
+import { HOME_GRID, HOME_MAIN, HOME_SIDE_PANEL, HOME_SIDE_SECTION, HOME_TODO_ORDER } from "./_components/home-layout";
 
 // Randevu formu yalnız açılınca yüklenir (ilk açılışı ağırlaştırmasın).
 const AppointmentFormModal = dynamic(
@@ -263,25 +264,23 @@ export default function AnasayfaPage() {
   // çizilir: doktorun listesi önce "Tüm doktorlar" sonra "Benim" olarak zıplamasın.
   const agendaReady = calendarSettled && (Boolean(viewerId) || Boolean(summary.data) || Boolean(summary.error));
 
-  const todo = (
-    <TodoList
-      summary={summary.data}
-      loading={summary.loading}
-      error={summary.error}
-      onRetry={() => void reloadSummary()}
-      permissions={todoPermissions}
-      onOpenPast={() => setOpenPastOpen(true)}
-      className={canReadAppointments ? "min-[1360px]:col-start-2 min-[1360px]:row-start-1" : ""}
-    />
-  );
-  // Duyurusu olmayan ve duyuru ekleyemeyen kullanıcıya boş kart gösterilmez.
-  // Karar burada verilir ki mesaj kartı o zaman satırı tek başına doldursun
-  // (önceden 1024–1359 px'te kart yarım genişlikte kalıp yanı boş görünüyordu).
+  // Duyurusu olmayan ve duyuru ekleyemeyen kullanıcıya boş bölüm gösterilmez.
   const canCreateAnnouncements = canWriteAnnouncements && !ghost;
   const showAnnouncements = canReadAnnouncements
     && !(!canCreateAnnouncements && announcements.data?.length === 0 && !announcements.error);
-  const sideCards = (showAnnouncements || canReadMessages) && (
-    <div className={`grid min-w-0 gap-4 lg:grid-cols-2 ${canReadAppointments ? "min-[1360px]:col-start-2 min-[1360px]:row-start-2 min-[1360px]:grid-cols-1" : ""}`}>
+  // Sağ sütun: Yapılacaklar, Duyurular ve Ekip mesajları geniş ekranda TEK
+  // kartın bölümleri; dar ekranda ayrı kartlar (bkz. home-layout.ts).
+  const sidePanel = (
+    <div className={canReadAppointments ? HOME_SIDE_PANEL : "grid gap-4"}>
+      <TodoList
+        summary={summary.data}
+        loading={summary.loading}
+        error={summary.error}
+        onRetry={() => void reloadSummary()}
+        permissions={todoPermissions}
+        onOpenPast={() => setOpenPastOpen(true)}
+        className={canReadAppointments ? `${HOME_SIDE_SECTION} ${HOME_TODO_ORDER}` : ""}
+      />
       {showAnnouncements && (
         <AnnouncementsCard
           items={announcements.data}
@@ -292,6 +291,7 @@ export default function AnasayfaPage() {
           canCreate={canCreateAnnouncements}
           canRemove={canWriteAnnouncements}
           todayKey={todayKey}
+          className={canReadAppointments ? HOME_SIDE_SECTION : ""}
         />
       )}
       {canReadMessages && (
@@ -306,7 +306,7 @@ export default function AnasayfaPage() {
           viewerId={viewerId}
           scopeKey={scopeKey}
           todayKey={todayKey}
-          className={showAnnouncements ? "" : "lg:col-span-2 min-[1360px]:col-span-1"}
+          className={canReadAppointments ? HOME_SIDE_SECTION : ""}
         />
       )}
     </div>
@@ -324,12 +324,11 @@ export default function AnasayfaPage() {
 
       {canReadAppointments ? (
         // Geniş ekranda (1360 px+, ör. 1366/1440/1920 klinik ekranları) randevular
-        // solda, Yapılacaklar ve diğerleri sağ sütunda; daha dar ekranda tek sütun:
+        // solda, sağ sütun tek kart; daha dar ekranda tek sütun:
         // Yapılacaklar → randevular → duyurular ve mesajlar.
-        <div className="grid gap-4 min-[1360px]:grid-cols-[minmax(0,1fr)_340px] min-[1360px]:grid-rows-[auto_1fr] min-[1360px]:items-start">
-          {todo}
+        <div className={HOME_GRID}>
           <TodayAppointments
-            className="min-[1360px]:col-start-1 min-[1360px]:row-span-2 min-[1360px]:row-start-1"
+            className={HOME_MAIN}
             todayKey={todayKey}
             dayKey={viewedDayKey}
             dayOffset={dayOffset}
@@ -346,14 +345,9 @@ export default function AnasayfaPage() {
             onNextAppointment={openNextAppointment}
             onChanged={() => void reloadSummary()}
           />
-          {sideCards}
+          {sidePanel}
         </div>
-      ) : (
-        <div className="grid gap-4">
-          {todo}
-          {sideCards}
-        </div>
-      )}
+      ) : sidePanel}
 
       {canWriteAppointments && (
         <OpenPastModal

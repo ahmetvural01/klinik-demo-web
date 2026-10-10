@@ -272,17 +272,18 @@ export default function PrescriptionPage() {
               Bu reçete {data.prescription.voidedAt ? `${formatDate(data.prescription.voidedAt)} tarihinde ` : ""}iptal edildi; yazdırılamaz.
             </Callout>
           )}
-          {missingClinic.length > 0 && (
+          {/* Çıktıyla ilgili notlar tek şeritte (önceden iki ayrı uyarı kutusu üst üste). */}
+          {(missingClinic.length > 0 || data.patient.tcHidden) && (
             <Callout
-              tone="warning"
+              tone={missingClinic.length > 0 ? "warning" : "neutral"}
               compact
-              action={can("settings:write") ? <Button size="sm" variant="secondary" href="/ayar">Ayarlar</Button> : undefined}
+              action={missingClinic.length > 0 && can("settings:write") ? <Button size="sm" variant="secondary" href="/ayar">Ayarlar</Button> : undefined}
             >
-              Klinik bilgilerinde {missingClinic.join(", ")} girilmemiş; çıktıda bu satır boş kalır.
+              {[
+                missingClinic.length > 0 ? `Klinik bilgilerinde ${missingClinic.join(", ")} girilmemiş; çıktıda bu satır boş kalır.` : "",
+                data.patient.tcHidden ? "T.C. kimlik numarasını görme yetkiniz olmadığı için çıktıda boş bırakıldı; elle yazılabilir." : "",
+              ].filter(Boolean).join(" ")}
             </Callout>
-          )}
-          {data.patient.tcHidden && (
-            <Callout tone="neutral" compact>T.C. kimlik numarasını görme yetkiniz olmadığı için çıktıda boş bırakıldı; elle yazılabilir.</Callout>
           )}
           <PrescriptionDocument data={data} />
         </>

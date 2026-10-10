@@ -6,7 +6,8 @@ import { Eraser, FileSignature, PenLine, Printer, XCircle } from "lucide-react";
 import { showToastSafe } from "@/lib/toast-client";
 import { cachedGet } from "@/lib/client-cache";
 import { FormModal } from "@/components/ui/FormModal";
-import { Button, IconButton } from "@/components/ui/Button";
+import { ActionMenu } from "@/components/ui/ActionMenu";
+import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { FormField } from "@/components/ui/FormField";
 import { Input, Select, Textarea } from "@/components/ui/Input";
@@ -467,30 +468,40 @@ export function PatientConsentPanel({ patientId, patientName, patientTcNo, canWr
   }
 
   const activeCount = consents.filter((item) => item.status !== "IPTAL").length;
+  // "Durum" sütunu yok: geçerli onam varsayılandır, yalnız iptal edilen satırda
+  // ad yanında rozet (önceden her satırda "Geçerli" rozeti tekrar ediyordu).
   const consentColumns: ListTableColumn<PatientConsent>[] = [
     {
       key: "title",
       header: "Onam",
       render: (consent) => (
         <div className="min-w-0">
-          <p className={`font-medium ${consent.status === "IPTAL" ? "text-slate-500" : "text-slate-800"}`}>{consent.title}</p>
-          {consent.status === "IPTAL" && <p className="text-xs text-red-700">İptal sebebi: {consent.voidReason || "—"}</p>}
+          <p className={`font-medium ${consent.status === "IPTAL" ? "text-slate-500" : "text-slate-800"}`}>
+            {consent.title}
+            {consent.status === "IPTAL" && <Badge tone="neutral" className="ml-1.5 align-[1px]">İptal edildi</Badge>}
+          </p>
+          {consent.status === "IPTAL" && consent.voidReason && <p className="text-xs text-slate-500">İptal sebebi: {consent.voidReason}</p>}
         </div>
       ),
     },
     { key: "signer", header: "İmzalayan", render: (consent) => consent.signerName },
     { key: "date", header: "Tarih", render: (consent) => <span className="whitespace-nowrap">{formatDate(consent.signedAt)}</span> },
-    { key: "status", header: "Durum", render: (consent) => (consent.status === "IPTAL" ? <Badge tone="neutral">İptal edildi</Badge> : <Badge tone="success">Geçerli</Badge>) },
     { key: "actions", header: "", align: "right", render: (consent) => consentActions(consent) },
   ];
 
+  // Satır eylemleri çerçevesiz "…" menüsünde (önceden üç kutulu ikon).
   function consentActions(consent: PatientConsent) {
     const isVoided = consent.status === "IPTAL";
     return (
-      <div className="flex justify-end gap-1.5">
-        <IconButton icon={Printer} title="Yazdır" size="sm" onClick={() => void printConsent(consent)} />
-        {canWrite && <IconButton icon={PenLine} title="Yeniden imzalat" size="sm" onClick={() => prepareResign(consent)} />}
-        {canWrite && !isVoided && <IconButton icon={XCircle} title="Onamı iptal et" tone="danger" size="sm" onClick={() => { setVoidingConsent(consent); setVoidReason(""); }} />}
+      <div className="flex justify-end">
+        <ActionMenu
+          label={`${consent.title} için işlemler`}
+          items={[
+            { key: "print", label: "Yazdır", icon: Printer, onSelect: () => void printConsent(consent) },
+            ...(canWrite ? [{ key: "resign", label: "Yeniden imzalat", icon: PenLine, onSelect: () => prepareResign(consent) }] : []),
+            ...(canWrite && !isVoided ? [{ key: "void", label: "Onamı iptal et", icon: XCircle, danger: true, onSelect: () => { setVoidingConsent(consent); setVoidReason(""); } }] : []),
+          ]}
+        />
       </div>
     );
   }
@@ -501,12 +512,12 @@ export function PatientConsentPanel({ patientId, patientName, patientTcNo, canWr
     <>
       <ListTable
         title="Onamlar"
-        actions={(
-          <>
-            {!loading && !loadError && <Badge tone={activeCount > 0 ? "success" : "warning"}>{activeCount > 0 ? `${activeCount} geçerli onam` : "Geçerli onam yok"}</Badge>}
-            {canWrite && <Button size="sm" variant="secondary" icon={FileSignature} onClick={openSign}>Onam imzalat</Button>}
-          </>
-        )}
+        // Sayaç rozeti yalnız liste doluyken: boş listede "Geçerli onam yok"
+        // rozeti boş durum metnini ("Henüz imzalı onam yok") tekrar ediyordu.
+        badge={!loading && !loadError && consents.length > 0
+          ? <Badge tone={activeCount > 0 ? "success" : "warning"}>{activeCount > 0 ? `${activeCount} geçerli onam` : "Geçerli onam yok"}</Badge>
+          : undefined}
+        actions={canWrite ? <Button size="sm" variant="secondary" icon={FileSignature} onClick={openSign}>Onam imzalat</Button> : undefined}
         columns={consentColumns}
         rows={consents}
         rowKey={(consent) => consent.id}
@@ -519,8 +530,11 @@ export function PatientConsentPanel({ patientId, patientName, patientTcNo, canWr
         mobileCard={(consent) => (
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <p className="text-sm font-semibold text-slate-800">{consent.title}</p>
-              <p className="text-xs text-slate-500">{formatDate(consent.signedAt)} · {consent.signerName}{consent.status === "IPTAL" ? " · İptal edildi" : ""}</p>
+              <p className="text-sm font-semibold text-slate-800">
+                {consent.title}
+                {consent.status === "IPTAL" && <Badge tone="neutral" className="ml-1.5 align-[1px]">İptal edildi</Badge>}
+              </p>
+              <p className="text-xs text-slate-500">{formatDate(consent.signedAt)} · {consent.signerName}</p>
             </div>
             {consentActions(consent)}
           </div>

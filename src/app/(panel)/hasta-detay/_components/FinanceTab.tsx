@@ -2,11 +2,12 @@
 
 import { useMemo, useState } from "react";
 import { CalendarRange, Pencil, Printer, Wallet, XCircle } from "lucide-react";
+import { ActionMenu } from "@/components/ui/ActionMenu";
 import { Badge } from "@/components/ui/Badge";
-import { Button, IconButton } from "@/components/ui/Button";
+import { Button } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
 import { DescriptionList, type DescriptionItem } from "@/components/ui/DescriptionList";
-import { ListTable, EmptyValue, type ListTableColumn } from "@/components/ui/ListTable";
+import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { Section } from "@/components/ui/Section";
 import { formatDateText } from "@/components/ui/Money";
 import { clientMutation } from "@/lib/client-mutation";
@@ -27,6 +28,7 @@ import {
   isPendingExam,
   money,
   paymentMethodLabel,
+  sharedName,
   TAKSIT_ITEM_STATUS_LABELS,
   TAKSIT_ITEM_STATUS_TONE,
   TAKSIT_PLAN_STATUS_LABELS,
@@ -105,39 +107,65 @@ export function FinanceTab() {
     }
   };
 
+  // Satır eylemleri çerçevesiz "…" menüsünde (önceden kutulu ✎ ⊗).
   const paymentActions = (payment: Pay) => (
-    <div className="flex justify-end gap-1.5">
-      {canCollect && <IconButton icon={Pencil} title="Tahsilatı düzelt" size="sm" disabled={busyId === payment.id} onClick={() => openPayment(payment)} />}
-      {canRefund && <IconButton icon={XCircle} title="Tahsilatı iptal et" tone="danger" size="sm" disabled={busyId === payment.id} onClick={() => void cancelPayment(payment)} />}
+    <div className="flex justify-end">
+      <ActionMenu
+        label={`${money(payment.amount)} tahsilat için işlemler`}
+        items={[
+          ...(canCollect ? [{ key: "edit", label: "Tahsilatı düzelt", icon: Pencil, disabled: busyId === payment.id, onSelect: () => openPayment(payment) }] : []),
+          ...(canRefund ? [{ key: "cancel", label: "Tahsilatı iptal et", icon: XCircle, danger: true, disabled: busyId === payment.id, onSelect: () => void cancelPayment(payment) }] : []),
+        ]}
+      />
     </div>
   );
   const hasPaymentActions = canCollect || canRefund;
+  // Her satırda aynı hekim → başlık altında bir kez; hiç açıklama yoksa sütun yok.
+  const paymentDoctor = sharedName(payments, (payment) => payment.doctor?.fullName);
+  const hasDescriptions = payments.some((payment) => Boolean(payment.description?.trim()));
 
   const paymentColumns: ListTableColumn<Pay>[] = [
     { key: "date", header: "Tarih", render: (payment) => <span className="whitespace-nowrap">{formatDateText(payment.createdAt)}</span> },
     { key: "amount", header: "Tutar", align: "right", render: (payment) => <span className="font-semibold tabular-nums text-emerald-700">{money(payment.amount)}</span> },
     { key: "method", header: "Yöntem", render: (payment) => paymentMethodLabel(payment.method) },
-    { key: "doctor", header: "Hekim", render: (payment) => payment.doctor?.fullName || <EmptyValue /> },
-    { key: "description", header: "Açıklama", render: (payment) => payment.description || <EmptyValue /> },
+    ...(paymentDoctor ? [] : [{ key: "doctor", header: "Hekim", render: (payment: Pay) => payment.doctor?.fullName || null }]),
+    ...(hasDescriptions ? [{ key: "description", header: "Açıklama", render: (payment: Pay) => payment.description || null }] : []),
     ...(hasPaymentActions ? [{ key: "actions", header: "", align: "right" as const, render: paymentActions }] : []),
   ];
 
-  const installmentColumns: ListTableColumn<TaksitItem & { index: number }>[] = [
-    { key: "no", header: "#", render: (item) => <span className="text-slate-500">{item.index + 1}</span> },
-    { key: "due", header: "Vade", render: (item) => <span className="whitespace-nowrap">{formatDateText(getItemDueDate(item))}</span> },
-    { key: "amount", header: "Tutar", align: "right", render: (item) => <span className="tabular-nums">{money(getItemAmount(item))}</span> },
-    { key: "paid", header: "Ödenen", align: "right", render: (item) => (getItemPaid(item) > 0 ? <span className="tabular-nums">{money(getItemPaid(item))}</span> : <EmptyValue />) },
-    { key: "status", header: "Durum", render: (item) => { const view = installmentStatus(item); return <Badge tone={view.tone}>{view.label}</Badge>; } },
-  ];
+  // Taksitler planın içinde düz satırlar (önceden plan kartının içinde ikinci
+  // bir tablo kartı vardı). Her satır: sıra · vade, ödenen/kalan; sağda tutar ve durum.
+  const installmentRow = (item: TaksitItem & { index: number }) => {
+    const view = installmentStatus(item);
+    const paid = getItemPaid(item);
+    const late = item.status === "GECIKTI" && isOpenInstallment(item);
+    return (
+      <li key={item.id} className={`flex items-center justify-between gap-3 px-2 py-2 ${late ? "bg-red-50/60" : ""}`}>
+        <div className="min-w-0">
+          <p className="text-sm text-slate-800"><span className="text-slate-500">{item.index + 1}.</span> Vade <span className="whitespace-nowrap tabular-nums">{formatDateText(getItemDueDate(item))}</span></p>
+          {paid > 0 && (
+            <p className="text-xs text-slate-500">ödenen {money(paid)}{isOpenInstallment(item) ? ` · kalan ${money(getItemRemaining(item))}` : ""}</p>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="text-sm font-semibold tabular-nums text-slate-800">{money(getItemAmount(item))}</span>
+          <Badge tone={view.tone}>{view.label}</Badge>
+        </div>
+      </li>
+    );
+  };
 
   const debtTone = debt > 0.004 ? "text-red-700" : debt < -0.004 ? "text-emerald-700" : "text-slate-900";
   const debtLabel = debt < -0.004 ? "Hastanın avansı" : "Kalan borç";
+  // Özet tek sırada (yapılan − indirim − alınan = kalan): önceden alt alta
+  // dört satır sayfanın yarısını boş bırakıyordu.
   const summaryItems: DescriptionItem[] = [
-    { key: "charged", label: "Yapılan tedaviler", value: <span className="tabular-nums">{money(balance.totalCharged)}</span> },
-    { key: "discount", label: `İndirim (%${balance.discountRate})`, value: <span className="tabular-nums">−{money(balance.discountAmount)}</span>, hidden: !(balance.discountRate > 0) },
-    { key: "paid", label: "Alınan tahsilat", value: <span className="tabular-nums">{money(balance.totalPaid)}</span> },
-    { key: "debt", label: debtLabel, value: <span className={`text-base tabular-nums ${debtTone}`}>{money(Math.abs(debt))}</span>, emphasis: true },
+    { key: "charged", label: "Yapılan tedaviler", value: <span className="font-semibold tabular-nums">{money(balance.totalCharged)}</span> },
+    { key: "discount", label: `İndirim (%${balance.discountRate})`, value: <span className="font-semibold tabular-nums">−{money(balance.discountAmount)}</span>, hidden: !(balance.discountRate > 0) },
+    { key: "paid", label: "Alınan tahsilat", value: <span className="font-semibold tabular-nums">{money(balance.totalPaid)}</span> },
+    { key: "debt", label: debtLabel, value: <span className={`text-base font-extrabold tabular-nums ${debtTone}`}>{money(Math.abs(debt))}</span> },
   ];
+  const summaryColumns = summaryItems.filter((item) => !item.hidden).length;
   // Yapılacak (henüz yapılmamış) tedaviler borca dahil değildir; varsa bir kez söylenir.
   const pendingTreatments = data.examinations.some(isPendingExam);
 
@@ -155,9 +183,7 @@ export function FinanceTab() {
         )}
       >
         {balanceKnown ? (
-          <div className="max-w-md">
-            <DescriptionList layout="rows" items={summaryItems} />
-          </div>
+          <DescriptionList items={summaryItems} className={`!grid-cols-2 !gap-x-4 ${summaryColumns > 3 ? "sm:!grid-cols-4" : "sm:!grid-cols-3"}`} />
         ) : (
           <Callout tone="warning" compact>Bakiye şu an hesaplanamadı; tahsilatlar ve taksitler aşağıda. Birazdan sayfayı yenileyin.</Callout>
         )}
@@ -168,6 +194,7 @@ export function FinanceTab() {
 
       <ListTable
         title="Tahsilatlar"
+        subtitle={paymentDoctor ? `Hekim: ${paymentDoctor}` : undefined}
         actions={payments.length > 0 ? <Button size="sm" variant="secondary" icon={Printer} onClick={() => setPrintOpen(true)}>Döküm yazdır</Button> : undefined}
         columns={paymentColumns}
         rows={payments}
@@ -178,7 +205,7 @@ export function FinanceTab() {
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="text-sm font-semibold tabular-nums text-emerald-700">{money(payment.amount)} <span className="font-normal text-slate-600">· {paymentMethodLabel(payment.method)}</span></p>
-              <p className="text-xs text-slate-500">{[formatDateText(payment.createdAt), payment.doctor?.fullName, payment.description].filter(Boolean).join(" · ")}</p>
+              <p className="line-clamp-2 text-xs text-slate-500">{[formatDateText(payment.createdAt), paymentDoctor ? "" : payment.doctor?.fullName, payment.description].filter(Boolean).join(" · ")}</p>
             </div>
             {hasPaymentActions && paymentActions(payment)}
           </div>
@@ -198,11 +225,11 @@ export function FinanceTab() {
               const planItems: DescriptionItem[] = [
                 { key: "total", label: "Toplam", value: <span className="font-semibold tabular-nums">{money(getPlanTotal(plan))}</span> },
                 { key: "remaining", label: "Kalan", value: <span className={`font-semibold tabular-nums ${getPlanRemaining(plan) > 0.004 && plan.status !== "IPTAL" ? "text-red-700" : "text-emerald-700"}`}>{money(plan.status === "IPTAL" ? 0 : getPlanRemaining(plan))}</span> },
-                { key: "next", label: "Sonraki vade", value: nextDue && plan.status !== "IPTAL" ? formatDateText(nextDue) : null },
+                { key: "next", label: "Sonraki vade", value: nextDue && plan.status !== "IPTAL" ? formatDateText(nextDue) : null, hidden: !(nextDue && plan.status !== "IPTAL") },
               ];
               return (
                 <article key={plan.id} className={`px-4 py-3 ${plan.status === "IPTAL" ? "opacity-70" : ""}`}>
-                  <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="flex flex-wrap items-center gap-2 text-sm font-bold text-slate-800">
                         {plan.baslik || `${items.length} taksitli ödeme planı`}
@@ -213,12 +240,13 @@ export function FinanceTab() {
                         {[formatDateText(plan.createdAt), plan.doctor?.fullName, toNumber(plan.pesnat) > 0 ? `peşinat ${money(plan.pesnat)}` : ""].filter(Boolean).join(" · ")}
                       </p>
                     </div>
-                    <div className="flex items-center gap-1.5">
-                      <IconButton icon={Printer} title="Ödeme planını yazdır" size="sm" onClick={() => { void printContext().then((context) => printInstallmentPlan(context, plan)); }} />
-                      {canCancelPlan && !inactive && (
-                        <IconButton icon={XCircle} title="Planı iptal et" tone="danger" size="sm" disabled={busyId === plan.id} onClick={() => void cancelPlan(plan)} />
-                      )}
-                    </div>
+                    <ActionMenu
+                      label={`${plan.baslik || "Ödeme planı"} için işlemler`}
+                      items={[
+                        { key: "print", label: "Ödeme planını yazdır", icon: Printer, onSelect: () => { void printContext().then((context) => printInstallmentPlan(context, plan)); } },
+                        ...(canCancelPlan && !inactive ? [{ key: "cancel", label: "Planı iptal et", icon: XCircle, danger: true, disabled: busyId === plan.id, onSelect: () => void cancelPlan(plan) }] : []),
+                      ]}
+                    />
                   </div>
                   {/* Üç kısa değer telefonda da yan yana (alt alta uzun kart olmasın). */}
                   <DescriptionList className="mt-2 !grid-cols-3 !gap-x-3" columns={3} items={planItems} />
@@ -234,26 +262,9 @@ export function FinanceTab() {
                         {expanded ? "Taksitleri gizle" : `Taksitleri göster (${items.length})`}
                       </Button>
                       {expanded && (
-                        <div className="mt-1">
-                          <ListTable
-                            columns={installmentColumns}
-                            rows={items}
-                            rowKey={(item) => item.id}
-                            rowClassName={(item) => (item.status === "GECIKTI" && isOpenInstallment(item) ? "bg-red-50/60" : "")}
-                            mobileCard={(item) => {
-                              const view = installmentStatus(item);
-                              return (
-                                <div className="flex items-center justify-between gap-3">
-                                  <div className="min-w-0">
-                                    <p className="text-sm font-semibold tabular-nums">{item.index + 1}. taksit · {money(getItemAmount(item))}</p>
-                                    <p className="text-xs text-slate-500">Vade {formatDateText(getItemDueDate(item))}{getItemPaid(item) > 0 ? ` · ödenen ${money(getItemPaid(item))}` : ""}{isOpenInstallment(item) && getItemPaid(item) > 0 ? ` · kalan ${money(getItemRemaining(item))}` : ""}</p>
-                                  </div>
-                                  <Badge tone={view.tone}>{view.label}</Badge>
-                                </div>
-                              );
-                            }}
-                          />
-                        </div>
+                        <ul className="mt-1 divide-y divide-slate-100 border-y border-slate-100" aria-label={`${plan.baslik || "Ödeme planı"} taksitleri`}>
+                          {items.map(installmentRow)}
+                        </ul>
                       )}
                     </div>
                   )}

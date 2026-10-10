@@ -89,13 +89,15 @@ Her panel sayfası yukarıdan aşağı aynı sırayı izler:
 
 ```
 PageHeader      modül ikonu · sayfa adı (h1) · en fazla 1 cümle · sağda TEK birincil eylem
-Tabs            sayfanın bölümleri (?tab=, useTabParam)
-Toolbar         arama · filtreler (telefonda katlanır) · ikincil eylemler (Dışa aktar)
-ActiveFilters   uygulanan filtreler, tek tek kaldırılır
-StatStrip       (gerekirse) yalnız karar verdiren sayılar
-İçerik          ListTable · Section · SettingsList · DescriptionList
+Tabs            sayfanın bölümleri (?tab=, useTabParam) — alt çizgili düz sekme
+StatStrip       (gerekirse) yalnız karar verdiren sayılar — tek çerçeveli şerit
+İçerik          ListTable (toolbar yuvasında Toolbar + ActiveFilters) · Section · SettingsList · DescriptionList
 Durumlar        PageSkeleton · EmptyState · LoadErrorState / staleError · StatusPage
 ```
+
+Liste sayfasında araç çubuğu (arama · filtreler · Dışa aktar) listenin kartının üst
+şerididir: `<ListTable toolbar={<Toolbar …/>} …/>`. Liste yoksa Toolbar `bare` ile sayfa
+zemininde çerçevesiz durur. Ayrıntı: §9 Sadelik kuralları.
 
 1. **`PageHeader`:** `icon` bir modül anahtarıdır (`"flask"`, `"calendar"`…). Başlık
    menüdeki addır. Sağda sayfanın tek birincil eylemi durur (ör. "Yeni hasta"), gerekirse
@@ -111,6 +113,10 @@ Durumlar        PageSkeleton · EmptyState · LoadErrorState / staleError · Sta
    - Sekme başında açıklama paragrafı yok.
 3. **`Toolbar`:** arama `children` içinde her zaman görünür. Seçiciler `filters`'a, "Dışa
    aktar" `actions`'a gider.
+   - Listenin araç çubuğu ListTable `toolbar` yuvasına verilir (kartın üst şeridi; ayrı
+     kart değil). Liste dışındaki araç çubuğu `bare` alır (çerçevesiz, zeminsiz).
+   - `ActiveFilters` de aynı yuvada, Toolbar'ın altında durur
+     (`toolbar={<><Toolbar …/><ActiveFilters …/></>}` ya da ListTable `header`).
    - `ActiveFilters` ve `filterCount` yalnız Toolbar `filters` içindeki, telefonda katlanan
      seçimleri içerir. Her zaman görünen seçici (DateRangeFilter `variant="chips"`,
      ChoiceCards pills durum süzgeci) ActiveFilters'a ve filterCount'a eklenmez.
@@ -253,6 +259,13 @@ const period = useDateRangeParam(DATE_PRESET_SETS.takvim, "ay"); // period.range
 ```
 
 **`ListTable`**
+- Araç çubuğu `toolbar` yuvasına verilir; kartın üst şeridi olur, yuvadaki Toolbar'ın
+  çerçevesi kendiliğinden kalkar (§9 K1).
+- Satır eylem sütunu (`"islem"`) içeriği kadar dardır; başlığı ("İşlem") görsel olarak
+  gizlidir, ekran okuyucu duyar. Satırdaki IconButton ve "…" çerçevesiz ve 32 px'tir
+  (her ton rengini korur); satır tek satırda 48 px'tir (§9 K3, K9).
+- Telefon kartında "…" `mobileCardActions` ile kartın sağ üst köşesine konur; ayrı eylem
+  sırası açılmaz. Aynı menü `mobileCard` içinde ikinci kez çizilmez.
 - İlk yükleme hatası `error` ile verilir (liste yerine görünür). Veri ekrandayken gelen hata
   `staleError` ile verilir; şerit "{staleError} Son yüklenen liste gösteriliyor." yazar, bu
   yüzden metin tam cümledir ("Tahsilatlar yüklenemedi.").
@@ -653,11 +666,13 @@ silinir. O zamana kadar sayfada elle yama yazılmaz; aşağıdaki geçici kurala
 | `danger` | Ana eylemin kendisi geri alınamıyorsa (onay penceresindeki "Sil") |
 | `danger-ghost` | Nadir ya da tehlikeli ikincil eylem (Arşivle, İptal et, Pasife al). Pencerede solda durur (FormModal `dangerAction`). |
 
-**Satır eylemleri**
-- En sık kullanılan 1–2 eylem görünür: `Button size="sm" variant="secondary"` ya da
-  `IconButton size="sm"`.
-- Kalan eylemler `ActionMenu` "…" içine girer. Tehlikeli eylem menüde en sonda durur ve
+**Satır eylemleri** (§9 K3)
+- Satırda en fazla BİR görünür eylem olur (ör. "Geldi", "Laboratuvardan geldi"):
+  `Button size="sm" variant="secondary"` ya da çerçevesiz `IconButton size="sm"`.
+- Kalan eylemler (düzenle, pasife al, sil, yazdır…) satır sonundaki çerçevesiz `ActionMenu`
+  "…" içine girer; eylem kaldırılmaz, taşınır. Tehlikeli eylem menüde en sonda durur ve
   `danger` + `separatorBefore` alır.
+- Satıra tıklayınca ayrıntı açılıyorsa ayrıca "Aç/Düzenle" düğmesi konmaz.
 - Sayfa düzeyinde ikiden fazla ikincil eylem varsa `ActionMenu trigger="button"` kullanılır.
 
 **Diğer düğme kuralları**
@@ -842,3 +857,46 @@ Bir ekranda aynı veri için tek kaydetme modeli kullanılır.
 - [ ] **Güvenlik ve doğrulama:**
   - §7 korundu: yetki, kurum ve şube filtresi, ledger, SMS izni. Özellik kaldırılmadı.
   - ESLint ve tsc temiz, ilgili regresyon testleri geçiyor.
+
+## 9. Sadelik kuralları (2026-10 sadelik turu)
+
+Ürün sahibinin geri bildirimi: "hâlâ çok karmaşık, iç içe veriler var, çok boğuk." Amaç aynı
+bilgi ve eylemlerle daha ferah, okunaklı ekranlardır. Kurallar her sayfaya uygulanır; ortak
+bileşenler bunların çoğunu kendiliğinden sağlar (aşağıdaki "Bileşen" sütunu). Sayfada elle
+yama yazılmaz; eksik görülen bileşen isteği bildirilir.
+
+| Kural | İçerik | Bileşen / kanca |
+| --- | --- | --- |
+| **K1 Tek çerçeve** | Bir bilgi bloğu en fazla TEK çerçevedir. Kart içinde kart ya da çerçeveli alan açılmaz; iç bölümler başlık + ince ayırıcıyla ayrılır. Liste sayfasında araç çubuğu ve tablo aynı karttadır. | ListTable `toolbar` yuvası; Toolbar `bare`; `SectionDivider` (Section içinde kenardan kenara çizgi); `.ui-surface` tek ince kenarlık, gölge neredeyse yok |
+| **K2 Sekmeler düz** | Sayfa sekmeleri alt çizgili düz sekmedir (çerçeveli hap kutusu yok). Kart/pencere içi alt bölüm ve durum süzgeci küçük, çerçevesiz segment ya da çiptir; iki kat alt çizgili sekme görünmez. | `Tabs` (md alt çizgi, `size="sm"` segment); bilgi amaçlı sayaç düz rakam, eylem gerektiren sayaç rozet; `ChoiceCards variant="pills"` 32 px sakin çip |
+| **K3 Satır eylemleri** | Tablo satırında çerçeveli ikon düğme yok. En fazla BİR görünür eylem; diğerleri satır sonundaki çerçevesiz "…" menüsündedir. Eylem kaldırılmaz, taşınır. Satıra tıklayınca ayrıntı açılıyorsa ayrıca "Aç/Düzenle" düğmesi gerekmez. | `ActionMenu` "…" çerçevesiz; satırda IconButton her ton çerçevesiz ve 32 px (`data-tone`); eylem sütunu içeriği kadar dar, başlığı görsel olarak gizli; telefonda `mobileCardActions` ile "…" kartın sağ üstünde |
+| **K4 Hücre en fazla 2 satır** | Ana bilgi + kısa yardımcı satır. Rozetin söylediğini metin tekrar etmez; uzun teknik metin kısaltılır ya da ayrıntıya taşınır. Her satırda aynı olan yardımcı bilgi (cinsiyet, maskeli TC) yalnız gerektiğinde. | Sayfa düzeyi |
+| **K5 Boş ve aynı değer gösterilmez** | "—", "Kullanılmadı", "Görüşülmedi", "0" gibi değerler boş bırakılır ya da sütun kalkar; istisna olan durum gösterilir ("8 randevu"). | Sayfa düzeyi |
+| **K6 Özet sayılar tek şerit** | Ayrı ayrı kutular değil, tek çerçeve içinde ince ayırıcılı şerit; telefonda aynı çerçevede 2'li ızgara. Başka yerde görünen sayı tekrar etmez. | `StatStrip` (seçili süzgeç hücresi alttan marka çizgisi alır); `StatsSkeleton` aynı düzende |
+| **K7 En fazla bir uyarı şeridi** | Platform ödeme uyarısı tam şerit olarak yalnız Ana sayfa ve Ayarlar'da; diğer sayfalarda üst barda küçük gösterge (tıklayınca aynı bilgi ve "Destek'e yaz"; telefonda zil penceresinde). Telefonda şerit tek satırdır, "Destek'e yaz" satır içindedir. Ödeme süresi dolup kayıt kapandıysa her sayfada TEK satır görünür (kaydetmeyi etkilediği için gizlenmez). Sayfa uyarıları kısa tek satırdır (başlık + tek cümle), eylemle. | `layout/billing-status-banner` (`BillingStatusBanner`, `BillingNoticeButton`, `BillingNoticeDetails`); `Callout inline` (eylem telefonda da aynı satırda) |
+| **K8 Başlık sade** | Sayfa başlığı altındaki açıklama cümlesi kalkar; başlıkta yalnız gerçekten karar verdiren tek bilgi kalır. | `PageHeader` `description` yalnız gerekiyorsa |
+| **K9 Yoğunluk ve ritim** | Tek satırlı tablo satırı ~48 px, iki satırlı ~52–56 px; hücre içi dikey boşluklar tutarlıdır. Telefonda kart satırında eylemler ayrı sıra oluşturmaz. | ListTable hücresi `h-12 py-2`; satırdaki ikon düğmeleri 32 px; `mobileCardActions` |
+| **K10 Özellik kaybı yok** | Hiçbir eylem ya da bilgi silinmez; menüye, ayrıntı penceresine ya da `Disclosure`'a taşınır. Yetki kontrolleri, onaylar, API çağrıları ve idempotency aynen kalır. Test betiklerindeki erişilebilir adlar korunur ya da test beklentisi güncellenir. | — |
+
+```tsx
+// Liste sayfası: araç çubuğu + tablo TEK kart; satırda tek görünür eylem + çerçevesiz "…"
+<ListTable
+  toolbar={<Toolbar filters={…} filterCount={n} actions={<ExportMenu size="md" onExcel={exportExcel} />}><SearchInput … /></Toolbar>}
+  columns={[…, { key: "islem", header: "İşlem", align: "right", render: (r) => <div className="flex justify-end gap-1"><Button size="sm" variant="secondary">Geldi</Button><ActionMenu label={`${r.name} — diğer işlemler`} items={menuItems(r)} /></div> }]}
+  mobileCard={(r) => <RowCard row={r} />}            // "…" burada çizilmez
+  mobileCardActions={(r) => <ActionMenu label={`${r.name} — diğer işlemler`} items={menuItems(r)} />}
+  …
+/>
+// Liste dışında araç çubuğu: <Toolbar bare>…</Toolbar>
+// Kart içi bölümler: <Section title="Tedavi ekle">…<SectionDivider />…</Section>
+// Tek satırlık sayfa uyarısı: <Callout tone="warning" compact inline title="SMS krediniz bitti" action={<Button size="sm" variant="ghost" href="/sms?tab=ayarlar">Kredi al</Button>} />
+```
+
+**Notlar**
+- Yeni prop'lar isteğe bağlıdır ve geriye uyumludur: ListTable `toolbar`,
+  `mobileCardActions`; Toolbar `bare`; Callout `inline`; Section dosyasında `SectionDivider`.
+  Var olan prop kaldırılmadı ya da adı değişmedi; ayrı kart olarak duran Toolbar eskisi gibi
+  çalışır (yalnız gölgesi hafifledi).
+- `IconButton` ve ActionMenu "…" tetikleyicisi `data-tone` taşır; liste satırındaki çerçevesiz
+  görünüm globals.css "SADELİK TURU" bölümündedir. Sayfada `border`/`bg-white` yamasıyla
+  satır ikonuna yeniden çerçeve verilmez.

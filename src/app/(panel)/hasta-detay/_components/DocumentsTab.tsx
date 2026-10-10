@@ -2,16 +2,16 @@
 
 import Image from "next/image";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Archive, FileText, RotateCcw, Upload, X } from "lucide-react";
+import { Archive, FileText, Plus, RotateCcw, Upload, X } from "lucide-react";
+import { ActionMenu } from "@/components/ui/ActionMenu";
 import { Button, IconButton } from "@/components/ui/Button";
 import { ChoiceCards } from "@/components/ui/ChoiceCards";
-import { Disclosure } from "@/components/ui/Disclosure";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { FormField } from "@/components/ui/FormField";
 import { Input } from "@/components/ui/Input";
 import { LoadErrorState } from "@/components/ui/LoadErrorState";
 import { ProgressBar } from "@/components/ui/ProgressBar";
-import { Section } from "@/components/ui/Section";
+import { Section, SectionDivider } from "@/components/ui/Section";
 import { formatDateText } from "@/components/ui/Money";
 import { PatientConsentPanel } from "@/components/PatientConsentPanel";
 import { confirmDialog } from "@/lib/confirm-client";
@@ -265,95 +265,107 @@ export function DocumentsTab() {
 
   const canArchive = (doc: PatientDocument) => (doc.category === "BELGE" ? canDeleteDocs : canDeleteXray);
 
+  const metaSummaryText = [category !== "BELGE" && toothNo.trim() ? `Diş ${toothNo.trim()}` : "", note.trim() ? "not yazıldı" : ""].filter(Boolean).join(" · ");
+
+  // Tek kart: yükleme seçenekleri belgelerin üstünde ince bir şerit, "Dosya
+  // seç ve yükle" kart başlığında. Önceden "Belge / röntgen yükle" ayrı bir
+  // kartta, içinde ayrıca çerçeveli "Diş no ve not" kutusu vardı.
   return (
     <div className="space-y-4">
-      {canUpload && (
-        <Section title="Belge / röntgen yükle" icon={Upload}>
-          <div className="space-y-3">
-            <div className="flex flex-wrap items-end justify-between gap-3">
-              <ChoiceCards label="Tür" variant="pills" options={categoryOptions} value={category} onChange={setCategory} />
-              <div>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  accept={ALLOWED_TYPES.join(",")}
-                  className="sr-only"
-                  aria-label="Yüklenecek dosyaları seçin"
-                  data-dirty-ignore
-                  onChange={(event) => {
-                    const files = Array.from(event.target.files ?? []);
-                    event.target.value = "";
-                    void enqueue(files);
-                  }}
-                />
-                <Button id="hd-doc-upload" icon={Upload} onClick={() => fileInputRef.current?.click()}>Dosya seç ve yükle</Button>
-              </div>
-            </div>
-            <Disclosure
-              title={category === "BELGE" ? "Not" : "Diş no ve not"}
-              summary={[category !== "BELGE" && toothNo.trim() ? `Diş ${toothNo.trim()}` : "", note.trim() ? "not yazıldı" : ""].filter(Boolean).join(" · ") || "İsteğe bağlı"}
-              open={metaOpen}
-              onOpenChange={setMetaOpen}
-            >
-              <div className="grid gap-3 sm:grid-cols-2">
-                {category !== "BELGE" && (
-                  <FormField label="Diş no" htmlFor="hd-doc-tooth" hint="Ör. 26 ya da 36-37.">
-                    <Input id="hd-doc-tooth" maxLength={40} value={toothNo} onChange={(event) => setToothNo(event.target.value)} />
-                  </FormField>
+      <Section
+        title="Belgeler ve röntgenler"
+        actions={canUpload ? (
+          <>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept={ALLOWED_TYPES.join(",")}
+              className="sr-only"
+              aria-label="Yüklenecek dosyaları seçin"
+              data-dirty-ignore
+              onChange={(event) => {
+                const files = Array.from(event.target.files ?? []);
+                event.target.value = "";
+                void enqueue(files);
+              }}
+            />
+            <Button id="hd-doc-upload" size="sm" icon={Upload} onClick={() => fileInputRef.current?.click()}>Dosya seç ve yükle</Button>
+          </>
+        ) : undefined}
+      >
+        {canUpload && (
+          <>
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <span className="text-xs font-semibold text-slate-500" aria-hidden="true">Yüklenecek tür</span>
+                <ChoiceCards label="Yüklenecek tür" labelHidden variant="pills" options={categoryOptions} value={category} onChange={setCategory} />
+                {!metaOpen && (
+                  <Button variant="ghost" size="sm" icon={Plus} onClick={() => setMetaOpen(true)}>
+                    {category === "BELGE" ? "Not" : "Diş no ve not"}
+                    {metaSummaryText && <span className="font-normal text-slate-500">· {metaSummaryText}</span>}
+                  </Button>
                 )}
-                <FormField label="Not" htmlFor="hd-doc-note">
-                  <Input id="hd-doc-note" maxLength={300} value={note} onChange={(event) => setNote(event.target.value)} />
-                </FormField>
               </div>
-            </Disclosure>
-            <p className="text-xs text-slate-500">JPG, PNG, WEBP ya da PDF · dosya başına en fazla 15 MB · birden çok dosya seçilebilir.</p>
+              {metaOpen && (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {category !== "BELGE" && (
+                    <FormField label="Diş no" htmlFor="hd-doc-tooth" hint="Ör. 26 ya da 36-37.">
+                      <Input id="hd-doc-tooth" maxLength={40} value={toothNo} onChange={(event) => setToothNo(event.target.value)} />
+                    </FormField>
+                  )}
+                  <FormField label="Not" htmlFor="hd-doc-note" hint="İsteğe bağlı">
+                    <Input id="hd-doc-note" maxLength={300} value={note} onChange={(event) => setNote(event.target.value)} />
+                  </FormField>
+                </div>
+              )}
+              <p className="text-xs text-slate-500">JPG, PNG, WEBP ya da PDF · dosya başına en fazla 15 MB · birden çok dosya seçilebilir.</p>
 
-            {queue.length > 0 && (
-              <ul className="space-y-2" aria-label="Yüklemeler">
-                {queue.map((item) => (
-                  <li key={item.key} className={`rounded-lg border px-3 py-2.5 ${item.status === "error" ? "border-red-200 bg-red-50" : item.status === "done" ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-slate-50"}`}>
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="min-w-0 truncate text-sm font-semibold text-slate-800">{item.name}</p>
-                      <span className="shrink-0 text-xs text-slate-500">{fileSizeText(item.size)}</span>
-                    </div>
-                    {item.status !== "done" && <p className="mt-0.5 text-xs text-slate-500">{metaSummary(item.meta)}</p>}
-                    {item.status === "uploading" && (
-                      <div className="mt-1.5 flex items-center gap-2">
-                        <ProgressBar
-                          className="min-w-0 flex-1"
-                          value={item.progress ?? 35}
-                          aria-label={`${item.name} yükleniyor`}
-                          valueLabel={false}
-                        />
-                        <span className="w-20 text-right text-xs font-semibold text-primary">{item.progress === null ? "Yükleniyor" : item.progress < 100 ? `%${item.progress}` : "İşleniyor"}</span>
-                        <IconButton icon={X} title="Yüklemeyi durdur" size="sm" onClick={() => xhrRefs.current.get(item.key)?.abort()} />
+              {queue.length > 0 && (
+                <ul className="space-y-2" aria-label="Yüklemeler">
+                  {queue.map((item) => (
+                    <li key={item.key} className={`rounded-lg border px-3 py-2.5 ${item.status === "error" ? "border-red-200 bg-red-50" : item.status === "done" ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-slate-50"}`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="min-w-0 truncate text-sm font-semibold text-slate-800">{item.name}</p>
+                        <span className="shrink-0 text-xs text-slate-500">{fileSizeText(item.size)}</span>
                       </div>
-                    )}
-                    {(item.status === "error" || item.status === "canceled") && (
-                      <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
-                        <p className="text-xs font-medium text-red-700">{item.status === "canceled" ? "Yükleme durduruldu." : item.error}</p>
-                        <div className="flex gap-1.5">
-                          {!item.rejected ? (
-                            <Button size="sm" variant="secondary" icon={RotateCcw} onClick={() => void upload(item)}>Yeniden dene</Button>
-                          ) : (
-                            // Dosya reddedildi (tür, boyut, içerik): aynı bilgilerle başka dosya.
-                            <Button size="sm" variant="secondary" icon={Upload} onClick={() => chooseAnotherFile(item)}>Başka dosya seç</Button>
-                          )}
-                          <Button size="sm" variant="ghost" onClick={() => setQueue((current) => current.filter((entry) => entry.key !== item.key))}>Kaldır</Button>
+                      {item.status !== "done" && <p className="mt-0.5 text-xs text-slate-500">{metaSummary(item.meta)}</p>}
+                      {item.status === "uploading" && (
+                        <div className="mt-1.5 flex items-center gap-2">
+                          <ProgressBar
+                            className="min-w-0 flex-1"
+                            value={item.progress ?? 35}
+                            aria-label={`${item.name} yükleniyor`}
+                            valueLabel={false}
+                          />
+                          <span className="w-20 text-right text-xs font-semibold text-primary">{item.progress === null ? "Yükleniyor" : item.progress < 100 ? `%${item.progress}` : "İşleniyor"}</span>
+                          <IconButton icon={X} title="Yüklemeyi durdur" size="sm" onClick={() => xhrRefs.current.get(item.key)?.abort()} />
                         </div>
-                      </div>
-                    )}
-                    {item.status === "done" && <p className="mt-1 text-xs font-semibold text-emerald-700">Yüklendi.</p>}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </Section>
-      )}
+                      )}
+                      {(item.status === "error" || item.status === "canceled") && (
+                        <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-xs font-medium text-red-700">{item.status === "canceled" ? "Yükleme durduruldu." : item.error}</p>
+                          <div className="flex gap-1.5">
+                            {!item.rejected ? (
+                              <Button size="sm" variant="secondary" icon={RotateCcw} onClick={() => void upload(item)}>Yeniden dene</Button>
+                            ) : (
+                              // Dosya reddedildi (tür, boyut, içerik): aynı bilgilerle başka dosya.
+                              <Button size="sm" variant="secondary" icon={Upload} onClick={() => chooseAnotherFile(item)}>Başka dosya seç</Button>
+                            )}
+                            <Button size="sm" variant="ghost" onClick={() => setQueue((current) => current.filter((entry) => entry.key !== item.key))}>Kaldır</Button>
+                          </div>
+                        </div>
+                      )}
+                      {item.status === "done" && <p className="mt-1 text-xs font-semibold text-emerald-700">Yüklendi.</p>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <SectionDivider />
+          </>
+        )}
 
-      <Section title="Belgeler ve röntgenler">
         {loadError && documents.length === 0 ? (
           <LoadErrorState message={loadError} onRetry={() => { setLoading(true); void load(); }} />
         ) : loading ? (
@@ -361,14 +373,16 @@ export function DocumentsTab() {
             {[0, 1, 2, 3].map((index) => <div key={index} className="ui-skeleton-shimmer h-40 rounded-lg bg-slate-100" />)}
           </div>
         ) : documents.length === 0 ? (
-          <EmptyState icon={FileText} compact title="Henüz belge ya da röntgen yok" description={canUpload ? "Yukarıdan dosya seçerek yükleyin." : undefined} />
+          <EmptyState icon={FileText} compact title="Henüz belge ya da röntgen yok" description={canUpload ? "“Dosya seç ve yükle” ile ekleyin." : undefined} />
         ) : (
           <>
             {loadError && <LoadErrorState compact message={`${loadError} Son yüklenen liste gösteriliyor.`} onRetry={() => void load()} />}
-            <ul className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+            {/* Kutusuz kutucuk: görüntünün kendisi sınırdır; altında ad ve kısa satır,
+                arşivleme çerçevesiz "…" menüsünde. */}
+            <ul className="mt-1 grid grid-cols-2 gap-x-3 gap-y-4 sm:grid-cols-3 lg:grid-cols-4">
               {documents.map((doc) => (
-                <li key={doc.id} className="overflow-hidden rounded-lg border border-slate-200 bg-white">
-                  <a href={`/api/documents/${doc.id}/file`} target="_blank" rel="noopener noreferrer" className="block bg-slate-50" title={`${doc.fileName} — yeni sekmede aç`}>
+                <li key={doc.id} className="min-w-0">
+                  <a href={`/api/documents/${doc.id}/file`} target="_blank" rel="noopener noreferrer" className="block overflow-hidden rounded-lg bg-slate-100 ring-1 ring-inset ring-slate-200/70" title={`${doc.fileName} — yeni sekmede aç`}>
                     {doc.mimeType.startsWith("image/") ? (
                       // Küçük resim isteği (?view=thumb) erişim kaydına yazılır ama klinik genelinde yenileme tetiklemez.
                       <Image src={`/api/documents/${doc.id}/file?view=thumb`} alt={doc.fileName} width={320} height={128} unoptimized className="h-32 w-full object-cover" />
@@ -379,13 +393,18 @@ export function DocumentsTab() {
                       </span>
                     )}
                   </a>
-                  <div className="flex items-start justify-between gap-1 p-2">
+                  <div className="mt-1.5 flex items-start justify-between gap-1">
                     <div className="min-w-0">
                       <p className="truncate text-xs font-semibold text-slate-800" title={doc.fileName}>{doc.fileName}</p>
-                      <p className="text-xs text-slate-500">{[DOCUMENT_CATEGORY_LABELS[doc.category], doc.toothNo ? `Diş ${doc.toothNo}` : "", formatDateText(doc.createdAt)].filter(Boolean).join(" · ")}</p>
-                      {doc.note && <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">{doc.note}</p>}
+                      <p className="truncate text-xs text-slate-500" title={doc.note || undefined}>{[DOCUMENT_CATEGORY_LABELS[doc.category], doc.toothNo ? `Diş ${doc.toothNo}` : "", formatDateText(doc.createdAt)].filter(Boolean).join(" · ")}</p>
+                      {doc.note && <p className="line-clamp-1 text-xs text-slate-500">{doc.note}</p>}
                     </div>
-                    {canArchive(doc) && <IconButton icon={Archive} title="Hasta dosyasından kaldır (arşivle)" size="sm" disabled={busyId === doc.id} onClick={() => void archive(doc)} />}
+                    {canArchive(doc) && (
+                      <ActionMenu
+                        label={`${doc.fileName} için işlemler`}
+                        items={[{ key: "archive", label: "Hasta dosyasından kaldır (arşivle)", icon: Archive, danger: true, disabled: busyId === doc.id, onSelect: () => void archive(doc) }]}
+                      />
+                    )}
                   </div>
                 </li>
               ))}

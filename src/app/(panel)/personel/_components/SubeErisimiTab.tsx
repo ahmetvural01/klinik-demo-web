@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Lock, ShieldCheck, UserMinus, UserPlus, Users } from "lucide-react";
+import { ActionMenu, type ActionMenuItem } from "@/components/ui/ActionMenu";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
@@ -207,34 +208,49 @@ export default function SubeErisimiTab({ branch, staff, loading, error, onReload
     setSelectedCodes((current) => current.includes(code) ? current.filter((value) => value !== code) : [...current, code]);
   };
 
-  const rowActions = (member: ManagedStaff) => {
+  const accessState = (member: ManagedStaff) => {
     const membership = member.branchMemberships[0];
     const hasAccess = Boolean(membership?.isActive);
     const lockedReason = membership?.isBranchManager
       ? "Şube yöneticisi bağlantısı bu ekrandan kaldırılamaz."
       : !member.isActive ? "Pasif personelin erişimi değiştirilemez." : undefined;
+    return { hasAccess, lockedReason };
+  };
+
+  // Satırda görünür TEK eylem (sadelik K3): erişimi olana "İzinler", olmayana
+  // "Erişim ver". "Erişimi kaldır" satır sonundaki çerçevesiz "…" menüsünde.
+  const primaryAction = (member: ManagedStaff) => {
+    const { hasAccess, lockedReason } = accessState(member);
+    if (hasAccess) {
+      return (
+        <Button size="sm" variant="secondary" icon={ShieldCheck} disabled={Boolean(busyId)} onClick={() => openPermissions(member)}>
+          İzinler
+        </Button>
+      );
+    }
+    if (lockedReason) return null;
     return (
-      <div className="flex flex-wrap justify-end gap-2">
-        {hasAccess && (
-          <Button size="sm" variant="secondary" icon={ShieldCheck} disabled={Boolean(busyId)} onClick={() => openPermissions(member)}>
-            İzinler
-          </Button>
-        )}
-        {!lockedReason && (
-          <Button
-            size="sm"
-            variant={hasAccess ? "ghost" : "secondary"}
-            icon={hasAccess ? UserMinus : UserPlus}
-            loading={busyId === member.id}
-            disabled={Boolean(busyId)}
-            onClick={() => void updateAccess(member, !hasAccess)}
-          >
-            {hasAccess ? "Erişimi kaldır" : "Erişim ver"}
-          </Button>
-        )}
-      </div>
+      <Button size="sm" variant="secondary" icon={UserPlus} loading={busyId === member.id} disabled={Boolean(busyId)} onClick={() => void updateAccess(member, true)}>
+        Erişim ver
+      </Button>
     );
   };
+
+  const rowMenu = (member: ManagedStaff) => {
+    const { hasAccess, lockedReason } = accessState(member);
+    if (!hasAccess || lockedReason) return null;
+    const items: ActionMenuItem[] = [
+      { key: "remove", label: "Erişimi kaldır", icon: UserMinus, danger: true, disabled: Boolean(busyId), onSelect: () => void updateAccess(member, false) },
+    ];
+    return <ActionMenu items={items} label={`${member.fullName} işlemleri`} />;
+  };
+
+  const rowActions = (member: ManagedStaff) => (
+    <div className="flex items-center justify-end gap-1">
+      {primaryAction(member)}
+      {rowMenu(member)}
+    </div>
+  );
 
   const personCell = (member: ManagedStaff) => (
     <div className="min-w-0">
@@ -269,15 +285,17 @@ export default function SubeErisimiTab({ branch, staff, loading, error, onReload
   return (
     <div className="space-y-3">
       {/* "Rolü değişmez" bilgisi TEK yerde (önceden liste açıklaması, pencere açıklaması ve sarı kutuda üç kez). */}
-      <Callout tone="info">
+      <Callout tone="info" compact>
         Başka şubede çalışan personele <b>{branch?.name || "bu şube"}</b> için erişim verin. Rolü ve kendi şubesindeki yetkileri değişmez.
       </Callout>
 
-      <Toolbar>
-        <SearchInput value={query} onChange={setQuery} placeholder="Personel, rol veya şube ara" wrapperClassName="flex-1 min-w-[220px]" />
-      </Toolbar>
-
+      {/* Arama listenin kartının üst şeridinde (sadelik K1: ayrı süzgeç kartı yok). */}
       <ListTable
+        toolbar={(
+          <Toolbar>
+            <SearchInput value={query} onChange={setQuery} placeholder="Personel, rol veya şube ara" wrapperClassName="flex-1 min-w-[220px]" />
+          </Toolbar>
+        )}
         columns={columns}
         rows={guestCandidates}
         rowKey={(member) => member.id}
@@ -289,6 +307,7 @@ export default function SubeErisimiTab({ branch, staff, loading, error, onReload
         emptyText={query ? "Aramanızla eşleşen personel yok" : "Başka şubede çalışan personel yok"}
         emptyDescription={query ? undefined : "Kurumunuzun diğer şubelerine personel eklendiğinde burada görünür."}
         rowClassName={(member) => (member.isActive ? "" : "opacity-60")}
+        // Telefonda "…" kartın sağ üstünde; görünür tek eylem erişim durumunun yanında.
         mobileCard={(member) => {
           const summary = accessSummary(member);
           return (
@@ -296,11 +315,12 @@ export default function SubeErisimiTab({ branch, staff, loading, error, onReload
               {personCell(member)}
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <Badge tone={summary.tone}>{summary.text}</Badge>
-                {rowActions(member)}
+                {primaryAction(member)}
               </div>
             </div>
           );
         }}
+        mobileCardActions={rowMenu}
       />
 
       <FormModal

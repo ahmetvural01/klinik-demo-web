@@ -20,7 +20,7 @@ import { LoadErrorState } from "@/components/ui/LoadErrorState";
 import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { DetailSkeleton } from "@/components/ui/PageSkeleton";
-import { Section } from "@/components/ui/Section";
+import { Section, SectionDivider } from "@/components/ui/Section";
 import { SettingsList, SettingsRow } from "@/components/ui/SettingsList";
 import { Switch } from "@/components/ui/Switch";
 import { TimeRangeInput, timeRangeError } from "@/components/ui/TimeRangeInput";
@@ -468,7 +468,10 @@ export default function ProfilPage() {
 
       {ghost && <Callout tone="neutral">{GHOST_REASON}</Callout>}
 
-      <Section title={profile.fullName || "—"} description={`${roleLabel(profile.role)}${profile.role === "YONETICI" && profile.showAsDoctor ? " · hasta da tedavi ediyor" : ""}`}>
+      {/* Kişi bilgisi ve mesai TEK kartta, ince ayırıcıyla (sadelik K1).
+          "Hasta da tedavi ediyor" bilgisi aşağıdaki anahtarda okunur (yöneticide
+          mesai bölümü hep görünür); başlıkta ikinci kez yazılmaz. */}
+      <Section title={profile.fullName || "—"} description={roleLabel(profile.role)}>
         <ImageUploadField
           label="Fotoğraf"
           shape="round"
@@ -478,48 +481,50 @@ export default function ProfilPage() {
           placeholder={<Avatar name={profile.fullName} size="lg" />}
           disabled={ghost}
         />
-      </Section>
 
-      {showsWork && (
-        <Section
-          icon={Clock}
-          title="Mesai"
-          description={treatsPatients ? "Randevu ekranı bu saatlerin dışında randevu verdirmez." : undefined}
-        >
-          <form className="space-y-4" noValidate onSubmit={(event) => { event.preventDefault(); void saveWork(); }}>
-            {profile.role === "YONETICI" && (
-              <Switch
-                checked={profile.showAsDoctor}
-                onChange={(checked) => setProfile((current) => ({ ...current, showAsDoctor: checked }))}
-                label="Hasta da tedavi ediyorum"
-                description="Açıkken randevu, hakediş ve hasta ekranlarındaki doktor listesinde görünürsünüz."
-                disabled={ghost}
-              />
-            )}
-            {treatsPatients && (
-              <TimeRangeInput
-                id="profil-mesai"
-                label="Mesai saatleri"
-                labelHidden
-                required
-                startLabel="Mesai başlangıcı"
-                endLabel="Mesai bitişi"
-                disabled={ghost}
-                value={{ start: profile.workStart, end: profile.workEnd }}
-                onChange={(range) => setProfile((current) => ({ ...current, workStart: range.start, workEnd: range.end }))}
-                error={workSubmitted ? workRangeError || undefined : undefined}
-              />
-            )}
-            <FormErrorBanner message={workError} />
-            {workDirty && (
-              <div className="flex flex-wrap gap-2">
-                <Button type="submit" size="sm" loading={workSaving} disabled={ghost}>Kaydet</Button>
-                <Button size="sm" variant="secondary" disabled={workSaving} onClick={discardWork}>Vazgeç</Button>
-              </div>
-            )}
-          </form>
-        </Section>
-      )}
+        {showsWork && (
+          <>
+            <SectionDivider />
+            <h3 className="flex items-center gap-2 text-sm font-extrabold text-slate-900">
+              <Clock className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+              Mesai
+            </h3>
+            {treatsPatients && <p className="mt-0.5 text-xs leading-5 text-slate-500">Randevu ekranı bu saatlerin dışında randevu verdirmez.</p>}
+            <form className="mt-3 space-y-4" noValidate onSubmit={(event) => { event.preventDefault(); void saveWork(); }}>
+              {profile.role === "YONETICI" && (
+                <Switch
+                  checked={profile.showAsDoctor}
+                  onChange={(checked) => setProfile((current) => ({ ...current, showAsDoctor: checked }))}
+                  label="Hasta da tedavi ediyorum"
+                  description="Açıkken randevu, hakediş ve hasta ekranlarındaki doktor listesinde görünürsünüz."
+                  disabled={ghost}
+                />
+              )}
+              {treatsPatients && (
+                <TimeRangeInput
+                  id="profil-mesai"
+                  label="Mesai saatleri"
+                  labelHidden
+                  required
+                  startLabel="Mesai başlangıcı"
+                  endLabel="Mesai bitişi"
+                  disabled={ghost}
+                  value={{ start: profile.workStart, end: profile.workEnd }}
+                  onChange={(range) => setProfile((current) => ({ ...current, workStart: range.start, workEnd: range.end }))}
+                  error={workSubmitted ? workRangeError || undefined : undefined}
+                />
+              )}
+              <FormErrorBanner message={workError} />
+              {workDirty && (
+                <div className="flex flex-wrap gap-2">
+                  <Button type="submit" size="sm" loading={workSaving} disabled={ghost}>Kaydet</Button>
+                  <Button size="sm" variant="secondary" disabled={workSaving} onClick={discardWork}>Vazgeç</Button>
+                </div>
+              )}
+            </form>
+          </>
+        )}
+      </Section>
 
       <Section icon={ShieldCheck} title="Giriş güvenliği" padding="none">
         <SettingsList aria-label="Giriş güvenliği">

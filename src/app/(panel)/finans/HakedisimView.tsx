@@ -30,7 +30,8 @@ export function HakedisimView({ isDoctor, initialDoctorId }: Props) {
     <section className="space-y-3">
       <PageHeader icon="hakediş" title={isDoctor ? "Hakedişim" : "Hakediş"} />
       {!isDoctor && (
-        <Toolbar>
+        // Tek seçici: sayfa zemininde, ayrı kart değil.
+        <Toolbar bare>
           <div className="w-full sm:w-72">
             <FinanceDoctorSelect value={doctorId} onChange={setDoctorId} emptyLabel="Doktor seçin" size="sm" aria-label="Doktor" />
           </div>

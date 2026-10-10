@@ -29,6 +29,8 @@ type SectionProps = {
  * `rounded-2xl border bg-white p-5 shadow-sm` kartlarının yerine geçer.
  * Başlık ölçüsü uygulama genelinde aynıdır (text-sm, extrabold); kart
  * içinde büyük ikon kutusu, gradyan şerit veya ikinci açıklama paragrafı yok.
+ * Tek ince kenarlık, gölge neredeyse yok (globals.css `.ui-surface`); kart
+ * içinde ikinci çerçeve açılmaz — iç bölümler `SectionDivider` ile ayrılır.
  */
 export function Section({ title, description, icon: Icon, badge, actions, footer, children, padding = "md", headingAs = "h2", id, className = "" }: SectionProps) {
   const Heading = headingAs;
@@ -55,4 +57,16 @@ export function Section({ title, description, icon: Icon, badge, actions, footer
       {footer && <div className="border-t border-slate-100 px-4 py-2.5">{footer}</div>}
     </section>
   );
+}
+
+/**
+ * Kart içinde iç çerçeve YERİNE ayırıcı (sadelik K1): Section'ın (padding
+ * "md") içeriğini bölümlere ayırır; kenardan kenara ince çizgi çizer. İç
+ * bölümün adı gerekiyorsa çizginin altına küçük başlık yazılır — çerçeveli
+ * kutu, `ui-surface` ya da `border rounded` alan açılmaz.
+ *
+ *   <Section title="Tedavi ekle">…diş şeması…<SectionDivider />…tedavi seçimi…</Section>
+ */
+export function SectionDivider({ className = "" }: { className?: string }) {
+  return <hr className={`ui-section-divider ${className}`} />;
 }

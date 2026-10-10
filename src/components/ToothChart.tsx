@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 
 export type ToothStatus =
   | "saglikli"
@@ -56,6 +56,14 @@ type OdontogramSelectorProps = {
   editable?: boolean;
   /** Şemanın altında işaret ve seçim açıklaması. */
   showLegend?: boolean;
+  /** Açıklama satırının sağında ek kontrol (ör. "Süt dişleri" anahtarı). */
+  legendExtra?: ReactNode;
+  /**
+   * true (varsayılan): şema TEK ince çerçeve içinde (pencere/form içinde tek
+   * başına durduğunda). false: çerçevesiz — şema zaten bir kartın içindeyse
+   * (hasta dosyası › Tedavi ekle) kart içinde kart olmasın.
+   */
+  frame?: boolean;
   heightClassName?: string;
   className?: string;
 };
@@ -220,6 +228,8 @@ export function OdontogramSelector({
   dentition = "adult",
   editable = true,
   showLegend = false,
+  legendExtra,
+  frame = true,
   heightClassName = "",
   className = "",
 }: OdontogramSelectorProps) {
@@ -255,26 +265,34 @@ export function OdontogramSelector({
     chartRef.current?.querySelector<HTMLButtonElement>(`[data-tooth="${next}"]`)?.focus();
   };
 
+  // Tek çerçeve: önceden çerçeve › çerçeve (iki kat kenarlık) içinde çiziliyordu;
+  // kart içinde üç kat kutu oluşuyordu. Çeneler arasında yalnız ince çizgi.
   return (
-    <div className={`min-w-0 rounded-lg border border-slate-200 bg-white p-2 sm:p-3 ${className}`}>
-      <div className={`min-w-0 overflow-x-auto rounded-sm border border-slate-300 bg-white ${heightClassName}`}>
+    <div className={`min-w-0 ${frame ? "rounded-lg border border-slate-200 bg-white p-2 sm:p-3" : ""} ${className}`}>
+      <div className={`min-w-0 overflow-x-auto ${heightClassName}`}>
         <div
           ref={chartRef}
           role="group"
           aria-label="Diş şeması"
           onKeyDown={onKeyDown}
-          className="mx-auto flex w-full min-w-0 flex-col gap-4 px-2 py-3 sm:px-5 sm:py-4"
+          className={`mx-auto flex w-full min-w-0 flex-col gap-3 sm:gap-4 ${frame ? "px-1 py-1 sm:px-3 sm:py-2" : "py-1"}`}
         >
           <ToothRow teeth={upper} selected={selected} toothMap={toothMap} markers={markers} editable={editable} onToggle={onToggle} numberPosition="top" tabStop={tabStop} onToothFocus={setFocusedTooth} />
+          <div aria-hidden="true" className="border-t border-dashed border-slate-200" />
           <ToothRow teeth={lower} selected={selected} toothMap={toothMap} markers={markers} editable={editable} onToggle={onToggle} numberPosition="bottom" tabStop={tabStop} onToothFocus={setFocusedTooth} />
         </div>
       </div>
-      {showLegend && (
-        <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 px-1 text-xs text-slate-600" aria-label="Şema açıklaması">
-          <li className="inline-flex items-center gap-1.5"><span aria-hidden="true" className="h-3 w-3 rounded border-2 border-primary bg-primary/[0.06]" />Seçili</li>
-          <li className="inline-flex items-center gap-1.5"><span aria-hidden="true" className={`h-2 w-2 rounded-full ${MARKER_STYLE.pending.dot}`} />Yapılacak tedavi</li>
-          <li className="inline-flex items-center gap-1.5"><span aria-hidden="true" className={`h-2 w-2 rounded-full ${MARKER_STYLE.done.dot}`} />Yapılan tedavi</li>
-        </ul>
+      {(showLegend || legendExtra) && (
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-1">
+          {showLegend && (
+            <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600" aria-label="Şema açıklaması">
+              <li className="inline-flex items-center gap-1.5"><span aria-hidden="true" className="h-3 w-3 rounded border-2 border-primary bg-primary/[0.06]" />Seçili</li>
+              <li className="inline-flex items-center gap-1.5"><span aria-hidden="true" className={`h-2 w-2 rounded-full ${MARKER_STYLE.pending.dot}`} />Yapılacak tedavi</li>
+              <li className="inline-flex items-center gap-1.5"><span aria-hidden="true" className={`h-2 w-2 rounded-full ${MARKER_STYLE.done.dot}`} />Yapılan tedavi</li>
+            </ul>
+          )}
+          {legendExtra && <div className="ml-auto">{legendExtra}</div>}
+        </div>
       )}
     </div>
   );

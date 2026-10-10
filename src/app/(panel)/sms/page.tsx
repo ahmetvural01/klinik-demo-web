@@ -65,7 +65,8 @@ const TAB_ALIASES: Record<string, { tab: CommunicationTab; anchor?: string }> = 
   whatsapp: { tab: "ayarlar", anchor: "whatsapp-baglanti" },
 };
 
-type PageNotice = { tone: CalloutTone; title: string; text: string; action?: ReactNode };
+// aboutCredit: şerit kredi durumunu söylüyor (başlıktaki "Kalan kredi" o sırada yazılmaz).
+type PageNotice = { tone: CalloutTone; title: string; text: string; action?: ReactNode; aboutCredit?: boolean };
 
 export default function SmsPage() {
   const pathname = usePathname();
@@ -134,12 +135,42 @@ export default function SmsPage() {
   const lowCredit = Boolean(sms && sms.balance > 0 && sms.balance < sms.lowBalanceThreshold);
   const noCredit = Boolean(sms && sms.balance <= 0);
 
+  // İstisnai durum TEK şeritte (öncelik sırasıyla); "her şey yolunda"yken hiçbir şey görünmez.
+  // "Kanal ve kredi" sekmesi bu durumları kendi satırlarında gösterir; orada şerit çıkmaz.
+  const goToSettings = canManageSettings && tab !== "ayarlar" && visibleTabs.includes("ayarlar")
+    ? <Button variant="secondary" size="sm" onClick={() => setTab("ayarlar")}>Kanal ve kredi</Button>
+    : undefined;
+  const notice: PageNotice | null = (() => {
+    if (!status || tab === "ayarlar") return null;
+    if (sms && !sms.enabled) {
+      return { tone: "critical", title: "SMS gönderimi kapalı", text: canManageSettings ? "Hatırlatmalar dahil hiçbir SMS gitmez." : "Hatırlatmalar dahil hiçbir SMS gitmez. Açmayı klinik yöneticisi yapar.", action: goToSettings };
+    }
+    if (noCredit) {
+      return { tone: "critical", title: "SMS krediniz bitti", text: "Kredi yüklenene kadar SMS'ler gitmez.", action: canManageSettings ? <Button variant="secondary" size="sm" href={SMS_CREDIT_REQUEST_HREF}>Kredi iste</Button> : undefined, aboutCredit: true };
+    }
+    if (lowCredit && sms) {
+      // Kalan sayı şeritte yazar; başlıkta ayrıca "Kalan kredi" tekrar etmez.
+      return { tone: "warning", title: "SMS krediniz azaldı", text: `${formatCount(sms.balance)} kredi kaldı; bitince SMS'ler gitmez.`, action: canManageSettings ? <Button variant="secondary" size="sm" href={SMS_CREDIT_REQUEST_HREF}>Kredi iste</Button> : undefined, aboutCredit: true };
+    }
+    if (status.whatsapp && !status.whatsapp.connected && status.defaultChannel === "WHATSAPP") {
+      return status.whatsappSmsFallback
+        ? { tone: "warning", title: "WhatsApp bağlı değil", text: "Mesajlar SMS ile gidiyor.", action: goToSettings }
+        : { tone: "critical", title: "WhatsApp bağlı değil", text: "Kanal “Yalnız WhatsApp” olduğu için mesajlar gitmiyor.", action: goToSettings };
+    }
+    if (!status.consentLink.ready && canManageSettings) {
+      return { tone: "critical", title: "İzin bağlantısı hastanın telefonunda açılmıyor", text: "Yeni hastalar SMS izni veremez; sistem yöneticinize bildirin." };
+    }
+    return null;
+  })();
+
   // Durum bilgisi tek yerde: kredi ve WhatsApp başlıkta; "Kanal ve kredi"
   // sekmesinde ayrıntısıyla durduğu için orada başlıkta tekrar yazılmaz.
+  // Kredi bitti/azaldı şeridi görünürken başlıktaki "Kalan kredi" tekrar
+  // etmez (sadelik K6: aynı bilgi iki yerde yazmaz).
   // Değer gelmeden önce yer tutucu: başlık sonradan kaymaz, "0" görünmez.
   const stats: PageHeaderStat[] = [];
   if (tab !== "ayarlar") {
-    if (canReadSms && (sms || !statusLoaded)) {
+    if (canReadSms && (sms || !statusLoaded) && !notice?.aboutCredit) {
       stats.push({
         label: "Kalan kredi",
         value: sms ? `${formatCount(sms.balance)}${noCredit ? " (bitti)" : lowCredit ? " (az)" : ""}` : <Skeleton className="inline-block h-3 w-10 align-middle" />,
@@ -154,33 +185,6 @@ export default function SmsPage() {
       });
     }
   }
-
-  // İstisnai durum TEK şeritte (öncelik sırasıyla); "her şey yolunda"yken hiçbir şey görünmez.
-  // "Kanal ve kredi" sekmesi bu durumları kendi satırlarında gösterir; orada şerit çıkmaz.
-  const goToSettings = canManageSettings && tab !== "ayarlar" && visibleTabs.includes("ayarlar")
-    ? <Button variant="secondary" size="sm" onClick={() => setTab("ayarlar")}>Kanal ve kredi</Button>
-    : undefined;
-  const notice: PageNotice | null = (() => {
-    if (!status || tab === "ayarlar") return null;
-    if (sms && !sms.enabled) {
-      return { tone: "critical", title: "SMS gönderimi kapalı", text: canManageSettings ? "Hatırlatmalar dahil hiçbir SMS gitmez." : "Hatırlatmalar dahil hiçbir SMS gitmez. Açmayı klinik yöneticisi yapar.", action: goToSettings };
-    }
-    if (noCredit) {
-      return { tone: "critical", title: "SMS krediniz bitti", text: "Kredi yüklenene kadar SMS'ler gitmez.", action: canManageSettings ? <Button variant="secondary" size="sm" href={SMS_CREDIT_REQUEST_HREF}>Kredi iste</Button> : undefined };
-    }
-    if (lowCredit) {
-      return { tone: "warning", title: "SMS krediniz azaldı", text: "Bitince SMS'ler gitmez.", action: canManageSettings ? <Button variant="secondary" size="sm" href={SMS_CREDIT_REQUEST_HREF}>Kredi iste</Button> : undefined };
-    }
-    if (status.whatsapp && !status.whatsapp.connected && status.defaultChannel === "WHATSAPP") {
-      return status.whatsappSmsFallback
-        ? { tone: "warning", title: "WhatsApp bağlı değil", text: "Mesajlar SMS ile gidiyor.", action: goToSettings }
-        : { tone: "critical", title: "WhatsApp bağlı değil", text: "Kanal “Yalnız WhatsApp” olduğu için mesajlar gitmiyor.", action: goToSettings };
-    }
-    if (!status.consentLink.ready && canManageSettings) {
-      return { tone: "critical", title: "İzin bağlantısı hastanın telefonunda açılmıyor", text: "Yeni hastalar SMS izni veremez; sistem yöneticinize bildirin." };
-    }
-    return null;
-  })();
 
   const tabItems: TabItem<CommunicationTab>[] = visibleTabs.map((key) => ({ key, label: TAB_LABELS[key], shortLabel: TAB_SHORT_LABELS[key] }));
 
@@ -205,8 +209,11 @@ export default function SmsPage() {
       {statusError && !status && (
         <LoadErrorState compact message={statusError} onRetry={() => void reloadStatus()} />
       )}
+      {/* Tek satırlık şerit (sadelik K7): kalın kısa başlık + tek cümle, yanında eylem. */}
       {notice && (
-        <Callout tone={notice.tone} title={notice.title} action={notice.action}>{notice.text}</Callout>
+        <Callout tone={notice.tone} compact inline action={notice.action}>
+          <span className="font-semibold">{notice.title}.</span> {notice.text}
+        </Callout>
       )}
 
       {panel("gonder", (

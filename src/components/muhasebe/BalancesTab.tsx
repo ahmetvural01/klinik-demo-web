@@ -3,8 +3,8 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { CalendarPlus, Wallet } from "lucide-react";
-import { ListTable, EmptyValue, type ListSort, type ListTableColumn } from "@/components/ui/ListTable";
-import { ActionMenu } from "@/components/ui/ActionMenu";
+import { ListTable, type ListSort, type ListTableColumn } from "@/components/ui/ListTable";
+import { ActionMenu, type ActionMenuItem } from "@/components/ui/ActionMenu";
 import { Toolbar, ActiveFilters, type ActiveFilter } from "@/components/ui/Toolbar";
 import { SearchInput } from "@/components/ui/SearchInput";
 import { ChoiceCards } from "@/components/ui/ChoiceCards";
@@ -55,7 +55,8 @@ const lastMovement = (row: BalanceRow) => {
   const payment = row.lastPaymentAt ? new Date(row.lastPaymentAt).getTime() : 0;
   const treatment = row.lastTreatmentAt ? new Date(row.lastTreatmentAt).getTime() : 0;
   if (!payment && !treatment) return { at: null as string | null, label: "" };
-  return payment >= treatment ? { at: row.lastPaymentAt, label: "son ödeme" } : { at: row.lastTreatmentAt, label: "son tedavi" };
+  // Sütun başlığı "Son hareket"; hücrede "Bugün · tedavi" (tek satır, "son" tekrar etmez).
+  return payment >= treatment ? { at: row.lastPaymentAt, label: "ödeme" } : { at: row.lastTreatmentAt, label: "tedavi" };
 };
 
 type Props = {
@@ -152,6 +153,11 @@ export function BalancesTab({
   const planned = filtered.reduce((sum, row) => sum + (row.plan?.kalan || 0), 0);
   const plannedPatients = filtered.filter((row) => row.plan).length;
   const overduePatients = filtered.filter((row) => (row.plan?.overdueCount || 0) > 0).length;
+  // Her hasta aynı (tek) doktordaysa "Doktor" sütunu her satırda aynı adı tekrar etmez:
+  // sütun kalkar, ad özetteki ipucunda bir kez yazar (tek doktorlu klinik).
+  const sharedDoctor = filtered.length > 0 && filtered.every((row) => row.doctors.length === 1 && row.doctors[0].id === filtered[0].doctors[0]?.id)
+    ? filtered[0].doctors[0].fullName
+    : null;
 
   const collect = (row: BalanceRow) => onCollect(
     { id: row.id, fullName: row.fullName, phone: row.phone || null },
@@ -172,15 +178,17 @@ export function BalancesTab({
 
   // Borcun taksit planındaki kısmı: tıklanınca o hastanın planları Taksitler görünümünde açılır.
   // Sıradaki vade (önceki "Taksit planı" sütununda yazıyordu) bağlantının ipucunda.
-  const planLine = (row: BalanceRow) => (canReadInstallments && row.plan && view === "borclu" ? (
-    <span className="mt-0.5 flex flex-wrap items-center justify-end gap-1.5 text-xs">
+  // `compact`: telefon kartında kısa ad ("Taksitte"); tutar ipucunda yazar.
+  const planLine = (row: BalanceRow, compact = false) => (canReadInstallments && row.plan && view === "borclu" ? (
+    <span className={`flex items-center justify-end gap-1.5 text-xs ${compact ? "shrink-0 whitespace-nowrap" : "mt-0.5 flex-wrap"}`}>
       <a
         href={plansHref(row.fullName)}
         onClick={(event) => { event.preventDefault(); onOpenPlans(row.fullName); }}
         className="font-semibold text-primary hover:underline"
-        title={[row.plan.nextDueDate ? `Sıradaki vade ${shortDate(row.plan.nextDueDate)}` : "", "Bu hastanın taksit planını aç"].filter(Boolean).join(" — ")}
+        title={[`${money(row.plan.kalan)} taksitte`, row.plan.nextDueDate ? `Sıradaki vade ${shortDate(row.plan.nextDueDate)}` : "", "Bu hastanın taksit planını aç"].filter(Boolean).join(" — ")}
       >
-        {money(row.plan.kalan)} taksitte
+        {/* Borcun tamamı plandaysa üstteki tutar ikinci kez yazılmaz. */}
+        {Math.abs(row.plan.kalan - row.bakiye) < 0.5 ? (compact ? "Taksitte" : "Tamamı taksitte") : `${money(row.plan.kalan)} taksitte`}
       </a>
       {row.plan.overdueCount > 0 && <Badge tone="critical">{row.plan.overdueCount} gecikmiş</Badge>}
     </span>
@@ -190,6 +198,16 @@ export function BalancesTab({
   const canPlan = canWriteInstallments && Boolean(onCreatePlan);
   const canPlanRow = (row: BalanceRow) => canPlan && view === "borclu" && row.bakiye - (row.plan?.kalan || 0) > 0.5;
   const startPlan = (row: BalanceRow) => onCreatePlan?.({ id: row.id, fullName: row.fullName, phone: row.phone || null });
+
+  // Telefon: bütün satır eylemleri kartın sağ üst köşesindeki "…" menüsünde (ayrı eylem sırası yok).
+  const mobileMenu = (row: BalanceRow) => {
+    if (view !== "borclu") return null;
+    const items: ActionMenuItem[] = [
+      ...(canWritePayments ? [{ key: "collect", label: "Tahsilat al", icon: Wallet, onSelect: () => collect(row) }] : []),
+      ...(canPlanRow(row) ? [{ key: "plan", label: "Taksit planı kur", icon: CalendarPlus, onSelect: () => startPlan(row) }] : []),
+    ];
+    return items.length > 0 ? <ActionMenu label={`${row.fullName} için işlemler`} items={items} /> : null;
+  };
 
   // Tek birincil eylem "Tahsilat al"; plan kurma "…" menüsünde. Tahsilat izni yoksa plan düğmesi tek başına.
   const rowActions = (row: BalanceRow) => {
@@ -230,22 +248,24 @@ export function BalancesTab({
         </div>
       ),
     },
-    {
+    ...(sharedDoctor ? [] : [{
       key: "hekim",
       header: "Doktor",
-      render: (row) => row.doctors.length
+      render: (row: BalanceRow) => (row.doctors.length
         ? <span className="line-clamp-2 text-sm text-slate-600">{row.doctors.map((doctor) => doctor.fullName).join(", ")}</span>
-        : <EmptyValue />,
-    },
+        : null),
+    }]),
     {
       key: "son",
       header: "Son hareket",
       sortKey: "son",
       render: (row) => {
         const last = lastMovement(row);
-        return last.at
-          ? <div><p className="text-sm text-slate-700">{daysAgo(last.at)}</p><p className="text-xs text-slate-400">{last.label}</p></div>
-          : <EmptyValue />;
+        return last.at ? (
+          <span className="whitespace-nowrap text-sm text-slate-700">
+            {daysAgo(last.at)} <span className="text-xs text-slate-400">· {last.label}</span>
+          </span>
+        ) : null;
       },
     },
     ...(view === "borclu" && (canWritePayments || canPlan) ? [{ key: "islem", header: "", align: "right" as const, render: rowActions }] : []),
@@ -265,10 +285,11 @@ export function BalancesTab({
     })));
   };
 
+  const patientHint = rows ? [`${filtered.length} hasta`, sharedDoctor || ""].filter(Boolean).join(" · ") : undefined;
   const stats: StatItem[] = view === "avans"
-    ? [{ key: "total", label: "Toplam fazla ödeme", value: money(total), tone: "success", hint: rows ? `${filtered.length} hasta` : undefined }]
+    ? [{ key: "total", label: "Toplam fazla ödeme", value: money(total), tone: "success", hint: patientHint }]
     : [
-        { key: "total", label: "Toplam alacak", value: money(total), hint: rows ? `${filtered.length} hasta` : undefined },
+        { key: "total", label: "Toplam alacak", value: money(total), hint: patientHint },
         ...(canReadInstallments ? [{
           key: "plan",
           label: "Taksit planında",
@@ -285,7 +306,9 @@ export function BalancesTab({
 
   return (
     <div className="space-y-3">
+      {/* Araç çubuğu çerçevesiz (sayfa zemininde): ayrı kart değil. */}
       <Toolbar
+        bare
         className={FINANCE_TOOLBAR_CLASS}
         filterCount={view === "avans" ? 1 : 0}
         filters={<ChoiceCards label="Gösterilecek hastalar" labelHidden variant="pills" value={view} onChange={setView} options={VIEW_OPTIONS} />}
@@ -308,21 +331,36 @@ export function BalancesTab({
         emptyText={search ? "Aramaya uyan hasta yok" : view === "avans" ? "Fazla ödeme yapan hasta yok" : "Borcu olan hasta yok"}
         emptyDescription={search ? "Arama metnini değiştirip tekrar deneyin." : undefined}
         emptyAction={search ? <Button size="sm" variant="secondary" onClick={() => setSearch("")}>Aramayı temizle</Button> : undefined}
-        mobileCard={(row) => (
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              {nameCell(row)}
-              <p className="mt-0.5 truncate text-xs text-slate-500">
-                {[row.doctors.map((doctor) => doctor.fullName).join(", "), daysAgo(lastMovement(row).at)].filter(Boolean).join(" · ") || "—"}
-              </p>
+        // Telefon kartı iki satır: ad + borç; telefon · (doktor) · son hareket. Eylemler sağ üstte "…".
+        mobileCard={(row) => {
+          const meta = [
+            canSeePatientPhone && row.phone ? formatPhoneNumber(row.phone) : "",
+            sharedDoctor ? "" : row.doctors.map((doctor) => doctor.fullName).join(", "),
+            daysAgo(lastMovement(row).at),
+          ].filter(Boolean).join(" · ");
+          const plan = planLine(row, true);
+          // İki hizalı sıra: [ad + indirim | borç], [telefon · son hareket | taksit]. Kısa sütun sağda kalır.
+          return (
+            <div className="min-w-0 space-y-0.5">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-1.5">
+                  {canReadPatients
+                    ? <Link href={`/hasta-detay?id=${encodeURIComponent(row.id)}&tab=odeme`} className="truncate font-semibold text-slate-900 hover:text-primary hover:underline">{row.fullName}</Link>
+                    : <span className="truncate font-semibold text-slate-900">{row.fullName}</span>}
+                  {row.discountRate > 0 && <Badge tone="success" className="shrink-0">%{row.discountRate} indirim</Badge>}
+                </div>
+                <span className={`shrink-0 font-bold tabular-nums ${view === "avans" ? "text-emerald-700" : "text-slate-900"}`}>{money(Math.abs(row.bakiye))}</span>
+              </div>
+              {(meta || plan) && (
+                <div className="flex items-center justify-between gap-3">
+                  <p className="min-w-0 truncate text-xs text-slate-500" title={meta || undefined}>{meta}</p>
+                  {plan}
+                </div>
+              )}
             </div>
-            <div className="flex shrink-0 flex-col items-end gap-1.5">
-              <span className={`font-bold tabular-nums ${view === "avans" ? "text-emerald-700" : "text-slate-900"}`}>{money(Math.abs(row.bakiye))}</span>
-              {planLine(row)}
-              {rowActions(row)}
-            </div>
-          </div>
-        )}
+          );
+        }}
+        mobileCardActions={view === "borclu" && (canWritePayments || canPlan) ? mobileMenu : undefined}
         pager={filtered.length > PAGE_SIZE ? { page, pageCount, pageSize: PAGE_SIZE, total: filtered.length, onPageChange: (next) => setPageState({ key: pageKey, page: next }) } : undefined}
       />
     </div>
