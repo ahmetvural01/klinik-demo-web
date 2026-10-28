@@ -81,7 +81,7 @@ export function AppointmentsTab() {
       header: "Tarih",
       render: (appointment) => (
         <span className="whitespace-nowrap">
-          <span className="font-semibold text-slate-800">{formatDateText(appointment.startAt, "long")}</span>
+          <span className="font-semibold tabular-nums text-slate-800">{formatDateText(appointment.startAt)}</span>
           <span className="ml-2 tabular-nums text-slate-500">{timeRange(appointment)}</span>
         </span>
       ),
@@ -94,7 +94,7 @@ export function AppointmentsTab() {
   const renderMobileCard = (appointment: Appt, sameDoctor: string | null) => (
     <div className="flex items-start justify-between gap-3">
       <div className="min-w-0">
-        <p className="text-sm font-semibold text-slate-800">{formatDateText(appointment.startAt, "long")} · <span className="tabular-nums">{timeRange(appointment)}</span></p>
+        <p className="text-sm font-semibold text-slate-800"><span className="tabular-nums">{formatDateText(appointment.startAt)}</span> · <span className="tabular-nums">{timeRange(appointment)}</span></p>
         <p className="mt-0.5 text-xs text-slate-500">{[sameDoctor ? "" : appointment.doctor?.fullName, appointmentTypeLabel(appointment.type)].filter(Boolean).join(" · ")}</p>
       </div>
       {statusBadge(appointment)}

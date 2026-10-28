@@ -290,7 +290,8 @@ export function BalancesTab({
     ? [{ key: "total", label: "Toplam ön ödeme", value: money(total), tone: "success", hint: patientHint }]
     : [
         { key: "total", label: "Toplam alacak", value: money(total), hint: patientHint },
-        ...(canReadInstallments ? [{
+        // Taksit planında hiç alacak yoksa "₺0 · 0 hasta" kutusu durmaz.
+        ...(canReadInstallments && (!rows || plannedPatients > 0) ? [{
           key: "plan",
           label: "Taksit planında",
           value: money(planned),

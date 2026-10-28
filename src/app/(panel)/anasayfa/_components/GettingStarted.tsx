@@ -16,7 +16,7 @@ const STEPS: Record<StepKey, { title: string; description: string; href: string;
   ekip: { title: "Ekip", description: "Doktor, asistan ve banko hesapları", href: "/personel", action: "Personel ekle" },
   fiyat: { title: "Fiyat listesi", description: "Tedavi eklerken ücret kendiliğinden gelir", href: "/ayar?tab=fiyat", action: "Fiyatları gir" },
   mesaj: { title: "SMS ya da WhatsApp", description: "Randevu hatırlatmaları için SMS paketi alın ya da WhatsApp'ı bağlayın", href: "/sms?tab=ayarlar", action: "Kanal ve kredi" },
-  hasta: { title: "İlk hasta", description: "Hasta kartını açın ya da listeyi içe aktarın", href: "/hasta?yeni=1", action: "Hasta ekle" },
+  hasta: { title: "İlk hasta", description: "Hasta kartını açın; eski hasta listeniz varsa Destek'e gönderin, sizin için aktarılır", href: "/hasta?yeni=1", action: "Hasta ekle" },
   randevu: { title: "İlk randevu", description: "Takvimden randevu verin", href: "/randevu", action: "Takvim" },
 };
 

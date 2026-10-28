@@ -86,8 +86,11 @@ export function PatientsView({ data, filter, onFilterChange, sort, onSortChange,
       header: "Kalan borç",
       align: "right",
       sortKey: "borc",
-      headerHint: "Hastanın bugünkü toplam borcu.",
-      render: (row) => (patientDebt(row) > 0 ? <span className="font-bold tabular-nums text-slate-900">{money(patientDebt(row))}</span> : null),
+      headerHint: "Hastanın bugünkü toplam borcu. Tedaviden fazla ödeyen hastada ön ödeme yazar (borca eklenmez).",
+      render: (row) => (patientDebt(row) > 0
+        ? <span className="font-bold tabular-nums text-slate-900">{money(patientDebt(row))}</span>
+        // Hasta listesi ve hasta dosyasıyla aynı: fazla ödenen tutar "ön ödeme".
+        : row.balance < -0.5 ? <span className="whitespace-nowrap tabular-nums text-emerald-700">{money(Math.abs(row.balance))} ön ödeme</span> : null),
     },
   ];
 
@@ -95,12 +98,18 @@ export function PatientsView({ data, filter, onFilterChange, sort, onSortChange,
   const totalTreatment = rows.reduce((sum, row) => sum + row.treatmentTotal, 0);
   const totalCollected = rows.reduce((sum, row) => sum + row.collected, 0);
   const totalDebt = rows.reduce((sum, row) => sum + patientDebt(row), 0);
+  const totalPrepaid = rows.reduce((sum, row) => sum + (row.balance < -0.5 ? Math.abs(row.balance) : 0), 0);
   const totals = rows.length > 0 ? {
     cells: {
       hasta: `Toplam · ${count(rows.length)} hasta`,
       tedavi: <span className="tabular-nums">{money(totalTreatment)}</span>,
       tahsilat: <span className="tabular-nums">{money(totalCollected)}</span>,
-      borc: <span className="tabular-nums">{money(totalDebt)}</span>,
+      borc: (
+        <span className="tabular-nums">
+          {money(totalDebt)}
+          {totalPrepaid > 0 && <span className="block text-xs font-semibold text-emerald-700">{money(totalPrepaid)} ön ödeme</span>}
+        </span>
+      ),
     },
     mobile: `Toplam ${count(rows.length)} hasta · Tedavi ${money(totalTreatment)} · Tahsilat ${money(totalCollected)} · Borç ${money(totalDebt)}`,
   } : undefined;

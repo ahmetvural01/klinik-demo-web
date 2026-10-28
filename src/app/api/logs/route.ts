@@ -75,6 +75,18 @@ export async function GET(request: NextRequest) {
           : null;
     if (action) {
       where.action = action;
+    } else if (!category) {
+      // "Tüm işlemler": olağan giriş/çıkış kayıtları listeyi doldurup asıl
+      // işlemleri (randevu, tahsilat, silme) gizliyordu; onlar yalnız "Giriş ve
+      // güvenlik" bölümünde. Şifre, iki adımlı doğrulama gibi olaylar burada kalır.
+      const quiet = { action: { notIn: ["LOGIN", "LOGOUT"] } };
+      const searchOr = where.OR as unknown[] | undefined;
+      if (searchOr?.length) {
+        delete where.OR;
+        where.AND = [{ OR: searchOr }, quiet];
+      } else {
+        where.AND = [quiet];
+      }
     } else if (categoryWhere) {
       const searchOr = where.OR as unknown[] | undefined;
       if (searchOr?.length) {

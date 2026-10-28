@@ -622,7 +622,7 @@ export default function RandevuPage() {
       header: (
         <span className="flex items-center justify-center gap-1.5">
           <span className="truncate">{doctor.fullName}</span>
-          {count > 0 && <span className="shrink-0 text-xs font-semibold text-slate-500">· {count}</span>}
+          {count > 0 && <span className="shrink-0 text-xs font-semibold text-slate-500">· {count} randevu</span>}
         </span>
       ),
       headerTitle: `${doctor.fullName}${count > 0 ? ` · ${count} randevu` : ""}`,
@@ -823,7 +823,9 @@ export default function RandevuPage() {
                 variant="pills"
                 value={agendaFilter}
                 onChange={setAgendaFilter}
-                options={[
+                // Yalnız o gün gerçekten olan durumlar süzgeçte (ana sayfayla aynı kural):
+                // sayısı sıfır olan "Gelmedi / İptal" çipleri boşta durmaz; seçili olan kalır.
+                options={([
                   { value: "AKTIF", label: "Tümü", count: showingStale ? undefined : dayAppointments.length - agendaCounts.IPTAL },
                   { value: "PLANLANDI", label: "Planlandı", count: showingStale ? undefined : agendaCounts.PLANLANDI },
                   // Satırdaki rozetle aynı ad: hasta geldi, bekleme salonunda.
@@ -831,7 +833,7 @@ export default function RandevuPage() {
                   { value: "TAMAMLANDI", label: "Tamamlandı", count: showingStale ? undefined : agendaCounts.TAMAMLANDI },
                   { value: "GELMEDI", label: "Gelmedi", count: showingStale ? undefined : agendaCounts.GELMEDI },
                   { value: "IPTAL", label: "İptal", count: showingStale ? undefined : agendaCounts.IPTAL },
-                ]}
+                ] as const).filter((option) => option.value === "AKTIF" || option.value === agendaFilter || showingStale || (option.count ?? 0) > 0)}
               />
             </div>
           )}

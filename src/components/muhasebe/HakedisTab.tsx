@@ -95,7 +95,11 @@ export function HakedisTab({ active, refreshKey, selectedDoctorId, onSelectDocto
     );
   }
 
-  const list = rows || [];
+  const allRows = rows || [];
+  // Ödenecek ya da biriken hakedişi olmayan kişi (ör. hekimlik yapmayan yönetici)
+  // listede boş satır olarak durmaz; sayısı tablonun altında tek satırla yazar.
+  const list = allRows.filter((row) => row.odenecek > 0.5 || (row.buAy?.hakedilen || 0) > 0.5 || Boolean(row.enEskiOdenmemis));
+  const hiddenCount = allRows.length - list.length;
   const totalPayable = list.reduce((sum, row) => sum + (row.odenecek || 0), 0);
   const payableDoctors = list.filter((row) => row.odenecek > 0.5).length;
   const currentTotal = list.reduce((sum, row) => sum + (row.buAy?.hakedilen || 0), 0);
@@ -209,6 +213,9 @@ export function HakedisTab({ active, refreshKey, selectedDoctorId, onSelectDocto
         }}
         mobileCardActions={canPay ? payMenu : undefined}
       />
+      {rows && hiddenCount > 0 && (
+        <p className="px-1 text-xs text-slate-500">{hiddenCount} kişinin bu dönem ödenecek ya da biriken hakedişi yok.</p>
+      )}
     </div>
   );
 }

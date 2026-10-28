@@ -67,13 +67,28 @@ export async function GET(request: NextRequest) {
     // silinse de şube üyeliğindeki (branchMemberships[0]) aynı üç oran herkese
     // gidiyordu; artık oradan da çıkarılır.
     const canSeeRates = await hasEffectivePermission(auth.user, "finance:read");
+    // Hakediş hesabı oranı önce dönem-damgalı geçmişten (DoctorRateHistory) okur;
+    // personel ekranı da aynı kaynağa bakar. Önceden yalnız kişinin/şubenin
+    // alanına bakılıyordu: hakedişi hesaplanan doktorda "oran girilmemiş" yazıyordu.
+    const history = canSeeRates && staff.length > 0
+      ? await prisma.doctorRateHistory.findMany({
+          where: { institutionId: auth.user.institutionId || undefined, branchId: activeBranch.branchId, doctorId: { in: staff.map((person) => person.id) }, effectiveFrom: { lte: new Date() } },
+          orderBy: { effectiveFrom: "desc" },
+          select: { doctorId: true, kkYuzde: true, genelYuzde: true, maasYuzde: true },
+        })
+      : [];
+    const latestRate = new Map<string, (typeof history)[number]>();
+    for (const row of history) if (!latestRate.has(row.doctorId)) latestRate.set(row.doctorId, row);
     const result = canSeeRates
-      ? staff.map((person) => ({
-          ...person,
-          kkYuzde: person.branchMemberships[0]?.kkYuzde ?? person.kkYuzde,
-          genelYuzde: person.branchMemberships[0]?.genelYuzde ?? person.genelYuzde,
-          maasYuzde: person.branchMemberships[0]?.maasYuzde ?? person.maasYuzde,
-        }))
+      ? staff.map((person) => {
+          const fromHistory = latestRate.get(person.id);
+          return {
+            ...person,
+            kkYuzde: person.branchMemberships[0]?.kkYuzde ?? person.kkYuzde ?? fromHistory?.kkYuzde ?? null,
+            genelYuzde: person.branchMemberships[0]?.genelYuzde ?? person.genelYuzde ?? fromHistory?.genelYuzde ?? null,
+            maasYuzde: person.branchMemberships[0]?.maasYuzde ?? person.maasYuzde ?? fromHistory?.maasYuzde ?? null,
+          };
+        })
       : staff.map(({ kkYuzde: _kkYuzde, genelYuzde: _genelYuzde, maasYuzde: _maasYuzde, branchMemberships, ...rest }) => ({
           ...rest,
           branchMemberships: branchMemberships.map(({ kkYuzde: _bkk, genelYuzde: _bgenel, maasYuzde: _bmaas, ...membership }) => membership),

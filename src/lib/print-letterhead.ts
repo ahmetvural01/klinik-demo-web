@@ -7,6 +7,7 @@
 // antedini çiziyordu (lacivert bant, siyah çizgi, ızgara) ve logo hiç yoktu.
 
 import { cachedGet } from "@/lib/client-cache";
+import { formatPhoneNumber } from "@/lib/format";
 
 export type PrintClinic = {
   name: string;
@@ -50,8 +51,14 @@ function safeLogo(url: string) {
   return /^https:\/\//i.test(url) || /^data:image\/(png|jpe?g|webp|svg\+xml|gif);base64,/i.test(url) ? url : "";
 }
 
+/** Telefon her yerde aynı biçimde: "(0530) 637-5370" (yalnız rakamdan oluşan Türkiye numarası). */
+function displayPhone(phone: string) {
+  const digits = phone.replace(/\D/g, "");
+  return /^0?\d{10}$/.test(digits) ? formatPhoneNumber(digits) : phone;
+}
+
 export function clinicContactLine(clinic: PrintClinic) {
-  return [clinic.address, clinic.phone ? `Tel: ${clinic.phone}` : "", clinic.website || clinic.email].filter(Boolean).join(" · ");
+  return [clinic.address, clinic.phone ? `Tel: ${displayPhone(clinic.phone)}` : "", clinic.website || clinic.email].filter(Boolean).join(" · ");
 }
 
 /** Antet: logo + klinik adı + iletişim; sağda belge adı, tarih ve (varsa) belge no. */

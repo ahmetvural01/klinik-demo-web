@@ -562,9 +562,10 @@ export function TreatmentTab() {
       )}
 
       {/* Tedavi planı bu listedir: borca yansımaz, hastaya "Teklif yazdır" ile
-          fiyat teklifi verilir. Listede seçim varsa teklif seçilenlerle açılır. */}
-      <ListTable
-        title="Planlanan tedaviler"
+          fiyat teklifi verilir. Listede seçim varsa teklif seçilenlerle açılır.
+          Boş liste ayrı kutu olarak durmaz: hiç tedavi yoksa tek kısa boş durum. */}
+      {(pending.length > 0 || done.length === 0) && <ListTable
+        title={pending.length === 0 && done.length === 0 ? "Tedaviler" : "Planlanan tedaviler"}
         subtitle={listSubtitle(pending.length, pendingTotal, pendingDoctor)}
         actions={pending.length > 0 ? <Button size="sm" variant="secondary" icon={Printer} onClick={() => setQuoteOpen(true)}>Teklif yazdır</Button> : undefined}
         header={canWrite ? (
@@ -589,12 +590,12 @@ export function TreatmentTab() {
         selection={canWrite ? { selectedIds: selectedPending, onChange: setSelectedPending, isSelectable: canModify } : undefined}
         getRowAriaLabel={(exam) => `${exam.treatmentName}${exam.toothNo ? ` diş ${exam.toothNo}` : ""}`}
         emptyIcon={Stethoscope}
-        emptyText="Planlanan tedavi yok"
-        emptyDescription={canWrite ? "Muayenede bulunan tedavileri yukarıdan “Plana ekle” ile kaydedin; yapılınca tutarı borca eklenir." : undefined}
+        emptyText="Henüz tedavi yok"
+        emptyDescription={canWrite ? "Muayenede bulunanları yukarıdan “Plana ekle”, yapılanları “Yapıldı olarak kaydet” ile girin; yapılan tedavinin tutarı borca eklenir." : undefined}
         mobileCard={(exam) => examCard(exam, pendingActions(exam), pendingDoctor)}
-      />
+      />}
 
-      <ListTable
+      {done.length > 0 && <ListTable
         title="Yapılan tedaviler"
         subtitle={listSubtitle(done.length, doneTotal, doneDoctor)}
         actions={done.length > 0 ? <Button size="sm" variant="secondary" icon={Printer} onClick={() => setPrintOpen(true)}>Tedavi raporu</Button> : undefined}
@@ -604,7 +605,7 @@ export function TreatmentTab() {
         emptyIcon={ClipboardCheck}
         emptyText="Yapılan tedavi yok"
         mobileCard={(exam) => examCard(exam, doneActions(exam), doneDoctor)}
-      />
+      />}
 
       {editing && <ExamEditModal exam={editing} onClose={() => setEditing(null)} />}
 

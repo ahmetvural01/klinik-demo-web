@@ -25,6 +25,12 @@ import { FINANCE_TOOLBAR_CLASS, METHOD_LABELS, doctorLabel, methodLabel, money, 
 import { useLoadWhenActive } from "@/components/muhasebe/finance-hooks";
 import type { EditTarget, LedgerExpense, LedgerPayment } from "@/components/muhasebe/EditEntryModal";
 
+/** Kartlı tahsilatta hangi POS'tan çekildiği de yazar (gün sonu ve makbuzla aynı bilgi). */
+function methodWithPos(row: { method: string; payment?: { posName?: string | null } | null }) {
+  const pos = row.payment?.posName?.trim() || "";
+  return pos ? `${methodLabel(row.method)} · ${pos}` : methodLabel(row.method);
+}
+
 export type LedgerRow = {
   key: string;
   id: string;
@@ -375,7 +381,7 @@ export function LedgerTab({
         </div>
       ),
     },
-    { key: "yontem", header: "Yöntem", cellClassName: "whitespace-nowrap text-sm text-slate-600", render: (row) => methodLabel(row.method) },
+    { key: "yontem", header: "Yöntem", cellClassName: "whitespace-nowrap text-sm text-slate-600", render: (row) => methodWithPos(row) },
     { key: "tutar", header: "Tutar", align: "right", render: amountCell },
     { key: "islem", header: "", align: "right", render: rowActions },
   ];
@@ -531,7 +537,7 @@ export function LedgerTab({
         mobileCard={(row) => {
           const meta = [
             singleDay ? (row.hasTime ? timeText(row.date) : "") : `${shortDate(row.date)}${row.hasTime ? ` ${timeText(row.date)}` : ""}`,
-            methodLabel(row.method),
+            methodWithPos(row),
             rowDetail(row, Boolean(sharedDoctor)),
           ].filter(Boolean).join(" · ");
           return (

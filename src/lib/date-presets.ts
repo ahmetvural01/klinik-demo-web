@@ -62,7 +62,9 @@ export const DATE_PRESET_SETS = {
   gecmis: ["bugun", "7", "30", "90", "ozel"],
 } as const satisfies Record<string, readonly DatePresetKey[]>;
 
-const MONTHS_SHORT = ["Oca", "Şub", "Mar", "Nis", "May", "Haz", "Tem", "Ağu", "Eyl", "Eki", "Kas", "Ara"];
+// Dönem etiketlerinde ay adı tam yazılır ("1–28 Ekim 2026"): sistemdeki tarih biçimi
+// iki türlü — listelerde "28.10.2026", başlık ve dönem adlarında "28 Ekim 2026".
+const MONTHS_SHORT = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"];
 
 export function isDatePresetKey(value: string | null | undefined): value is DatePresetKey {
   return Boolean(value) && (DATE_PRESET_KEYS as readonly string[]).includes(value as string);
@@ -149,7 +151,7 @@ function dayParts(key: string) {
   return { day: Number(key.slice(8, 10)), month: MONTHS_SHORT[Number(key.slice(5, 7)) - 1] || "", year: key.slice(0, 4) };
 }
 
-/** Tek gün: "10 Eki 2026". */
+/** Tek gün: "10 Ekim 2026". */
 export function formatDayLabel(key: string): string {
   if (!isValidDateKey(key)) return "";
   const { day, month, year } = dayParts(key);
@@ -158,7 +160,7 @@ export function formatDayLabel(key: string): string {
 
 /**
  * Kısa aralık yazımı — filtre etiketi, alt başlık, dışa aktarım adı için:
- * "10 Eki 2026" · "1–10 Eki 2026" · "28 Eyl – 10 Eki 2026" · "28 Ara 2025 – 3 Oca 2026".
+ * "10 Ekim 2026" · "1–10 Ekim 2026" · "28 Eylül – 10 Ekim 2026" · "28 Aralık 2025 – 3 Ocak 2026".
  */
 export function formatRangeLabel(range: DateRange | null | undefined): string {
   if (!range || !isValidDateKey(range.from) || !isValidDateKey(range.to)) return "";
@@ -170,7 +172,7 @@ export function formatRangeLabel(range: DateRange | null | undefined): string {
   return `${a.day} ${a.month} ${a.year} – ${b.day} ${b.month} ${b.year}`;
 }
 
-/** Seçimin kısa adı (aktif filtre etiketi): "Son 7 gün" ya da özel aralıkta "1–10 Eki 2026". */
+/** Seçimin kısa adı (aktif filtre etiketi): "Son 7 gün" ya da özel aralıkta "1–10 Ekim 2026". */
 export function describeDateRange(value: DateRangeValue): string {
   if (value.preset !== "ozel") return DATE_PRESET_LABELS[value.preset];
   return formatRangeLabel(presetRange("ozel", value)) || "Tarih aralığı";

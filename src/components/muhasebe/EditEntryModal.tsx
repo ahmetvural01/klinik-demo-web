@@ -9,6 +9,8 @@ import { ExpenseForm } from "@/components/finance/ExpenseForm";
 export type LedgerPayment = {
   id: string; createdAt: string; amount: number | string; method: string;
   description?: string | null; posId?: string | null;
+  /** Kartlı tahsilatın POS cihazı (api/muhasebe/defter). */
+  posName?: string | null;
   patient?: { id: string; fullName: string } | null;
   doctorId?: string | null;
   doctor?: { id: string; fullName: string } | null;

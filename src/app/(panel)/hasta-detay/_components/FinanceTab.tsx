@@ -130,7 +130,8 @@ export function FinanceTab() {
     { key: "date", header: "Tarih", render: (payment) => <span className="whitespace-nowrap">{formatDateText(payment.createdAt)}</span> },
     { key: "amount", header: "Tutar", align: "right", render: (payment) => <span className="font-semibold tabular-nums text-emerald-700">{money(payment.amount)}</span> },
     { key: "method", header: "Yöntem", render: (payment) => paymentMethodLabel(payment.method) },
-    ...(paymentDoctor ? [] : [{ key: "doctor", header: "Hekim", render: (payment: Pay) => payment.doctor?.fullName || null }]),
+    // Hekim sütunu yalnız tahsilatlarda farklı hekimler varsa (hiç hekim yoksa boş sütun durmaz).
+    ...(paymentDoctor || !payments.some((payment) => payment.doctor?.fullName) ? [] : [{ key: "doctor", header: "Hekim", render: (payment: Pay) => payment.doctor?.fullName || null }]),
     ...(hasDescriptions ? [{ key: "description", header: "Açıklama", render: (payment: Pay) => payment.description || null }] : []),
     { key: "actions", header: "", align: "right" as const, render: paymentActions },
   ];

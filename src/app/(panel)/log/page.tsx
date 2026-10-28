@@ -314,7 +314,7 @@ function LogsTab() {
                 <>
                   <DateRangeFilter {...period.filterProps} />
                   <Select aria-label="Bölüm" value={category} onChange={(event) => setCategory(event.target.value as AuditCategoryKey | "")} className="sm:w-52">
-                    <option value="">Tüm bölümler</option>
+                    <option value="">Tüm işlemler</option>
                     {AUDIT_CATEGORIES.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
                   </Select>
                   {staff.length > 0 && (

@@ -1,5 +1,6 @@
 import {
   LAB_LABELS,
+  daysSince,
   expectedReturnAt,
   formatShortLabDate,
   getReceivedItemFromNote,
@@ -36,6 +37,58 @@ export function labStatusLine(
     }
     case "done":
       return summary.lastActivityAt ? { what: "", when: `Son işlem ${formatShortLabDate(summary.lastActivityAt)}` } : null;
+    default:
+      return null;
+  }
+}
+
+export type LabTripDates = {
+  /** İşin laboratuvara gittiği gün ("07.07"). */
+  sent: string;
+  /** Dönüş günü: beklenen (laboratuvarda), geldiği (klinikte) ya da son işlem (kapanan). */
+  back: string;
+  /** Dönüşün yanındaki tek kelime: "bekleniyor", "3 gün gecikti", "geldi". */
+  backNote: string;
+  late: boolean;
+};
+
+/**
+ * Listedeki "Gidiş" ve "Dönüş" sütunları: hangi iş ne zaman gitti, ne zaman
+ * dönecek/döndü. Laboratuvardaki işte gidiş = gönderim günü, dönüş = beklenen
+ * gün (geciktiyse kaç gün). Klinikteki işte son gönderimin gidişi ve geldiği
+ * gün. Kapanan işte ilk gidiş ve son işlem günü. Gönderilmemiş işte boş.
+ */
+export function labTripDates(
+  summary: Pick<LabOrderSummary, "stage" | "pendingTrip" | "lastReceivedTrip" | "sortedTrips" | "lastActivityAt">,
+): LabTripDates | null {
+  switch (summary.stage) {
+    case "late":
+    case "atLab": {
+      const trip = summary.pendingTrip;
+      if (!trip) return null;
+      const due = expectedReturnAt(trip);
+      const late = summary.stage === "late";
+      return {
+        sent: formatShortLabDate(trip.sentAt),
+        back: formatShortLabDate(due),
+        backNote: late ? `${Math.max(1, daysSince(due.toISOString()))} gün gecikti` : "bekleniyor",
+        late,
+      };
+    }
+    case "clinic": {
+      const trip = summary.lastReceivedTrip;
+      if (!trip) return null;
+      return { sent: formatShortLabDate(trip.sentAt), back: formatShortLabDate(trip.receivedAt), backNote: "geldi", late: false };
+    }
+    case "done": {
+      const first = summary.sortedTrips[0];
+      return {
+        sent: first ? formatShortLabDate(first.sentAt) : "",
+        back: summary.lastActivityAt ? formatShortLabDate(summary.lastActivityAt) : "",
+        backNote: "son işlem",
+        late: false,
+      };
+    }
     default:
       return null;
   }

@@ -10,7 +10,7 @@ import { Toolbar, ActiveFilters, type ActiveFilter } from "@/components/ui/Toolb
 import { SearchInput } from "@/components/ui/SearchInput";
 import { Select } from "@/components/ui/Input";
 import { ChoiceCards } from "@/components/ui/ChoiceCards";
-import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import { EmptyValue, ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Callout } from "@/components/ui/Callout";
@@ -23,7 +23,7 @@ import { LabOrderDetailModal } from "@/components/lab/LabOrderDetailModal";
 import { LabNewOrderModal } from "@/components/lab/LabNewOrderModal";
 import { LabStatusBadge } from "@/components/lab/LabStatusBadge";
 import { useLabOrderActions } from "@/components/lab/useLabOrderActions";
-import { getLabRowAction, labStatusLine } from "@/components/lab/lab-row-action";
+import { getLabRowAction, labStatusLine, labTripDates } from "@/components/lab/lab-row-action";
 import { fetchJson, normalizeLabOrder, normalizeLabOrders, phoneSearchKey, type LabOrderView, type LabTripView } from "@/components/lab/lab-order-model";
 import { cachedGet } from "@/lib/client-cache";
 import type { StaffLike } from "@/lib/staff-roles";
@@ -432,16 +432,33 @@ export default function LabPage() {
     return [teeth.length ? `Diş ${teeth.join(", ")}` : "", order.labName, doctorFilter || singleDoctor ? "" : order.doctor.fullName].filter(Boolean).join(" · ");
   };
 
-  // Durum tek sütunda, en fazla iki satır: rozet + "sıradaki adım · tarih".
-  const statusCell = ({ summary }: Row) => (
-    <div className="min-w-0 max-w-[320px] space-y-0.5">
-      <div className="flex items-center gap-1">
-        <LabStatusBadge stage={summary.stage} />
-        {summary.rework && <Badge tone="neutral" size="sm">Yeniden yapım</Badge>}
+  // Durum: rozet + adımın adı (tarihler kendi sütunlarında: Gidiş, Dönüş).
+  const statusCell = ({ summary }: Row) => {
+    const step = labStatusLine(summary)?.what;
+    return (
+      <div className="min-w-0 max-w-[320px] space-y-0.5">
+        <div className="flex items-center gap-1">
+          <LabStatusBadge stage={summary.stage} />
+          {summary.rework && <Badge tone="neutral" size="sm">Yeniden yapım</Badge>}
+        </div>
+        {step && <p className="truncate text-xs text-slate-500" title={stageDetail(summary)}>{step}</p>}
       </div>
-      {stageLine(summary)}
-    </div>
-  );
+    );
+  };
+  const sentCell = ({ summary }: Row) => {
+    const dates = labTripDates(summary);
+    return dates?.sent ? <span className="whitespace-nowrap tabular-nums text-sm text-slate-700">{dates.sent}</span> : <EmptyValue />;
+  };
+  const backCell = ({ summary }: Row) => {
+    const dates = labTripDates(summary);
+    if (!dates?.back) return <EmptyValue />;
+    return (
+      <div className="whitespace-nowrap">
+        <p className={`tabular-nums text-sm ${dates.late ? "font-semibold text-red-700" : "text-slate-700"}`}>{dates.back}</p>
+        <p className={`text-xs ${dates.late ? "font-semibold text-red-700" : "text-slate-500"}`}>{dates.backNote}</p>
+      </div>
+    );
+  };
 
   const columns: ListTableColumn<Row>[] = [
     {
@@ -463,6 +480,8 @@ export default function LabPage() {
       ),
     },
     { key: "status", header: "Durum", render: statusCell },
+    { key: "sent", header: "Gidiş", render: sentCell },
+    { key: "back", header: "Dönüş", render: backCell },
     { key: "actions", header: "", align: "right", render: actionCell },
   ];
 
@@ -599,12 +618,14 @@ export default function LabPage() {
         mobileCard={(row) => {
           const action = actionCell(row);
           const line = stageLine(row.summary, "min-w-0 flex-1");
+          const dates = labTripDates(row.summary);
           return (
             <div className="space-y-1">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold text-slate-900">{row.order.patient.fullName}</p>
                   <p className="truncate text-xs text-slate-500">{row.order.labType} · {row.order.labName}</p>
+                  {dates?.sent && <p className="text-xs tabular-nums text-slate-500">Gidiş {dates.sent}</p>}
                 </div>
                 <LabStatusBadge stage={row.summary.stage} />
               </div>

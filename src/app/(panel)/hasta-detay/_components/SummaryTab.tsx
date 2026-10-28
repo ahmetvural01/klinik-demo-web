@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
-import { CalendarClock, CalendarPlus, ChevronRight, FlaskConical, Stethoscope, Wallet } from "lucide-react";
+import { CalendarPlus, ChevronRight, FlaskConical, Stethoscope, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Section } from "@/components/ui/Section";
 import { DescriptionList, type DescriptionItem } from "@/components/ui/DescriptionList";
@@ -156,22 +156,9 @@ export function SummaryTab() {
       }
     }
 
-    const upcoming = canOpenTab("randevular")
-      ? data.appointments
-        .filter((appointment) => new Date(appointment.startAt).getTime() >= now && !["IPTAL", "TAMAMLANDI", "GELMEDI"].includes(appointment.status))
-        .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime())
-      : [];
-    if (upcoming[0]) {
-      const next = upcoming[0];
-      steps.push({
-        id: "next-appointment",
-        icon: CalendarClock,
-        tone: "info",
-        title: `Sıradaki randevu: ${formatDateText(next.startAt, "long")} ${formatDateText(next.startAt, "time")}`,
-        detail: [next.doctor?.fullName, upcoming.length > 1 ? `${upcoming.length - 1} randevu daha var` : ""].filter(Boolean).join(" · ") || "Hekim belirtilmedi",
-        tab: "randevular",
-      });
-    }
+    // Sıradaki randevu dosyanın başlığında her sekmede yazar; burada tekrar edilmez.
+    const hasUpcoming = canOpenTab("randevular") && data.appointments
+      .some((appointment) => new Date(appointment.startAt).getTime() >= now && !["IPTAL", "TAMAMLANDI", "GELMEDI"].includes(appointment.status));
 
     const pending = canOpenTab("tedavi") ? data.examinations.filter(isPendingExam) : [];
     if (pending.length > 0) {
@@ -184,7 +171,7 @@ export function SummaryTab() {
         tab: "tedavi",
       });
       // Planlanan tedavisi olup ileri randevusu olmayan hasta: kontrol randevusu.
-      if (!upcoming[0] && canOpenTab("randevular") && can("appointments:write")) {
+      if (!hasUpcoming && canOpenTab("randevular") && can("appointments:write")) {
         steps.push({
           id: "no-appointment",
           icon: CalendarPlus,

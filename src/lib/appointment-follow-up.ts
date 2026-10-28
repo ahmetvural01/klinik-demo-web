@@ -25,17 +25,17 @@ export const FOLLOW_UP_OPTIONS: Array<{ value: FollowUpKey; label: string; needs
 // bu liste ile tohumlanır (bkz. /api/treatment-types). Buradaki `value`'lar
 // mevcut randevu notlarıyla (Tedavi: XXX) uyumlu kalması için değiştirilmemelidir.
 export const APPOINTMENT_TREATMENT_OPTIONS: TreatmentOption[] = [
-  { value: "IMPLANT", label: "Implant", color: "#1d4ed8", badge: "bg-blue-100 text-blue-800" },
+  { value: "IMPLANT", label: "İmplant", color: "#1d4ed8", badge: "bg-blue-100 text-blue-800" },
   { value: "DETERTRAJ", label: "Detertraj", color: "#0f766e", badge: "bg-teal-100 text-teal-800" },
   { value: "METAL_PROVA", label: "Metal Prova", color: "#475569", badge: "bg-slate-200 text-slate-800" },
   { value: "DENTIN_PROVA", label: "Dentin Prova", color: "#7c3aed", badge: "bg-violet-100 text-violet-800" },
-  { value: "DISLI_PROVA", label: "Disli Prova", color: "#9333ea", badge: "bg-purple-100 text-purple-800" },
+  { value: "DISLI_PROVA", label: "Dişli Prova", color: "#9333ea", badge: "bg-purple-100 text-purple-800" },
   { value: "BITIM", label: "Bitim", color: "#059669", badge: "bg-emerald-100 text-emerald-800" },
   { value: "SIMANTASYON", label: "Simantasyon", color: "#0891b2", badge: "bg-cyan-100 text-cyan-800" },
   { value: "MUAYENE", label: "Muayene", color: "#2563eb", badge: "bg-blue-100 text-blue-800" },
   { value: "KONTROL", label: "Kontrol", color: "#d97706", badge: "bg-amber-100 text-amber-800" },
-  { value: "DIKIS_ALIM", label: "Dikis Alim", color: "#be123c", badge: "bg-rose-100 text-rose-800" },
-  { value: "OLCU", label: "Olcu", color: "#0ea5e9", badge: "bg-sky-100 text-sky-800" },
+  { value: "DIKIS_ALIM", label: "Dikiş Alımı", color: "#be123c", badge: "bg-rose-100 text-rose-800" },
+  { value: "OLCU", label: "Ölçü", color: "#0ea5e9", badge: "bg-sky-100 text-sky-800" },
   { value: "DIJITAL_TARAMA", label: "Dijital Tarama", color: "#0284c7", badge: "bg-sky-100 text-sky-800" },
   { value: "DOLGU", label: "Dolgu", color: "#16a34a", badge: "bg-green-100 text-green-800" },
   { value: "KANAL", label: "Kanal", color: "#dc2626", badge: "bg-red-100 text-red-800" },
@@ -46,7 +46,7 @@ export const APPOINTMENT_TREATMENT_OPTIONS: TreatmentOption[] = [
   { value: "KONSULTASYON", label: "Konsültasyon", color: "#0d9488", badge: "bg-teal-100 text-teal-800" },
   { value: "FISSUR_ORTUCU", label: "Fissür Örtücü", color: "#65a30d", badge: "bg-lime-100 text-lime-800" },
   { value: "CERRAHI", label: "Cerrahi", color: "#7f1d1d", badge: "bg-red-100 text-red-900" },
-  { value: "DIGER", label: "Diger", color: "#334155", badge: "bg-slate-100 text-slate-700" },
+  { value: "DIGER", label: "Diğer", color: "#334155", badge: "bg-slate-100 text-slate-700" },
 ];
 
 const DEFAULT_TREATMENT: TreatmentOption = APPOINTMENT_TREATMENT_OPTIONS.find((item) => item.value === "MUAYENE") || APPOINTMENT_TREATMENT_OPTIONS[0];

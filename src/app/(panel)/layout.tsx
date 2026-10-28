@@ -137,8 +137,8 @@ export default async function PanelLayout({ children }: { children: React.ReactN
         {/* relative: içerikteki sr-only (absolute) öğeler body'ye göre yerleşip belgeyi uzatmasın. */}
         {/* Telefonda alt menü çubuğu içeriğin altını örtmesin (pb-20). */}
         <main className="panel-content relative flex-1 overscroll-contain overflow-y-auto px-3 pb-20 pt-0 sm:px-4 md:pb-5 lg:px-5">
-          {/* Çok geniş ekranda içerik sabit genişlikte ortalanır: tablolar 1920 px'e yayılmaz. */}
-          <div className="mx-auto w-full max-w-[1440px]">
+          {/* İçerik ekranın tamamını kullanır (genişlik sınırı tabloları gereksiz daraltıyordu). */}
+          <div className="w-full">
           {/* Bantlar içerikle birlikte kayar: telefonda ekranın dörtte birini kalıcı kaplamasın. */}
           {user.ghost && <GhostModeBanner institutionName={institutionName} previewRole={user.previewRole} />}
           {showBilling && <BillingStatusBanner initialStatus={billingStatus} />}
