@@ -221,11 +221,20 @@ export function HakedisMonthlyPanel({ doctorId, canPay = false, onPay, refreshTo
     />
   ) : null);
 
-  const payButton = (row: HakedisMonth) => (canPay && onPay && !isCurrent(row) && row.kalan > 0.5 ? (
-    <Button size="sm" variant="secondary" icon={Wallet} onClick={() => onPay(doctorId, row.year, row.month, row.kalan)} aria-label={`${monthName(row.year, row.month)} hakedişini öde`}>
-      Öde
-    </Button>
-  ) : null);
+  // Her ayda görünür "Ayrıntı": kimden ne alındı, hangi tedavi, hangi masraf
+  // düşüldü (hesap dökümü, tedaviler, tahsilatlar, laboratuvar, ödemeler).
+  const payButton = (row: HakedisMonth) => (
+    <div className="flex items-center justify-end gap-1.5">
+      <Button size="sm" variant="ghost" onClick={() => void openDetail(row.year, row.month)} aria-label={`${monthName(row.year, row.month)} hakediş ayrıntısı`}>
+        Ayrıntı
+      </Button>
+      {canPay && onPay && !isCurrent(row) && row.kalan > 0.5 && (
+        <Button size="sm" variant="secondary" icon={Wallet} onClick={() => onPay(doctorId, row.year, row.month, row.kalan)} aria-label={`${monthName(row.year, row.month)} hakedişini öde`}>
+          Öde
+        </Button>
+      )}
+    </div>
+  );
 
   const columns: ListTableColumn<HakedisMonth>[] = [
     { key: "ay", header: "Ay", render: (row) => <span className="font-semibold text-slate-900">{monthName(row.year, row.month)}</span> },
@@ -248,7 +257,7 @@ export function HakedisMonthlyPanel({ doctorId, canPay = false, onPay, refreshTo
         : <span className={`font-bold tabular-nums ${row.kalan > 0.5 ? "text-slate-900" : "text-slate-500"}`}>{money(row.kalan)}</span>),
     },
     { key: "durum", header: "Durum", render: statusBadge },
-    ...(canPay && onPay ? [{ key: "islem", header: "", align: "right" as const, render: payButton }] : []),
+    { key: "islem", header: "", align: "right" as const, render: payButton },
   ];
 
   const detailColumns = (tone: string, withMethod: boolean): ListTableColumn<DetailRow>[] => [

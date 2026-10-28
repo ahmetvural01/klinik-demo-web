@@ -1,7 +1,9 @@
 "use client";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Ban, Copy, FlaskConical, PackageCheck, Pencil, Plus, Power, ShoppingCart, Trash2, Wallet } from "lucide-react";
+import { Ban, Copy, FlaskConical, PackageCheck, Pencil, Plus, Power, Printer, ShoppingCart, Trash2, Wallet } from "lucide-react";
+import { escapeHtml, letterheadFooterHtml, letterheadHtml, loadPrintClinic, printDocument } from "@/lib/print-letterhead";
+import { formatDateText } from "@/components/ui/Money";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
 import { formatCurrency, formatPhoneNumber } from "@/lib/format";
@@ -368,6 +370,44 @@ function FirmaDetayContent() {
     return null;
   };
 
+  /** Tedarikçi ekstresi: süzgeçteki hareketler, borç / ödeme ve kalan; tek antetle. */
+  const printSupplierStatement = async () => {
+    if (!firma || !ekstre) return;
+    const clinic = await loadPrintClinic();
+    const rows = [...ekstre.islemler]
+      .sort((a, b) => new Date(a.tarih).getTime() - new Date(b.tarih).getTime())
+      .map((islem) => {
+        const amount = Number(islem.tutar) || 0;
+        const isPayment = islem.islemTipi === "ODEME";
+        return `<tr>
+          <td>${escapeHtml(formatDateText(islem.tarih))}</td>
+          <td>${escapeHtml(ISLEM_TIPI[islem.islemTipi]?.label || islem.islemTipi)}</td>
+          <td>${escapeHtml(islemDescription(islem))}</td>
+          <td style="text-align:right">${isPayment ? "" : escapeHtml(formatCurrency(amount))}</td>
+          <td style="text-align:right">${isPayment ? escapeHtml(formatCurrency(amount)) : ""}</td>
+          <td style="text-align:right">${typeof islem.cumBakiye === "number" ? escapeHtml(formatCurrency(islem.cumBakiye)) : ""}</td>
+        </tr>`;
+      }).join("");
+    const body = `
+      ${letterheadHtml(clinic, { title: "Cari hesap ekstresi", date: formatDateText(new Date()), meta: [firma.name] })}
+      <table><thead><tr><th>Tarih</th><th>İşlem</th><th>Açıklama</th><th style="text-align:right">Borç</th><th style="text-align:right">Ödeme</th><th style="text-align:right">Bakiye</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+      <table class="sum"><tbody>
+        <tr><td>Toplam borç</td><td style="text-align:right">${escapeHtml(formatCurrency(ekstre.topBorc))}</td></tr>
+        <tr><td>Toplam ödeme</td><td style="text-align:right">${escapeHtml(formatCurrency(ekstre.topOdeme))}</td></tr>
+        <tr class="strong"><td>Kalan</td><td style="text-align:right">${escapeHtml(formatCurrency(ekstre.netBakiye))}</td></tr>
+      </tbody></table>
+      ${letterheadFooterHtml(clinic)}`;
+    printDocument(`Ekstre — ${firma.name}`, body, `
+      table { width: 100%; border-collapse: collapse; font-size: 10px; margin-top: 6px; }
+      thead tr { background: #1e3a5f; color: #fff; }
+      th { padding: 5px 8px; text-align: left; font-size: 9px; }
+      td { padding: 4px 8px; border-bottom: 1px solid #e2e8f0; }
+      table.sum { width: 50%; margin-left: auto; margin-top: 12px; }
+      table.sum tr.strong td { font-weight: 800; border-top: 1.5px solid #94a3b8; }
+    `);
+  };
+
   const islemColumns: ListTableColumn<Islem>[] = [
     { key: "tarih", header: "Tarih", render: (islem) => <DateText value={islem.tarih} className="whitespace-nowrap text-slate-600" /> },
     { key: "tip", header: "İşlem", render: (islem) => <IslemType islem={islem} /> },
@@ -571,6 +611,8 @@ function FirmaDetayContent() {
 
       {tab === "hareketler" && (
         <ListTable<Islem>
+          // Tedarikçi "ödemeniz eksik" dediğinde gönderilecek belge: süzgeçteki hareketler + toplamlar.
+          actions={ekstre && ekstre.islemler.length > 0 ? <Button size="sm" variant="secondary" icon={Printer} onClick={() => void printSupplierStatement()}>Ekstre yazdır</Button> : undefined}
           // Süzgeçler listenin kartının üst şeridi: ayrı kart değil (sadelik K1).
           toolbar={(
             <>

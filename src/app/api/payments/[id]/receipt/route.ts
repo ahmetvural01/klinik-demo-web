@@ -29,6 +29,7 @@ export async function GET(_request: NextRequest, props: Params) {
       method: true,
       description: true,
       createdAt: true,
+      createdById: true,
       patientId: true,
       patient: { select: { fullName: true } },
       doctor: { select: { fullName: true } },
@@ -41,6 +42,9 @@ export async function GET(_request: NextRequest, props: Params) {
     ? await computePatientBalances({ institutionId, branchId: branch.branchId, patientIds: [payment.patientId] })
     : null;
   const remaining = payment.patientId ? balances?.get(payment.patientId)?.bakiye : null;
+  const collector = payment.createdById
+    ? await prisma.user.findFirst({ where: { id: payment.createdById, institutionId }, select: { fullName: true } })
+    : null;
 
   return NextResponse.json({
     receiptNo: payment.id.slice(-8).toUpperCase(),
@@ -51,6 +55,7 @@ export async function GET(_request: NextRequest, props: Params) {
     date: payment.createdAt,
     patientName: payment.patient?.fullName || null,
     doctorName: payment.doctor?.fullName || null,
+    collectorName: collector?.fullName || null,
     remaining: remaining === null || remaining === undefined ? null : Number(remaining),
   });
 }

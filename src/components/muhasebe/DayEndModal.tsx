@@ -20,6 +20,8 @@ type Totals = {
   giderCount: number;
   byMethod: Record<string, { in: number; out: number }>;
   byPos: { id: string; name: string; in: number; count: number }[];
+  /** Tahsilatı kaydedene göre: kim ne kadar (ve ne kadar nakit) aldı. */
+  byCollector?: { name: string; in: number; cash: number; count: number }[];
 };
 
 const METHOD_ORDER = ["NAKIT", "KREDI_KARTI", "MAIL_ORDER", "HAVALE_EFT", "DIGER"];
@@ -71,6 +73,7 @@ export function DayEndModal({ open, onClose }: { open: boolean; onClose: () => v
       <table>${methods.map((method) => line(paymentMethodLabel(method), formatCurrency(totals.byMethod[method].in))).join("")}
         ${line(`Toplam tahsilat (${totals.tahsilatCount} işlem)`, formatCurrency(totals.tahsilat), true)}</table>
       ${totals.byPos.length > 0 ? `<h3>Kartlı tahsilat · POS'a göre</h3><table>${totals.byPos.map((pos) => line(`${pos.name} (${pos.count} işlem)`, formatCurrency(pos.in))).join("")}</table>` : ""}
+      ${(totals.byCollector || []).length > 0 ? `<h3>Kaydedene göre</h3><table>${(totals.byCollector || []).map((row) => line(`${row.name} (${row.count} işlem)`, `${formatCurrency(row.in)}${row.cash > 0 ? ` · nakit ${formatCurrency(row.cash)}` : ""}`)).join("")}</table>` : ""}
       <h3>Gider</h3>
       <table>${line(`Toplam gider (${totals.giderCount} kayıt)`, formatCurrency(totals.gider))}${cashOut > 0 ? line("Bunun nakit ödenen kısmı", formatCurrency(cashOut)) : ""}</table>
       <h3>Kasa</h3>
@@ -94,6 +97,10 @@ export function DayEndModal({ open, onClose }: { open: boolean; onClose: () => v
     for (const method of methods) items.push({ key: method, label: paymentMethodLabel(method), value: formatCurrency(totals.byMethod[method].in) });
     for (const pos of totals.byPos) items.push({ key: `pos-${pos.id}`, label: `· ${pos.name}`, value: `${formatCurrency(pos.in)} (${pos.count})` });
     items.push({ key: "tahsilat", label: `Toplam tahsilat (${totals.tahsilatCount})`, value: formatCurrency(totals.tahsilat), emphasis: true });
+    // Kasa sorusu ("kim aldı?"): tahsilatı kaydeden personele göre.
+    for (const row of totals.byCollector || []) {
+      items.push({ key: `kaydeden-${row.name}`, label: `Kaydeden: ${row.name}`, value: `${formatCurrency(row.in)}${row.cash > 0 ? ` · nakit ${formatCurrency(row.cash)}` : ""}` });
+    }
     items.push({ key: "gider", label: `Toplam gider (${totals.giderCount})`, value: formatCurrency(totals.gider) });
     if (cashOut > 0 || cashIn > 0) items.push({ key: "kasa", label: "Kasada olması gereken nakit", value: formatCurrency(cashInDrawer), emphasis: true });
   }

@@ -49,6 +49,8 @@ export type LedgerRow = {
   /** İptal edilmiş kayıt ("İptal edilenler" görünümü); salt okunur. */
   voided?: boolean;
   voidedAt?: string | null;
+  voidedByName?: string | null;
+  voidReason?: string | null;
   payment?: LedgerPayment;
   expense?: LedgerExpense;
 };
@@ -378,6 +380,11 @@ export function LedgerTab({
             {voidedBadge(row)}
           </p>
           {rowDetail(row, Boolean(sharedDoctor)) && <p className="truncate text-xs text-slate-500" title={rowDetail(row, Boolean(sharedDoctor))}>{rowDetail(row, Boolean(sharedDoctor))}</p>}
+          {row.voided && (row.voidedByName || row.voidReason) && (
+            <p className="truncate text-xs text-red-700" title={row.voidReason || undefined}>
+              İptal eden: {[row.voidedByName, row.voidedAt ? shortDate(row.voidedAt) : "", row.voidReason].filter(Boolean).join(" · ")}
+            </p>
+          )}
         </div>
       ),
     },

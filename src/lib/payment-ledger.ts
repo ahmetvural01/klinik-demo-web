@@ -14,6 +14,8 @@ type CreatePaymentInput = {
   posId?: string | null;
   createdAt?: string | Date | null;
   integrateInstallments?: boolean;
+  /** Tahsilatı kaydeden personel (makbuzda ve Muhasebe'de "Tahsil eden"). */
+  createdById?: string | null;
 };
 
 function paymentSnapshot(payment: {
@@ -58,6 +60,7 @@ export async function createIntegratedPayment({
   posId,
   createdAt,
   integrateInstallments = true,
+  createdById,
 }: CreatePaymentInput) {
   if (!Number.isFinite(amount) || amount <= 0) {
     throw new Error("Ödeme tutarı pozitif olmalı");
@@ -74,6 +77,7 @@ export async function createIntegratedPayment({
       amount,
       description: description || null,
       posId: posId || null,
+      createdById: createdById || null,
       ...(createdAt ? { createdAt: new Date(createdAt) } : {}),
     },
     include: { patient: { select: { id: true, fullName: true } } },

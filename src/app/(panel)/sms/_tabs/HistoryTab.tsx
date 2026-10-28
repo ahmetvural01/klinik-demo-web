@@ -76,8 +76,9 @@ export default function HistoryTab({ showChannel, canResendConsent }: { showChan
   const periodParam = searchParams.get("donem");
   const period: Period = isPeriod(periodParam) ? periodParam : defaultPeriod;
 
-  const [query, setQuery] = useState("");
-  const [debouncedQuery, setDebouncedQuery] = useState("");
+  // Hasta dosyasından "Gönderilen mesajlar" ile gelince hasta adıyla süzülü açılır (?ara=).
+  const [query, setQuery] = useState(() => searchParams.get("ara") || "");
+  const [debouncedQuery, setDebouncedQuery] = useState(() => searchParams.get("ara") || "");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [rows, setRows] = useState<DispatchRow[]>([]);

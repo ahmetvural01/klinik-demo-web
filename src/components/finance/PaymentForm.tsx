@@ -69,6 +69,8 @@ export type EditablePayment = {
   description?: string | null;
   posId?: string | null;
   doctorId?: string | null;
+  /** Tahsilatı kaydeden personel (düzeltme penceresinde bağlam satırında). */
+  createdByName?: string | null;
 };
 
 export type InstallmentPaymentTarget = {
@@ -475,7 +477,7 @@ export function PaymentForm(props: PaymentFormProps) {
     description = [props.patientLocked ? patient?.fullName : "", patient ? debtText : ""].filter(Boolean).join(" · ") || undefined;
   } else if (props.mode === "edit") {
     title = "Tahsilatı düzelt";
-    description = `${props.patientName} · ${formatDateText(props.payment.createdAt)} tarihli tahsilat`;
+    description = `${props.patientName} · ${formatDateText(props.payment.createdAt)} tarihli tahsilat${props.payment.createdByName ? ` · kaydeden ${props.payment.createdByName}` : ""}`;
   } else {
     const { target } = props;
     title = `${target.patientName} — ${target.installment.siraNo}. taksit`;

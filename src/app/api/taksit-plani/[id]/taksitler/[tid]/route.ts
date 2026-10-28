@@ -194,6 +194,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
           posId: posId || null,
           createdAt: paymentDate,
           integrateInstallments: false,
+          createdById: user.id,
       });
 
       await tx.taksitOdeme.create({

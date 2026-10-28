@@ -11,6 +11,8 @@ export type LedgerPayment = {
   description?: string | null; posId?: string | null;
   /** Kartlı tahsilatın POS cihazı (api/muhasebe/defter). */
   posName?: string | null;
+  /** Tahsilatı kaydeden personel (api/muhasebe/defter). */
+  createdByName?: string | null;
   patient?: { id: string; fullName: string } | null;
   doctorId?: string | null;
   doctor?: { id: string; fullName: string } | null;

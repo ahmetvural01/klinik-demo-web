@@ -488,6 +488,7 @@ export async function POST(req: NextRequest) {
         description: `Peşinat — ${created.baslik || "taksit planı"}`,
         posId: pesinatPosId,
         integrateInstallments: false,
+        createdById: user.id,
       });
       return { created, paymentId: payment.id };
     }, { isolationLevel: "Serializable" });

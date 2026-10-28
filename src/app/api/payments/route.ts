@@ -144,6 +144,7 @@ export async function POST(request: NextRequest) {
           description,
           posId,
           createdAt,
+          createdById: auth.user.id,
         }),
       { isolationLevel: "Serializable" }
     );

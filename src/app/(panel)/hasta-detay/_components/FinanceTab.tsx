@@ -15,8 +15,7 @@ import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
 import { usePatientFile } from "./PatientFileContext";
 import { InstallmentModal } from "./InstallmentModal";
-import { PrintSelectModal } from "./PrintSelectModal";
-import { printInstallmentPlan, printPaymentStatement } from "./print";
+import { printAccountStatement, printInstallmentPlan } from "./print";
 import { printPaymentReceipt } from "@/components/finance/payment-receipt";
 import {
   getItemAmount,
@@ -25,6 +24,7 @@ import {
   getItemRemaining,
   getPlanRemaining,
   getPlanTotal,
+  isChargeableExam,
   isOpenInstallment,
   isPendingExam,
   money,
@@ -55,7 +55,6 @@ function installmentStatus(item: TaksitItem) {
 export function FinanceTab() {
   const { data, reload, can, balance, balanceKnown, openPayment, getLetterhead, hidePatientPhone } = usePatientFile();
   const [installmentOpen, setInstallmentOpen] = useState(false);
-  const [printOpen, setPrintOpen] = useState(false);
   const [busyId, setBusyId] = useState("");
   const [expandedPlans, setExpandedPlans] = useState<Record<string, boolean>>({});
 
@@ -179,6 +178,21 @@ export function FinanceTab() {
         actions={(
           <>
             {canCollect && <Button size="sm" variant="secondary" icon={Wallet} onClick={() => openPayment()}>Tahsilat al</Button>}
+            {/* Hasta "borcum neden bu kadar?" dediğinde tek kâğıt: tedaviler + ödemeler + kalan. */}
+            {balanceKnown && (
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={Printer}
+                onClick={() => void printContext().then((context) => printAccountStatement(context, {
+                  treatments: data.examinations.filter(isChargeableExam),
+                  payments,
+                  balance,
+                }))}
+              >
+                Hesap ekstresi
+              </Button>
+            )}
             {canPlan && balanceKnown && debt > plannedRemaining + 0.004 && (
               <Button size="sm" variant="secondary" icon={CalendarRange} onClick={() => setInstallmentOpen(true)}>Yeni taksit planı</Button>
             )}
@@ -198,7 +212,7 @@ export function FinanceTab() {
       <ListTable
         title="Tahsilatlar"
         subtitle={paymentDoctor ? `Hekim: ${paymentDoctor}` : undefined}
-        actions={payments.length > 0 ? <Button size="sm" variant="secondary" icon={Printer} onClick={() => setPrintOpen(true)}>Döküm yazdır</Button> : undefined}
+
         columns={paymentColumns}
         rows={payments}
         rowKey={(payment) => payment.id}
@@ -280,20 +294,6 @@ export function FinanceTab() {
 
       {installmentOpen && <InstallmentModal open onClose={() => setInstallmentOpen(false)} />}
 
-      <PrintSelectModal
-        open={printOpen}
-        onClose={() => setPrintOpen(false)}
-        title="Tahsilat dökümü"
-        description="Belgeye yazılacak tahsilatları seçin."
-        itemLabel="tahsilat"
-        rows={payments.map((payment) => ({ id: payment.id, date: formatDateText(payment.createdAt), label: paymentMethodLabel(payment.method), meta: payment.description || undefined, amount: money(payment.amount) }))}
-        onPrint={(ids) => {
-          void printContext().then((context) => printPaymentStatement(
-            context,
-            payments.filter((payment) => ids.includes(payment.id)).sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
-          ));
-        }}
-      />
     </div>
   );
 }

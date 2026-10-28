@@ -15,6 +15,8 @@ type Receipt = {
   patientName: string | null;
   doctorName: string | null;
   remaining: number | null;
+  /** Tahsilatı kaydeden personel. */
+  collectorName?: string | null;
 };
 
 const RECEIPT_CSS = `
@@ -63,7 +65,7 @@ export async function printPaymentReceipt(paymentId: string) {
     ${letterheadHtml(clinic, { title: "Tahsilat makbuzu", date: formatDateText(new Date()), meta: [`Makbuz no: ${data.receiptNo}`] })}
     <div class="rc-amount"><span>Alınan tutar</span><strong>${escapeHtml(formatCurrency(data.amount))}</strong></div>
     <table class="rc-rows"><tbody>${rows.map(([label, value]) => `<tr><td>${escapeHtml(label)}</td><td>${escapeHtml(value)}</td></tr>`).join("")}</tbody></table>
-    <div class="rc-signs"><div class="rc-sign">Tahsil eden</div><div class="rc-sign">Ödeyen</div></div>
+    <div class="rc-signs"><div class="rc-sign">Tahsil eden${data.collectorName ? `: ${escapeHtml(data.collectorName)}` : ""}</div><div class="rc-sign">Ödeyen</div></div>
     ${letterheadFooterHtml(clinic, "Bu makbuz ödeme belgesidir; fatura yerine geçmez.")}
   </div>`;
   printDocument(`Tahsilat makbuzu ${data.receiptNo}`, body, RECEIPT_CSS);

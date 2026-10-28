@@ -55,6 +55,9 @@ type Row = {
   locked: boolean;
   /** İptal edilmiş kayıt (yalnız tur=IPTAL görünümünde); salt okunur. */
   voided?: boolean;
+  /** İptal edilen tahsilatta kim iptal etti ve neden (kasa sorusu). */
+  voidedByName?: string | null;
+  voidReason?: string | null;
   /** İptal anı (tahsilatta iptal zamanı, giderde son değişiklik zamanı). */
   voidedAt?: string | null;
   payment?: Record<string, unknown>;
@@ -123,7 +126,8 @@ export const GET = withApiTiming("muhasebe-defter", async function GET(request: 
               ...(method ? { method } : {}),
             },
             select: {
-              id: true, createdAt: true, amount: true, method: true, description: true, posId: true, doctorId: true, voidedAt: true,
+              id: true, createdAt: true, amount: true, method: true, description: true, posId: true, doctorId: true, voidedAt: true, createdById: true,
+              voidedById: true, voidReason: true,
               pos: { select: { id: true, name: true } },
               patient: { select: { id: true, fullName: true } },
               doctor: { select: { id: true, fullName: true } },
@@ -171,6 +175,13 @@ export const GET = withApiTiming("muhasebe-defter", async function GET(request: 
       : [];
     const firmaByIslem = new Map(firmaIslemler.map((row) => [row.id, { firmaId: row.firmaId, name: row.firma?.name || "" }]));
 
+    // Tahsilatı kaydeden personelin adı (gün sonu "kaydedene göre" ve kayıt ayrıntısı).
+    const collectorIds = [...new Set(paymentRows.flatMap((payment) => [payment.createdById, payment.voidedById]).filter((id): id is string => Boolean(id)))];
+    const collectors = collectorIds.length
+      ? await prisma.user.findMany({ where: { id: { in: collectorIds }, institutionId }, select: { id: true, fullName: true } })
+      : [];
+    const collectorName = new Map(collectors.map((user) => [user.id, user.fullName]));
+
     const rows: Row[] = [];
     for (const payment of paymentRows) {
       rows.push({
@@ -188,7 +199,13 @@ export const GET = withApiTiming("muhasebe-defter", async function GET(request: 
         method: payment.method,
         amount: Number(payment.amount),
         locked: false,
-        ...(cancelled ? { voided: true, voidedAt: payment.voidedAt?.toISOString() ?? null } : {}),
+        ...(cancelled ? {
+          voided: true,
+          voidedAt: payment.voidedAt?.toISOString() ?? null,
+          voidedByName: payment.voidedById ? collectorName.get(payment.voidedById) ?? null : null,
+          // Elle yazılmış neden varsa (otomatik genel cümle değil) gösterilir.
+          voidReason: payment.voidReason && payment.voidReason !== "Kullanıcı tarafından tahsilat iptal edildi." ? payment.voidReason : null,
+        } : {}),
         payment: {
           id: payment.id,
           createdAt: payment.createdAt.toISOString(),
@@ -197,6 +214,7 @@ export const GET = withApiTiming("muhasebe-defter", async function GET(request: 
           description: payment.description,
           posId: payment.posId,
           posName: payment.pos?.name ?? null,
+          createdByName: payment.createdById ? collectorName.get(payment.createdById) ?? null : null,
           doctorId: payment.doctorId,
           doctor: payment.doctor,
           patient: payment.patient,
@@ -297,6 +315,21 @@ export const GET = withApiTiming("muhasebe-defter", async function GET(request: 
       bucket.count += 1;
       posTotals.set(key, bucket);
     }
+    // Kaydedene göre (gün sonu: kasadaki nakit kimin kaydıyla geldi). Eski
+    // kayıtlarda kaydeden yoktur: "Bilinmiyor" satırında toplanır.
+    const collectorTotals = new Map<string, { name: string; in: number; cash: number; count: number }>();
+    for (const row of filtered) {
+      if (row.kind !== "TAHSILAT") continue;
+      const name = typeof row.payment?.createdByName === "string" && row.payment.createdByName ? row.payment.createdByName : "Bilinmiyor";
+      const bucket = collectorTotals.get(name) || { name, in: 0, cash: 0, count: 0 };
+      bucket.in += row.amount;
+      if (row.method === "NAKIT") bucket.cash += row.amount;
+      bucket.count += 1;
+      collectorTotals.set(name, bucket);
+    }
+    const byCollector = Array.from(collectorTotals.values())
+      .map((value) => ({ ...value, in: round2(value.in), cash: round2(value.cash) }))
+      .sort((a, b) => b.in - a.in);
     const byPos = Array.from(posTotals.entries())
       .map(([id, value]) => ({ id, name: value.name, in: round2(value.in), count: value.count }))
       .sort((a, b) => b.in - a.in);
@@ -323,6 +356,7 @@ export const GET = withApiTiming("muhasebe-defter", async function GET(request: 
         net: round2(tahsilat - gider),
         byMethod,
         byPos,
+        byCollector,
       },
     });
   } catch (error) {

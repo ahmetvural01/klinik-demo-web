@@ -23,6 +23,7 @@ import {
   toNumber,
   type Exam,
   type Pay,
+  type PatientBalance,
   type PatientDetailData,
   type TaksitPlan,
 } from "./patient-file-shared";
@@ -154,24 +155,57 @@ export function printTreatmentQuote(context: PrintContext, treatments: Exam[]) {
   `);
 }
 
-export function printPaymentStatement(context: PrintContext, payments: Pay[]) {
-  const total = roundMoney(payments.reduce((sum, payment) => sum + toNumber(payment.amount), 0));
-  const rows = payments.map((payment) => `<tr>
-      <td>${escapeHtml(date(payment.createdAt))}</td>
-      <td>${escapeHtml(paymentMethodLabel(payment.method))}</td>
-      <td>${escapeHtml(payment.description || "—")}</td>
-      <td style="text-align:right;font-weight:600">${escapeHtml(money(payment.amount))}</td>
+/**
+ * Hesap ekstresi: hastanın "borcum neden bu kadar?" sorusunun tek kâğıtlık
+ * cevabı — yapılan tedaviler ve alınan ödemeler tarih sırasıyla, altında
+ * indirim ve kalan borç (ön ödeme). Rakamlar hasta dosyasının Hesap
+ * özetiyle aynı kaynaktan (sunucu bakiyesi) gelir.
+ */
+export function printAccountStatement(
+  context: PrintContext,
+  { treatments, payments, balance }: { treatments: Exam[]; payments: Pay[]; balance: PatientBalance },
+) {
+  type Line = { at: number; date: string; text: string; debit: number | null; credit: number | null };
+  const lines: Line[] = [
+    ...treatments.map((exam) => ({
+      at: new Date(exam.diagnosedAt || 0).getTime(),
+      date: exam.diagnosedAt || "",
+      text: `${exam.treatmentName}${exam.toothNo ? ` · Diş ${exam.toothNo}` : ""}${exam.doctor?.fullName ? ` (${exam.doctor.fullName})` : ""}`,
+      debit: toNumber(exam.amount),
+      credit: null,
+    })),
+    ...payments.map((payment) => ({
+      at: new Date(payment.createdAt).getTime(),
+      date: payment.createdAt,
+      text: `Tahsilat · ${paymentMethodLabel(payment.method)}${payment.description ? ` · ${payment.description}` : ""}`,
+      debit: null,
+      credit: toNumber(payment.amount),
+    })),
+  ].sort((a, b) => a.at - b.at);
+  const rows = lines.map((line) => `<tr>
+      <td>${escapeHtml(date(line.date))}</td>
+      <td>${escapeHtml(line.text)}</td>
+      <td style="text-align:right">${line.debit !== null ? escapeHtml(money(line.debit)) : ""}</td>
+      <td style="text-align:right">${line.credit !== null ? escapeHtml(money(line.credit)) : ""}</td>
     </tr>`).join("");
-  printHtml(`Tahsilat dökümü — ${context.data.fullName}`, `
-    ${header(context, "TAHSİLAT DÖKÜMÜ")}
+  const debt = balance.totalDebt;
+  const summary = [
+    ["Yapılan tedaviler", money(balance.totalCharged)],
+    ...(balance.discountRate > 0 ? [[`İndirim (%${balance.discountRate})`, `−${money(balance.discountAmount)}`]] : []),
+    ["Alınan ödemeler", money(balance.totalPaid)],
+    [debt < -0.004 ? "Ön ödeme (sonraki tedavilerden düşülür)" : "Kalan borç", money(Math.abs(debt))],
+  ];
+  printHtml(`Hesap ekstresi — ${context.data.fullName}`, `
+    ${header(context, "HESAP EKSTRESİ")}
     ${patientBar(context)}
     <div class="content">
-      <div class="sec-title">Tahsilatlar</div>
-      <table><thead><tr><th>Tarih</th><th>Yöntem</th><th>Açıklama</th><th style="text-align:right">Tutar</th></tr></thead>
-      <tbody>${rows || "<tr><td colspan='4' style='text-align:center;padding:12px;color:#9ca3af'>Kayıt yok</td></tr>"}</tbody>
-      <tfoot><tr><td colspan="3" style="text-align:right">Toplam tahsilat:</td><td style="text-align:right">${escapeHtml(money(total))}</td></tr></tfoot></table>
+      <div class="sec-title">Hesap hareketleri</div>
+      <table><thead><tr><th>Tarih</th><th>Açıklama</th><th style="text-align:right">Tedavi</th><th style="text-align:right">Ödeme</th></tr></thead>
+      <tbody>${rows || "<tr><td colspan='4' style='text-align:center;padding:12px;color:#9ca3af'>Kayıt yok</td></tr>"}</tbody></table>
+      <div class="sec-title">Özet</div>
+      <table><tbody>${summary.map(([label, value], index) => `<tr${index === summary.length - 1 ? ' style="font-weight:700"' : ""}><td>${escapeHtml(label)}</td><td style="text-align:right">${escapeHtml(value)}</td></tr>`).join("")}</tbody></table>
     </div>
-    ${footer(context)}
+    ${footerWith(context, "Planlanan (henüz yapılmamış) tedaviler borca dahil değildir.")}
   `);
 }
 

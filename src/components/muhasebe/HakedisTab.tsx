@@ -122,17 +122,29 @@ export function HakedisTab({ active, refreshKey, selectedDoctorId, onSelectDocto
     />
   ) : null);
 
-  const payButton = (row: OverviewRow) => (canPay && row.enEskiOdenmemis ? (
-    <Button
-      size="sm"
-      variant="secondary"
-      icon={Wallet}
-      onClick={() => payOldest(row)}
-      aria-label={`${row.doctor.fullName} — ${monthName(row.enEskiOdenmemis.year, row.enEskiOdenmemis.month)} hakedişini öde`}
-    >
-      Öde
-    </Button>
-  ) : null);
+  // "Ayrıntı": doktorun ay ay dökümü (her ayda kimden ne alındı, hangi tedavi,
+  // hangi masraf düşüldü). Önceden yalnız satıra tıklayınca açılıyordu; satırda
+  // bunu gösteren bir düğme olmadığı için bulunmuyordu.
+  const payButton = (row: OverviewRow) => (
+    <div className="flex items-center justify-end gap-1.5">
+      {canOpenStatement && (
+        <Button size="sm" variant="ghost" onClick={() => onSelectDoctor(row.doctor.id)} aria-label={`${row.doctor.fullName} hakediş ayrıntısı`}>
+          Ayrıntı
+        </Button>
+      )}
+      {canPay && row.enEskiOdenmemis && (
+        <Button
+          size="sm"
+          variant="secondary"
+          icon={Wallet}
+          onClick={() => payOldest(row)}
+          aria-label={`${row.doctor.fullName} — ${monthName(row.enEskiOdenmemis.year, row.enEskiOdenmemis.month)} hakedişini öde`}
+        >
+          Öde
+        </Button>
+      )}
+    </div>
+  );
 
   const doctorCell = (row: OverviewRow) => (
     <div className="min-w-0">
@@ -172,7 +184,7 @@ export function HakedisTab({ active, refreshKey, selectedDoctorId, onSelectDocto
         ? <span className="text-sm tabular-nums text-slate-500">{money(row.buAy.hakedilen)}</span>
         : null),
     },
-    ...(canPay ? [{ key: "islem", header: "", align: "right" as const, render: payButton }] : []),
+    ...(canPay || canOpenStatement ? [{ key: "islem", header: "", align: "right" as const, render: payButton }] : []),
   ];
 
   const stats: StatItem[] = [

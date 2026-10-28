@@ -3,24 +3,7 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
-import {
-  CalendarPlus,
-  ClipboardList,
-  Download,
-  FileSignature,
-  FileUp,
-  FlaskConical,
-  History,
-  NotebookPen,
-  Pencil,
-  Pill,
-  Plus,
-  Send,
-  ShieldAlert,
-  Stethoscope,
-  Users,
-  Wallet,
-} from "lucide-react";
+import { CalendarPlus, ClipboardList, Download, FileSignature, FileUp, FlaskConical, History, MessageSquareText, NotebookPen, Pencil, Pill, Plus, Send, ShieldAlert, Stethoscope, Users, Wallet } from "lucide-react";
 import { usePermissions } from "@/components/auth/PermissionProvider";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { formatDateText } from "@/components/ui/Money";
@@ -724,6 +707,8 @@ export default function HastaDetayContent() {
 
   const moreItems: ActionMenuItem[] = [
     { key: "export", label: "Hasta dosyasını indir", description: "PDF ya da Excel; KVKK erişim kaydına yazılır", icon: Download, onSelect: () => setExportOpen(true) },
+    // "Mesajınız gelmedi" sorusu: bu hastaya giden SMS/WhatsApp ve nedenleri tek yerde.
+    ...(can("sms:read") ? [{ key: "messages", label: "Gönderilen mesajlar", description: "Bu hastaya giden SMS / WhatsApp ve gitmeyenlerin nedeni", icon: MessageSquareText, href: `/sms?tab=gecmis&ara=${encodeURIComponent(data.fullName)}` }] : []),
     ...(can("audit:read") ? [{ key: "access-log", label: "Erişim kaydı", description: "Dosyayı kimin ne zaman açtığı", icon: History, onSelect: () => setAccessLogOpen(true) }] : []),
   ];
 
