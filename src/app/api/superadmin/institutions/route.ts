@@ -220,8 +220,10 @@ export async function POST(request: NextRequest) {
           institutionId: institution.id,
           passwordHash,
           isActive: true,
+          // Klinik sahibi ilk şubenin yöneticisidir: personel erişimi ve pasif
+          // personeli geri açma (Personel ekranı) şube yöneticisi ister.
           branchMemberships: {
-            create: { branchId: branch.id, isPrimary: true },
+            create: { branchId: branch.id, isPrimary: true, isBranchManager: true },
           },
         },
       });

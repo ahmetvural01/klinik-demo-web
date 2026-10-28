@@ -261,7 +261,7 @@ export default function HastaDetayContent() {
         }
         setLoadError(
           patientResult.status === 404
-            ? "Hasta bulunamadı. Arşivlenmiş ya da başka bir şubenin hastası olabilir."
+            ? "Hasta bulunamadı ya da arşivlenmiş."
             : patientResult.status === 0
               ? "Bağlantı hatası: hasta dosyası yüklenemedi."
               : errorMessageOf(patientResult.body, "Hasta dosyası yüklenemedi."),
@@ -639,7 +639,7 @@ export default function HastaDetayContent() {
             <EmptyState
               icon={Users}
               title="Hasta bulunamadı"
-              description="Hasta arşivlenmiş ya da başka bir şubenin hastası olabilir."
+              description="Hasta arşivlenmiş ya da kaydı silinmiş olabilir."
               action={<Button variant="secondary" href={backHref}>Hastalar listesine dön</Button>}
             />
           </div>

@@ -309,8 +309,8 @@ export function StaffFormModal({ open, staffId, onClose, onDone, currentUserId, 
     if (!(await confirmDialog({
       title: `${name} pasife alınsın mı?`,
       message: clinical
-        ? "Bu şubeye giriş yapamaz; randevu ve işlem ekranlarında seçilemez. Geçmiş kayıtları silinmez. Gelecek randevusu varsa önce başka doktora devredilmelidir."
-        : "Bu şubeye giriş yapamaz ve işlem ekranlarında seçilemez. Geçmiş kayıtları silinmez.",
+        ? "Giriş yapamaz; randevu ve işlem ekranlarında seçilemez. Geçmiş kayıtları silinmez. Gelecek randevusu varsa önce başka doktora devredilmelidir."
+        : "Giriş yapamaz ve işlem ekranlarında seçilemez. Geçmiş kayıtları silinmez.",
       danger: true,
       confirmText: "Pasife al",
     }))) return;
@@ -373,7 +373,7 @@ export function StaffFormModal({ open, staffId, onClose, onDone, currentUserId, 
       ) : loadError ? (
         <LoadErrorState
           compact
-          message={notFound ? "Bu personel kaydı bulunamadı; pasife alınmış ya da başka şubeye ait olabilir." : loadError}
+          message={notFound ? "Bu personel kaydı bulunamadı ya da pasife alınmış." : loadError}
           onRetry={notFound ? undefined : () => setReloadKey((key) => key + 1)}
         />
       ) : (
@@ -403,7 +403,7 @@ export function StaffFormModal({ open, staffId, onClose, onDone, currentUserId, 
               // Neden seçeneklerin altında bir kez (ipucu) yazılır; her seçenekte tekrar edilmez.
               disabled: isBranchManager && option !== form.role,
             }))}
-            hint={isBranchManager ? "Şube yöneticisinin rolü bu ekrandan değiştirilemez." : ROLE_SUMMARIES[form.role]}
+            hint={isBranchManager ? "Klinik yöneticisinin rolü bu ekrandan değiştirilemez." : ROLE_SUMMARIES[form.role]}
           />
 
           <div className="grid gap-4 sm:grid-cols-2">

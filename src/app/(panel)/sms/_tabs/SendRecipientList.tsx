@@ -89,7 +89,7 @@ export function SendRecipientList({ selected, onChange, showWhatsapp }: Recipien
         ? "SMS izni olan hasta yok"
         : consent === "none"
           ? "SMS izni olmayan hasta yok"
-          : "Bu şubede hasta yok";
+          : "Kayıtlı hasta yok";
 
   const columns = useMemo<ListTableColumn<Recipient>[]>(() => [
     {

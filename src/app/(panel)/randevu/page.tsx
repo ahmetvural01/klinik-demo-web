@@ -454,7 +454,7 @@ export default function RandevuPage() {
         .then((response) => (response.ok ? response.json() : null))
         .then((appointment: Appointment | null) => {
           if (appointment?.id) setDetail(appointment);
-          else showToastSafe({ message: "Randevu bulunamadı; silinmiş veya başka şubeye ait olabilir.", type: "error" });
+          else showToastSafe({ message: "Randevu bulunamadı ya da silinmiş.", type: "error" });
         })
         .catch(() => undefined);
     }

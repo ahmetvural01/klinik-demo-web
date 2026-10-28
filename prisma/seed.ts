@@ -86,8 +86,8 @@ async function main() {
 
   await prisma.userBranch.upsert({
     where: { userId_branchId: { userId: admin.id, branchId: branch.id } },
-    update: { isActive: true, isPrimary: true },
-    create: { institutionId: institution.id, userId: admin.id, branchId: branch.id, isPrimary: true },
+    update: { isActive: true, isPrimary: true, isBranchManager: true },
+    create: { institutionId: institution.id, userId: admin.id, branchId: branch.id, isPrimary: true, isBranchManager: true },
   });
 
   await prisma.setting.upsert({

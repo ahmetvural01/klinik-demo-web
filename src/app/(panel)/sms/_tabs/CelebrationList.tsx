@@ -89,7 +89,7 @@ export function CelebrationManageModal({ open, onClose, canToggle, clinicName, m
         title: `“${row.title}” her yıl otomatik gönderilsin mi?`,
         message: [
           row.nextDate ? `Sıradaki: ${longDateWithWeekday(row.nextDate)}.` : "",
-          `${audienceLabel(row)}; bu şubede ${formatCount(row.audience?.consented ?? 0)} kişiye gider${multipleBranches ? ", diğer şubelerde de gider" : ""}.`,
+          `${audienceLabel(row)}; ${multipleBranches ? "bu şubede " : ""}${formatCount(row.audience?.consented ?? 0)} kişiye gider${multipleBranches ? ", diğer şubelerde de gider" : ""}.`,
           "SMS ile gidenler kredi harcar.",
         ].filter(Boolean).join(" "),
         confirmText: "Otomatik gönder",
@@ -144,7 +144,7 @@ export function CelebrationManageModal({ open, onClose, canToggle, clinicName, m
     },
     {
       key: "audience",
-      header: "Bu şubede",
+      header: multipleBranches ? "Bu şubede" : "Gidecek kişi",
       headerHint: "Bugünkü kanal ayarıyla (SMS izni, WhatsApp) mesajın gidebileceği hasta sayısı.",
       cellClassName: "whitespace-nowrap text-slate-600",
       render: (row) => reachLabel(row) || <EmptyValue />,
@@ -165,7 +165,7 @@ export function CelebrationManageModal({ open, onClose, canToggle, clinicName, m
       description={detail
         ? [detail.nextDate ? longDateWithWeekday(detail.nextDate) : "", audienceLabel(detail)].filter(Boolean).join(" · ")
         : canToggle
-          ? "Açtığınız gün her yıl, kurumun tüm şubelerindeki uygun hastalara gider."
+          ? (multipleBranches ? "Açtığınız gün her yıl, kurumun tüm şubelerindeki uygun hastalara gider." : "Açtığınız gün her yıl uygun hastalara gider.")
           : "Açıp kapatmak toplu mesaj yetkisi ister."}
       trackFormChanges={false}
       footer={detail ? (
@@ -193,7 +193,7 @@ export function CelebrationManageModal({ open, onClose, canToggle, clinicName, m
             layout="rows"
             items={[
               { key: "durum", label: "Otomatik gönderim", value: detail.enabled ? "Açık" : "Kapalı" },
-              { key: "bu-sube", label: "Bu şubede", value: reachLabel(detail) },
+              { key: "bu-sube", label: multipleBranches ? "Bu şubede" : "Gidecek kişi", value: reachLabel(detail) },
               { key: "bu-yil", label: "Bu yıl gönderilen", value: typeof detail.sentThisYear === "number" ? `${formatCount(detail.sentThisYear)} hasta` : null },
             ]}
           />
@@ -214,7 +214,7 @@ export function CelebrationManageModal({ open, onClose, canToggle, clinicName, m
               <div className="min-w-0">
                 <p className="font-semibold text-slate-900">{row.title}</p>
                 <p className="text-xs text-slate-500">{row.nextDate ? longDateWithWeekday(row.nextDate) : "—"} · {audienceLabel(row)}</p>
-                {row.audience && <p className="text-xs text-slate-500">Bu şubede {reachLabel(row)}</p>}
+                {row.audience && <p className="text-xs text-slate-500">{multipleBranches ? "Bu şubede " : "Gidecek: "}{reachLabel(row)}</p>}
                 <Button variant="ghost" size="sm" icon={Eye} className="-ml-3 mt-1" onClick={() => setDetailCode(row.code)}>Metni gör</Button>
               </div>
               {toggleCell(row)}

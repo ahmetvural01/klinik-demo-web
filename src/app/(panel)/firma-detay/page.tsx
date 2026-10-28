@@ -133,7 +133,7 @@ function FirmaDetayContent() {
       // "bulunamadı" olmaz, "Aktif et" ve kalan borç görünür kalır.
       const response = await fetch(`/api/firma/${encodeURIComponent(id)}`, { cache: "no-store" });
       const body = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(response.status === 404 ? "Tedarikçi bulunamadı. Silinmiş ya da başka şubeye ait olabilir." : body?.error || "Tedarikçi yüklenemedi.");
+      if (!response.ok) throw new Error(response.status === 404 ? "Tedarikçi bulunamadı ya da silinmiş." : body?.error || "Tedarikçi yüklenemedi.");
       if (sequence !== firmaLoadRef.current) return;
       setFirma(body as Firma);
     } catch (error) {
