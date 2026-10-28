@@ -38,6 +38,9 @@ export type Appointment = {
   /** Bilgilendirme mesajı (oluşturma + değişiklik + iptal mesajlarını yönetir). */
   smsInfo?: boolean;
   smsReminder?: boolean;
+  /** Hatırlatmadaki bağlantıdan hastanın yanıtı (bkz. src/lib/appointment-confirm.ts). */
+  patientResponse?: "GELECEK" | "GELEMEYECEK" | null;
+  patientRespondedAt?: string | null;
   patient?: AppointmentPatient | null;
   doctor?: { id: string; fullName: string } | null;
   clinicUnit?: { id: string; name: string; code?: string | null } | null;

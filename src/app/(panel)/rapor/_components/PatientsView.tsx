@@ -91,6 +91,20 @@ export function PatientsView({ data, filter, onFilterChange, sort, onSortChange,
     },
   ];
 
+  // Toplam satırı: sayfalanmış olsa da listedeki TÜM hastalar.
+  const totalTreatment = rows.reduce((sum, row) => sum + row.treatmentTotal, 0);
+  const totalCollected = rows.reduce((sum, row) => sum + row.collected, 0);
+  const totalDebt = rows.reduce((sum, row) => sum + patientDebt(row), 0);
+  const totals = rows.length > 0 ? {
+    cells: {
+      hasta: `Toplam · ${count(rows.length)} hasta`,
+      tedavi: <span className="tabular-nums">{money(totalTreatment)}</span>,
+      tahsilat: <span className="tabular-nums">{money(totalCollected)}</span>,
+      borc: <span className="tabular-nums">{money(totalDebt)}</span>,
+    },
+    mobile: `Toplam ${count(rows.length)} hasta · Tedavi ${money(totalTreatment)} · Tahsilat ${money(totalCollected)} · Borç ${money(totalDebt)}`,
+  } : undefined;
+
   const filterOptions = [
     { value: "tumu" as const, label: PATIENT_FILTER_LABELS.tumu },
     { value: "yeni" as const, label: PATIENT_FILTER_LABELS.yeni, count: data?.counts.new },
@@ -139,6 +153,7 @@ export function PatientsView({ data, filter, onFilterChange, sort, onSortChange,
           );
         }}
         pager={rows.length > PAGE_SIZE ? { page, pageCount, pageSize: PAGE_SIZE, total: rows.length, onPageChange: (next) => setPageState({ key: pageKey, page: next }) } : undefined}
+        totals={totals}
       />
     </div>
   );

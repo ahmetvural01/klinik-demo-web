@@ -14,6 +14,7 @@ import { EmptyValue, ListTable, type ListSort, type ListTableColumn } from "@/co
 import { createModuleEmptyIcon } from "@/components/ui/ModuleIcon";
 import { useLatestRequest } from "@/lib/use-latest-request";
 import { InvoiceCreateModal } from "@/components/superadmin/InvoiceCreateModal";
+import { PaymentInfoModal } from "@/components/superadmin/PaymentInfoModal";
 import { ChoiceCards } from "@/components/ui/ChoiceCards";
 import { InvoiceReminderNote, InvoiceRowActions } from "@/components/superadmin/InvoiceRowActions";
 import { EMPTY_INVOICE_SUMMARY, type InvoiceSummary, type InvoiceViewStatus } from "@/components/superadmin/invoice-status";
@@ -73,6 +74,7 @@ export default function InvoicesPage() {
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState<ListSort>({ key: "dueDate", dir: "asc" });
   const [createOpen, setCreateOpen] = useState(false);
+  const [paymentInfoOpen, setPaymentInfoOpen] = useState(false);
   const [clinicName, setClinicName] = useState<string | null>(null);
   // Adı öğrenilmiş klinik: sekme değişince ad için yeniden istek atılmaz.
   const knownClinicRef = useRef<string | null>(null);
@@ -238,13 +240,18 @@ export default function InvoicesPage() {
       <PageHeader
         icon="hakediş"
         title="Faturalar"
-        description="Kliniklere kesilen platform faturaları."
+        description="Kliniklere kesilen platform faturaları. Abonelik faturası her ayın 1'inde otomatik kesilir."
         stats={[
           { label: "Gecikmiş", value: money(summary.overdueAmount), color: summary.overdueAmount > 0 ? "text-red-700" : undefined },
           { label: "Vadesi gelmemiş", value: money(summary.upcomingAmount) },
           { label: "Bu ay tahsil edilen", value: money(summary.paidThisMonthAmount), color: "text-emerald-700" },
         ]}
-        actions={<Button icon={Plus} onClick={() => setCreateOpen(true)}>Yeni fatura</Button>}
+        actions={(
+          <>
+            <Button variant="secondary" onClick={() => setPaymentInfoOpen(true)}>Ödeme bilgisi</Button>
+            <Button icon={Plus} onClick={() => setCreateOpen(true)}>Yeni fatura</Button>
+          </>
+        )}
       />
 
       <Tabs ariaLabel="Fatura durumu" size="sm" items={tabItems} value={tab} onChange={(key) => setStatus(key as StatusKey)} />
@@ -311,6 +318,7 @@ export default function InvoicesPage() {
         )}
       />
 
+      <PaymentInfoModal open={paymentInfoOpen} onClose={() => setPaymentInfoOpen(false)} />
       <InvoiceCreateModal
         open={createOpen}
         onClose={() => setCreateOpen(false)}

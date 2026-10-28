@@ -62,6 +62,16 @@ export function TreatmentsView({ data, sort, onSortChange, doctorNameById, showD
     { key: "ucret", header: "Ücret", align: "right", sortKey: "ucret", render: (row) => <span className="font-semibold tabular-nums text-slate-900">{money(row.amount)}</span> },
   ];
 
+  const totalAmount = rows.reduce((sum, row) => sum + row.amount, 0);
+  const totals = rows.length > 0 ? {
+    cells: {
+      tarih: "Toplam",
+      hasta: `${count(rows.length)} tedavi`,
+      ucret: <span className="tabular-nums">{money(totalAmount)}</span>,
+    },
+    mobile: `Toplam ${count(rows.length)} tedavi · ${money(totalAmount)}`,
+  } : undefined;
+
   return (
     <div className="space-y-3">
       {data?.truncated && <Callout tone="info" compact>İlk {count(data.limit)} kayıt gösteriliyor.</Callout>}
@@ -91,6 +101,7 @@ export function TreatmentsView({ data, sort, onSortChange, doctorNameById, showD
           </div>
         )}
         pager={rows.length > PAGE_SIZE ? { page, pageCount, pageSize: PAGE_SIZE, total: rows.length, onPageChange: (next) => setPageState({ key: pageKey, page: next }) } : undefined}
+        totals={totals}
       />
     </div>
   );

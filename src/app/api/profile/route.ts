@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { parseTimeToMinutes, validateWorkHoursRange } from "@/lib/working-hours-core";
 import { turkeyTimeKey } from "@/lib/tz";
 import { invalidateUserSessionCache, requireAuth, writeAudit, rejectGhostAccountChange } from "@/lib/api";
-import { setAuthCookie, signToken } from "@/lib/auth";
+import { currentSessionRememberMe, setAuthCookie, signToken } from "@/lib/auth";
 
 function fmt(v: unknown): string {
   if (v === null || v === undefined || v === "") return "-";
@@ -128,14 +128,15 @@ export async function PUT(request: NextRequest) {
         data: { passwordHash, mustChangePassword: false, tokenVersion: { increment: 1 } },
       });
       invalidateUserSessionCache(auth.user.id);
+      const rememberMe = await currentSessionRememberMe();
       const freshToken = signToken({
         userId: updatedUser.id,
         role: updatedUser.role,
         institutionId: updatedUser.institutionId,
         fullName: updatedUser.fullName,
         tokenVersion: updatedUser.tokenVersion,
-      });
-      await setAuthCookie(freshToken);
+      }, rememberMe);
+      await setAuthCookie(freshToken, rememberMe);
     } catch (error) {
       console.error("[profile PUT password] fallback:", error);
       return NextResponse.json({ message: "Şifre güncellenemedi" }, { status: 503 });

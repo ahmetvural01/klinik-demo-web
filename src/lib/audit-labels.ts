@@ -135,6 +135,7 @@ const ACTION_LABELS: Record<string, string> = {
   POS_DELETE: "POS cihazı silindi",
   POS_DEACTIVATE: "POS cihazı pasife alındı",
   SUPPORT_CREATE: "Destek talebi oluşturuldu",
+  SMS_PACKAGE_PURCHASE: "SMS paketi alındı",
   SUPPORT_UPDATE: "Destek talebi güncellendi",
   SUPPORT_DELETE: "Destek talebi silindi",
 

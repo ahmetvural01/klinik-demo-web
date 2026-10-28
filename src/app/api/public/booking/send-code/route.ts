@@ -43,12 +43,12 @@ export async function POST(req: NextRequest) {
         { name: { equals: kurum, mode: "insensitive" } },
       ],
     },
-    select: { id: true, name: true },
+    select: { id: true, name: true, smsSender: true },
   });
   if (!institution) return NextResponse.json({ error: "Kurum bulunamadı" }, { status: 404 });
 
   const code = await generatePublicBookingOtp(institution.id, phone);
-  const result = await sendSms(phone, `${institution.name}: Randevu doğrulama kodunuz ${code}. 5 dakika geçerlidir.`);
+  const result = await sendSms(phone, `${institution.name}: Randevu doğrulama kodunuz ${code}. 5 dakika geçerlidir.`, { sender: institution.smsSender });
   if (!result.success) {
     return NextResponse.json({ error: "Doğrulama kodu gönderilemedi. Lütfen daha sonra tekrar deneyin." }, { status: 503 });
   }

@@ -1,6 +1,7 @@
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { getCurrentUserFast } from "@/lib/auth";
+import { IDLE_TIMEOUT_MINUTES, getCurrentUserFast } from "@/lib/auth";
+import { IdleSessionGuard } from "@/components/auth/IdleSessionGuard";
 import { prisma } from "@/lib/prisma";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
@@ -120,6 +121,7 @@ export default async function PanelLayout({ children }: { children: React.ReactN
     <PanelAdsProvider settings={panelAds}>
     <div className="panel-body flex h-dvh overflow-hidden bg-[rgb(var(--app-bg))]">
       <PanelRealtimeSync />
+      {!user.rememberMe && !user.ghost && <IdleSessionGuard timeoutMinutes={IDLE_TIMEOUT_MINUTES} />}
       <PanelCacheReset scopeKey={scopeKey} rolePreviewSession={user.ghost} />
       <Sidebar
         initialBrandName={institution?.settings?.institutionName || institution?.name || ""}

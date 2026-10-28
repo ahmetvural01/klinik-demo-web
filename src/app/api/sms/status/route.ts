@@ -46,7 +46,7 @@ export async function GET() {
     hasEffectivePermission(auth.user, "whatsapp:read"),
     prisma.institution.findUnique({
       where: { id: institutionId },
-      select: { name: true, phone: true, smsBalance: true, whatsappEnabled: true },
+      select: { name: true, phone: true, smsBalance: true, whatsappEnabled: true, smsSender: true },
     }),
     prisma.setting.findUnique({
       where: { institutionId },
@@ -73,6 +73,10 @@ export async function GET() {
     findConnectedWhatsapp(institutionId),
   ]);
   if (!institution) return NextResponse.json({ message: "Klinik bulunamadı." }, { status: 404 });
+  // Gönderen adı: kliniğe özel başlık yoksa platformun etkin sağlayıcı başlığı.
+  const platformSender = institution.smsSender
+    ? null
+    : await prisma.smsProviderConfig.findFirst({ where: { isActive: true }, orderBy: [{ priority: "asc" }, { createdAt: "asc" }], select: { sender: true } });
 
   const whatsappVisible = Boolean(institution.whatsappEnabled && canReadWhatsapp);
   const appUrl = process.env.APP_URL || "";
@@ -95,6 +99,8 @@ export async function GET() {
           enabled: setting?.smsEnabled ?? true,
           balance: institution.smsBalance,
           lowBalanceThreshold: LOW_BALANCE_THRESHOLD,
+          sender: institution.smsSender || platformSender?.sender || process.env.NETGSM_HEADER || "",
+          customSender: Boolean(institution.smsSender),
         }
       : null,
     whatsapp: whatsappVisible

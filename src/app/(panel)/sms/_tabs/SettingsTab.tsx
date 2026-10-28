@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Coins, Smartphone } from "lucide-react";
+import { BadgeCheck, Coins, Smartphone } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Callout } from "@/components/ui/Callout";
@@ -11,7 +11,7 @@ import { Section } from "@/components/ui/Section";
 import { SettingsList, SettingsRow } from "@/components/ui/SettingsList";
 import { WhatsappWebConnect } from "@/components/whatsapp/WhatsappWebConnect";
 import type { CommunicationStatus } from "@/components/sms/communication-status";
-import { SMS_CREDIT_REQUEST_HREF, formatCount } from "@/components/sms/communication-labels";
+import { formatCount } from "@/components/sms/communication-labels";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
 
@@ -28,6 +28,8 @@ type SettingsTabProps = {
   onStatusChange: (updater: (current: CommunicationStatus) => CommunicationStatus) => void;
   /** WhatsApp bağlantısı değişti — durum yeniden okunur. */
   onConnectionChanged: () => void;
+  /** "SMS paketi al" penceresini açar (pencere sayfada; şeritteki düğmeyle aynı). */
+  onBuyCredit: () => void;
 };
 
 function messageOf(data: unknown, fallback: string) {
@@ -42,7 +44,7 @@ function messageOf(data: unknown, fallback: string) {
  * WhatsApp durumu değişince kaydedilmemiş seçim eziliyordu. Değerler sayfanın
  * ortak durumundan (api/sms/status) gelir; ayrıca /api/settings okunmaz.
  */
-export default function SettingsTab({ status, canManageSettings, canManageChannel, canManageWhatsappConnection, onStatusChange, onConnectionChanged }: SettingsTabProps) {
+export default function SettingsTab({ status, canManageSettings, canManageChannel, canManageWhatsappConnection, onStatusChange, onConnectionChanged, onBuyCredit }: SettingsTabProps) {
   const whatsappConnected = Boolean(status?.whatsapp?.connected);
   const [pendingMode, setPendingMode] = useState<ChannelMode | null>(null);
   const [savingSms, setSavingSms] = useState(false);
@@ -178,8 +180,17 @@ export default function SettingsTab({ status, canManageSettings, canManageChanne
                 title="SMS kredisi"
                 description={`Kalan ${formatCount(status.sms.balance)} kredi`}
                 status={creditBadge}
-                actions={<Button variant="secondary" size="sm" href={SMS_CREDIT_REQUEST_HREF}>Kredi iste</Button>}
+                actions={<Button variant="secondary" size="sm" onClick={onBuyCredit}>SMS paketi al</Button>}
               />
+              {status.sms.sender && (
+                <SettingsRow
+                  icon={BadgeCheck}
+                  title="Gönderen adı"
+                  description={status.sms.customSender
+                    ? `SMS'ler “${status.sms.sender}” adıyla gider`
+                    : `SMS'ler “${status.sms.sender}” adıyla gider · kendi adınızla göndermek için Destek'e yazın (ücretli)`}
+                />
+              )}
             </SettingsList>
           ) : (
             <ListRowSkeleton variant="row" leading="icon" rows={2} />

@@ -5,6 +5,7 @@ import { runBirthdaySmsSweep } from "@/lib/birthday-reminders";
 import { runCelebrationDaySmsSweep } from "@/lib/celebration-sms";
 import { runAppointmentReminderSweep } from "@/lib/appointment-reminders";
 import { runReviewRequestSweep } from "@/lib/review-requests";
+import { runSubscriptionInvoiceSweep } from "@/lib/subscription-invoices";
 import { withDistributedLease } from "@/lib/security-store";
 
 // Render'da tek, sürekli çalışan bir Node süreci olarak barındırıyoruz
@@ -31,6 +32,19 @@ async function runBillingSweepSafely() {
     }
   } catch (error) {
     console.error("[scheduler] Fatura hatırlatma taraması başarısız:", error);
+  }
+}
+
+async function runSubscriptionInvoiceSweepSafely() {
+  try {
+    const lease = await withDistributedLease("scheduler:subscription-invoice", 55 * 60_000, () => runSubscriptionInvoiceSweep());
+    if (!lease.acquired || !lease.value) return;
+    const result = lease.value;
+    if (result.checked > 0) {
+      console.log(`[scheduler] Abonelik faturaları: ${result.checked} klinik, ${result.created} fatura kesildi, ${result.skipped} atlandı, ${result.failed} başarısız.`);
+    }
+  } catch (error) {
+    console.error("[scheduler] Abonelik faturası taraması başarısız:", error);
   }
 }
 
@@ -114,12 +128,13 @@ export function startBillingReminderScheduler() {
 
   setTimeout(() => {
     void runAppointmentSweepSafely();
-    void runBillingSweepSafely();
+    // Önce bu ayın abonelik faturası kesilir, sonra vade hatırlatmaları taranır.
+    void runSubscriptionInvoiceSweepSafely().then(runBillingSweepSafely);
     void runPatientReminderSweepSafely();
     void runBirthdaySweepSafely();
     void runCelebrationDaySweepSafely();
     setInterval(() => {
-      void runBillingSweepSafely();
+      void runSubscriptionInvoiceSweepSafely().then(runBillingSweepSafely);
       void runPatientReminderSweepSafely();
       void runBirthdaySweepSafely();
       void runCelebrationDaySweepSafely();
@@ -130,6 +145,6 @@ export function startBillingReminderScheduler() {
     }, APPOINTMENT_SWEEP_INTERVAL_MS);
   }, FIRST_RUN_DELAY_MS);
 
-  console.log("[scheduler] Randevu, değerlendirme, fatura, taksit, doğum günü ve kutlama günü zamanlayıcıları başlatıldı.");
+  console.log("[scheduler] Randevu, değerlendirme, abonelik faturası, fatura hatırlatma, taksit, doğum günü ve kutlama günü zamanlayıcıları başlatıldı.");
 }
 /* eslint-disable no-console -- Scheduler lifecycle logs are intentional server diagnostics. */

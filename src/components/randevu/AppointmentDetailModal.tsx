@@ -1,9 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { AlertTriangle, CalendarPlus, Check, ClipboardPlus, FileText, ListChecks, Pencil, Phone, RotateCcw, Wallet } from "lucide-react";
+import { AlertTriangle, CalendarPlus, Check, CheckCheck, ClipboardPlus, FileText, ListChecks, Pencil, Phone, RotateCcw, Wallet } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
+import { formatDateText } from "@/components/ui/Money";
 import { Badge } from "@/components/ui/Badge";
 import { Callout } from "@/components/ui/Callout";
 import { DescriptionList } from "@/components/ui/DescriptionList";
@@ -249,6 +250,12 @@ export function AppointmentDetailModal({
         <div className="flex flex-wrap items-center gap-2">
           <Badge tone={statusTone(current.status)} icon={StatusIcon} size="md">{statusChipLabel(current.status)}</Badge>
           {unresolved && <Badge tone="warning" icon={AlertTriangle}>Gün geçti, durum işaretlenmedi</Badge>}
+          {current.patientResponse === "GELECEK" && current.status !== "IPTAL" && (
+            <Badge tone="success" icon={CheckCheck}>Hasta geleceğini bildirdi{current.patientRespondedAt ? ` · ${formatDateText(current.patientRespondedAt, "datetime")}` : ""}</Badge>
+          )}
+          {current.patientResponse === "GELEMEYECEK" && (
+            <Badge tone="neutral">Hasta mesajdaki bağlantıdan iptal etti{current.patientRespondedAt ? ` · ${formatDateText(current.patientRespondedAt, "datetime")}` : ""}</Badge>
+          )}
         </div>
 
         {current.patient?.hasContagiousDisease && (

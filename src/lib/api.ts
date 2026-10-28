@@ -281,7 +281,7 @@ export async function requireAuth(permission?: string) {
       const overdueCount = await prisma.invoice.count({
         where: {
           institutionId: user.institutionId,
-          status: { not: "PAID" },
+          status: { in: ["PENDING", "OVERDUE"] },
           dueDate: { lt: now },
         },
       });

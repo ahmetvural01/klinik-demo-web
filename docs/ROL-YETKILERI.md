@@ -169,3 +169,16 @@ Matristeki varsayılanlar değişmedi; aşağıdakiler sunucunun bir izni nasıl
 - **Rolü değiştirilen personelin açık oturumları kapanır** (şifre sıfırlamada olduğu gibi). Önceden yeniden girişe kadar eski rolle çalışıyordu.
 - **Sunucu ölçümleri ve alarmlar** (`/api/system/metrics`, `/api/system/alerts`) platform genelidir; klinik yöneticisine kapandı, yalnız süperadmin okur. Sistem Ayarları › Teknik ölçümler ikisini birlikte `/api/superadmin/system-settings/metrics` ucundan okur (açık bir gizli klinik girişi varken de süperadmin oturumuyla). Kayıt kontrolü (`/api/system/consistency`) kurumla sınırlı kalır.
 - **Rol Yetkileri** ekranı önerilen varsayılandan farkları gösterir; "Varsayılana döndür" işlem kaydı neyin değiştiğini (rol bazında +/−) yazar.
+
+## 12. 28 Ekim 2026 eklemeleri
+
+- **Ayarlar › Abonelik** (`/api/billing`): kliniğin platform faturaları ve ödeme bilgisi.
+  Okuma izniyle açılır ama yalnız `settings:write` sahibi (klinik yöneticisi) görür; ödeme
+  gecikip kayıt kilitlendiğinde de yönetici neyi ödeyeceğini görebilir.
+- **İletişim › SMS paketi al** (`/api/sms/packages`): `settings:write`. Süperadmin gizli
+  girişte satın alamaz (satış klinik dosyasından yapılır).
+- **Randevu onay bağlantısı** (`/r/<belirteç>`, `/api/public/appointment-response`):
+  oturumsuz; yalnız belirteci bilen hasta kendi randevusuna yanıt verir. Gelemeyecek hastanın
+  randevusu iptal edilir ve randevunun doktoruna "geri ara" takibi açılır.
+- **Otomatik çıkış:** "Oturumu açık tut" işaretsiz girişte 2 saat işlem yapılmazsa oturum
+  kapanır; işaretliyse 24 saat açık kalır. Rol fark etmez.

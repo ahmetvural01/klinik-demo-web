@@ -27,6 +27,7 @@ export type EditableInstitution = {
   suspendedUntil: string | null;
   maxActiveUsers: number | null;
   maxActiveDoctors: number | null;
+  smsSender?: string | null;
 };
 
 /** "Hizmet durumu" seçenekleri: geçici askı, servis modu yerine bir bitiş tarihidir (requireAuth suspendedUntil'i ayrıca denetler). */
@@ -52,6 +53,7 @@ type FormState = {
   billingCycle: BillingCycleId;
   maxActiveUsers: string;
   maxActiveDoctors: string;
+  smsSender: string;
   access: AccessChoice;
   suspendedUntilLocal: string;
   serviceNote: string;
@@ -71,6 +73,7 @@ function toForm(i: EditableInstitution): FormState {
     billingCycle: (i.billingCycle as BillingCycleId) || "AYLIK",
     maxActiveUsers: i.maxActiveUsers != null ? String(i.maxActiveUsers) : "",
     maxActiveDoctors: i.maxActiveDoctors != null ? String(i.maxActiveDoctors) : "",
+    smsSender: i.smsSender || "",
     access,
     // Kayıtlı UTC değer Türkiye saatine çevrilerek gösterilir. Önceden ISO
     // metin kesilip yazıldığı için her kayıtta bitiş 3 saat geri kayıyordu.
@@ -162,6 +165,7 @@ export function InstitutionEditModal({
       billingCycle: form.billingCycle,
       maxActiveUsers: form.maxActiveUsers ? Number(form.maxActiveUsers) : null,
       maxActiveDoctors: form.maxActiveDoctors ? Number(form.maxActiveDoctors) : null,
+      smsSender: form.smsSender.trim(),
       serviceMode: form.access === "SUSPENDED_UNTIL" ? "NORMAL" : form.access,
       serviceNote: form.serviceNote.trim(),
     };
@@ -251,6 +255,13 @@ export function InstitutionEditModal({
             </FormField>
             <FormField label="En fazla aktif doktor" htmlFor="edit-max-doctors" hint="Boş = sınırsız">
               <Input id="edit-max-doctors" type="number" inputMode="numeric" min="1" value={form.maxActiveDoctors} onChange={(event) => set("maxActiveDoctors", event.target.value)} />
+            </FormField>
+            <FormField
+              label="SMS gönderen adı"
+              htmlFor="edit-sms-sender"
+              hint="Ücretli ek: NetGSM'de bu klinik adına onaylanmış başlık. Boş = platform adı. Onaylı değilse SMS platform adıyla gider."
+            >
+              <Input id="edit-sms-sender" value={form.smsSender} maxLength={11} placeholder="Ör. GULUSKLINIK" onChange={(event) => set("smsSender", event.target.value)} />
             </FormField>
           </div>
           {limitsMissing && (

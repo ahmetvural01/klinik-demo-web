@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type ComponentType, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ComponentType, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, Info, RefreshCw } from "lucide-react";
 import { ListRowSkeleton, TableRowsSkeleton } from "@/components/ui/ListSkeleton";
@@ -8,6 +8,9 @@ import { ListPager, type ListPagerProps } from "@/components/ui/ListPager";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { LoadErrorState } from "@/components/ui/LoadErrorState";
 import type { IconAccent } from "@/components/ui/IconFrame";
+
+// Sunucu çiziminde useLayoutEffect uyarı verir; tarayıcıda boyamadan önce ölçer.
+const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
 export interface ListTableColumn<T> {
   key: string;
@@ -123,6 +126,12 @@ export interface ListTableProps<T> {
     onChange: (ids: string[]) => void;
     isSelectable?: (row: T) => boolean;
   };
+  /**
+   * Toplam satırı (tablonun altında, sayfalanmış listede TÜM satırların
+   * toplamı): `cells` sütun anahtarına göre hücre içeriği; `mobile` kart
+   * görünümünde altta tek satır.
+   */
+  totals?: { cells: Partial<Record<string, ReactNode>>; mobile?: ReactNode };
 }
 
 const ALIGN_CLASS: Record<"left" | "right" | "center", string> = {
@@ -260,10 +269,40 @@ export function ListTable<T>({
   pager,
   header,
   selection,
+  totals,
 }: ListTableProps<T>) {
   const titleId = useId();
+  const rootRef = useRef<HTMLDivElement>(null);
+  // Tablo içeriği (uzun ad, rozet, düğme) listeye sığmıyorsa gereken genişlik:
+  // liste bundan darken kart görünümü zorlanır, genişleyince tabloya dönülür.
+  const [cardsUntil, setCardsUntil] = useState<number | null>(null);
+  const [rootWidth, setRootWidth] = useState(0);
   const hasStickyActions = columns.some((column) => column.key === "islem" || column.key === "actions");
   const tableMinWidth = columns.length >= 6 ? "min-w-[820px]" : columns.length >= 4 ? "min-w-[680px]" : "";
+  // Tablo, LİSTENİN KENDİ genişliği bu değerin altına inince kart görünümüne
+  // geçer (ekran genişliği değil): menü açık tablet/dizüstünde (768–1152 px)
+  // tablo sığmıyor, yana kayıyor ve yapışkan eylem sütunu son sütunun
+  // yazısını kesiyordu. Kart görünümü olmayan tablo yana kaymaya devam eder.
+  const fitWidth = mobileCard ? (columns.length >= 6 ? 900 : columns.length >= 4 ? 760 : 0) : 0;
+
+  useIsomorphicLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!root || !mobileCard || typeof ResizeObserver === "undefined") return;
+    const check = () => {
+      const width = root.clientWidth;
+      setRootWidth(width);
+      const wrap = root.querySelector<HTMLElement>(".ui-list-tablewrap");
+      if (!wrap || getComputedStyle(wrap).display === "none") return;
+      const overflow = wrap.scrollWidth - wrap.clientWidth;
+      if (overflow > 1) setCardsUntil(width + overflow);
+    };
+    check();
+    const observer = new ResizeObserver(check);
+    observer.observe(root);
+    return () => observer.disconnect();
+    // rootWidth: kartlar kalkıp tablo yeniden göründüğünde tekrar ölçülür.
+  }, [mobileCard, rows, columns.length, cardsUntil, rootWidth]);
+  const forceCards = cardsUntil !== null && rootWidth > 0 && rootWidth < cardsUntil;
   const isActionsColumn = (key: string) => hasStickyActions && (key === "islem" || key === "actions");
 
   const selectedSet = new Set(selection?.selectedIds || []);
@@ -342,7 +381,7 @@ export function ListTable<T>({
   const showStale = Boolean(staleError) && !showError && !loading;
 
   return (
-    <div className="ui-list-table ui-surface overflow-hidden" aria-busy={loading || undefined}>
+    <div ref={rootRef} className="ui-list-table ui-list-cq ui-surface overflow-hidden" data-fit={fitWidth || undefined} data-cards={forceCards || undefined} aria-busy={loading || undefined}>
       {hasTitleBar && (
         <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2 border-b border-slate-100 px-4 pb-3 pt-3.5">
           <div className="min-w-0">
@@ -387,7 +426,7 @@ export function ListTable<T>({
       )}
 
       {mobileCard && !showError && (
-        <div className={`divide-y divide-slate-100 ${CARD_ONLY_CLASS[cardBelow]}`}>
+        <div className={`ui-list-cards divide-y divide-slate-100 ${CARD_ONLY_CLASS[cardBelow]}`}>
           {showSkeleton ? <ListRowSkeleton rows={Math.min(skeletonRows, 5)} /> : showEmpty ? empty : rows.map((row) => (
             <div
               key={rowKey(row)}
@@ -404,11 +443,14 @@ export function ListTable<T>({
               {mobileCardActions && <div className="absolute right-2 top-2 flex items-center gap-1">{mobileCardActions(row)}</div>}
             </div>
           ))}
+          {totals?.mobile && !showSkeleton && !showEmpty && (
+            <div className="bg-slate-50/80 px-4 py-2.5 text-sm font-semibold text-slate-800">{totals.mobile}</div>
+          )}
         </div>
       )}
 
       {!showError && (
-        <div className={`${mobileCard ? TABLE_ONLY_CLASS[cardBelow] : ""} overflow-x-auto`}>
+        <div className={`ui-list-tablewrap ${mobileCard ? TABLE_ONLY_CLASS[cardBelow] : ""} overflow-x-auto`}>
           <table className={`${tableMinWidth} w-full`} aria-labelledby={title ? titleId : undefined}>
             {/* Boş listede sütun başlıkları gösterilmez: başlık satırı ile "kayıt yok"
                 metni üst üste görünüyor, ekran gereksiz kalabalıklaşıyordu. */}
@@ -506,6 +548,25 @@ export function ListTable<T>({
                 ))
               )}
             </tbody>
+            {totals && !showSkeleton && !showEmpty && (
+              <tfoot>
+                <tr className="border-t border-slate-200 bg-slate-50/80">
+                  {selection && <td className="w-10 px-3 py-2 sm:px-4" />}
+                  {columns.map((col) => (
+                    <td
+                      key={col.key}
+                      className={[
+                        "h-11 py-2 text-sm font-bold text-slate-900",
+                        isActionsColumn(col.key) ? "w-px pl-2 pr-2 sm:pr-3" : "px-3 sm:px-4",
+                        ALIGN_CLASS[col.align || "left"],
+                      ].join(" ")}
+                    >
+                      {totals.cells[col.key] ?? null}
+                    </td>
+                  ))}
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       )}

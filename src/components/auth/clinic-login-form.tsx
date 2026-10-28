@@ -57,6 +57,7 @@ type ClinicLoginFormProps = {
 export function ClinicLoginForm({ next, reason }: ClinicLoginFormProps = {}) {
   const nextPath = safeLoginNextPath(next);
   const sessionExpired = reason === "oturum";
+  const idleLogout = reason === "zaman-asimi";
   const [institution, setInstitution] = useState("");
   const [identityNo, setIdentityNo] = useState("");
   const [password, setPassword] = useState("");
@@ -215,6 +216,11 @@ export function ClinicLoginForm({ next, reason }: ClinicLoginFormProps = {}) {
     <AuthLayout links={links}>
       <form ref={formRef} method="post" onSubmit={onSubmit} className="space-y-4">
         <h1 className="font-display text-xl font-extrabold text-slate-900">Klinik girişi</h1>
+        {idleLogout && !error && (
+          <Callout tone="info" role="status" title="Oturum kapatıldı">
+            2 saat işlem yapılmadığı için güvenlik amacıyla çıkış yapıldı.
+          </Callout>
+        )}
         {sessionExpired && !error && (
           <Callout tone="info" role="status" title="Oturum süreniz doldu">
             {nextPath ? "Yeniden giriş yapınca kaldığınız sayfaya dönersiniz." : "Devam etmek için yeniden giriş yapın."}
@@ -258,7 +264,7 @@ export function ClinicLoginForm({ next, reason }: ClinicLoginFormProps = {}) {
           checked={remember}
           onChange={setRemember}
           label="Oturumu 24 saat açık tut"
-          description="İşaretlemezseniz 3 saat sonra yeniden giriş istenir. Kurum adı bu cihazda hatırlanır."
+          description="İşaretlemezseniz 2 saat işlem yapılmadığında oturum kapanır. Kurum adı bu cihazda hatırlanır."
         />
         {error && <Callout tone="critical" role="alert">{error}</Callout>}
         <Button type="submit" loading={loading} fullWidth>

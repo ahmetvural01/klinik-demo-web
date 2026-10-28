@@ -3,7 +3,7 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit, invalidateUserSessionCache, rejectGhostAccountChange } from "@/lib/api";
 import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rate-limit";
-import { signToken, setAuthCookie } from "@/lib/auth";
+import { currentSessionRememberMe, signToken, setAuthCookie } from "@/lib/auth";
 
 export async function PUT(request: NextRequest) {
   const auth = await requireAuth();
@@ -49,14 +49,15 @@ export async function PUT(request: NextRequest) {
   invalidateUserSessionCache(auth.user.id);
   await writeAudit(auth.user.id, "PASSWORD_CHANGE", "Şifre değiştirildi");
 
+  const rememberMe = await currentSessionRememberMe();
   const freshToken = signToken({
     userId: updated.id,
     role: updated.role,
     institutionId: updated.institutionId,
     fullName: updated.fullName,
     tokenVersion: updated.tokenVersion,
-  });
-  await setAuthCookie(freshToken);
+  }, rememberMe);
+  await setAuthCookie(freshToken, rememberMe);
 
   return NextResponse.json({ ok: true });
 }

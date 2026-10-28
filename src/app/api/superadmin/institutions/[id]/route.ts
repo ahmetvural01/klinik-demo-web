@@ -143,6 +143,8 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ id: stri
         }
       : { exists: false },
     usage: {
+      // Otomatik abonelik faturası plan ücreti × aktif şube sayısıdır.
+      activeBranches: await prisma.clinicBranch.count({ where: { institutionId: params.id, isActive: true } }),
       activeUsers: activeUsers.length,
       // Lisans sınırı API'de yalnız DOKTOR rolünü sayar (bkz. PUT ve users route).
       activeDoctors: activeUsers.filter((user) => user.role === "DOKTOR").length,
@@ -221,6 +223,11 @@ export async function PUT(request: NextRequest, props: { params: Promise<{ id: s
   if (body.serviceMode && !VALID_SERVICE_MODES.has(body.serviceMode)) {
     return NextResponse.json({ message: "Geçersiz servis modu" }, { status: 400 });
   }
+  // NetGSM başlığı en fazla 11 karakter: harf, rakam, boşluk, nokta ve tire.
+  const smsSender = body.smsSender === undefined ? undefined : typeof body.smsSender === "string" ? body.smsSender.trim() || null : null;
+  if (smsSender && !/^[A-Za-z0-9 .\-]{2,11}$/.test(smsSender)) {
+    return NextResponse.json({ message: "SMS gönderen adı 2-11 karakter olmalı; yalnız Türkçe karakter içermeyen harf, rakam, boşluk, nokta ve tire" }, { status: 400 });
+  }
 
   const existing = await prisma.institution.findUnique({ where: { id: params.id } });
   if (!existing) return NextResponse.json({ message: "Bulunamadı" }, { status: 404 });
@@ -257,6 +264,7 @@ export async function PUT(request: NextRequest, props: { params: Promise<{ id: s
       ...(body.address !== undefined && { address: body.address }),
       ...(body.taxNo !== undefined && { taxNo: typeof body.taxNo === "string" ? body.taxNo.trim() || null : null }),
       ...(body.website !== undefined && { website: body.website }),
+      ...(smsSender !== undefined && { smsSender }),
       ...(body.subscriptionPlan && { subscriptionPlan: body.subscriptionPlan }),
       ...(body.billingCycle && { billingCycle: body.billingCycle }),
       ...(body.isActive !== undefined && { isActive: body.isActive }),
@@ -336,6 +344,7 @@ export async function PUT(request: NextRequest, props: { params: Promise<{ id: s
   if (body.maxActiveDoctors !== undefined && existing.maxActiveDoctors !== updated.maxActiveDoctors) changedFields.push(`doktor sınırı: ${limit(existing.maxActiveDoctors)} → ${limit(updated.maxActiveDoctors)}`);
   if (body.whatsappEnabled !== undefined && existing.whatsappEnabled !== updated.whatsappEnabled) changedFields.push(`WhatsApp modülü: ${onOff(existing.whatsappEnabled)} → ${onOff(updated.whatsappEnabled)}${updated.whatsappEnabled ? "" : " (bağlantı bilgileri silindi)"}`);
   if (body.name !== undefined && body.name.trim() !== existing.name) changedFields.push(`ad: ${existing.name} → ${updated.name}`);
+  if (smsSender !== undefined && smsSender !== existing.smsSender) changedFields.push(`SMS gönderen adı: ${existing.smsSender || "platform"} → ${updated.smsSender || "platform"}`);
   if (body.email && body.email !== existing.email) changedFields.push(`e-posta değişti`);
   await writeAudit(
     auth.user.id,

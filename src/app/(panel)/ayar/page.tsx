@@ -34,6 +34,7 @@ const RandevuTurleri = dynamic(() => import("./_tabs/TedaviTurleriTab"), { ssr: 
 const KoltukOda = dynamic(() => import("./_tabs/UnitelerTab"), { ssr: false });
 const PosTab = dynamic(() => import("./_tabs/PosTab"), { ssr: false });
 const FiyatPage = dynamic(() => import("../fiyat/page"), { ssr: false });
+const AbonelikTab = dynamic(() => import("./_tabs/AbonelikTab"), { ssr: false });
 
 // Üç sekme: kliniğin kendisi (bilgiler + çalışma saatleri, tek form), randevu
 // formunu besleyen tanımlar, tahsilatı besleyen tanımlar. Önceden 7 düz sekme
@@ -42,6 +43,7 @@ const TABS = [
   { key: "klinik", label: "Klinik" },
   { key: "randevu", label: "Randevu" },
   { key: "fiyat", label: "Fiyat ve ödeme" },
+  { key: "abonelik", label: "Abonelik" },
 ] as const;
 
 type SettingsTab = (typeof TABS)[number]["key"];
@@ -82,7 +84,9 @@ export default function AyarPage() {
 
   const rawTab = searchParams.get("tab") || "";
   const alias = TAB_ALIASES[rawTab];
-  const tabKeys = useMemo(() => TABS.map((tab) => tab.key), []);
+  // Abonelik (platform faturaları) yalnız klinik yöneticisine görünür.
+  const visibleTabs = useMemo(() => TABS.filter((tab) => tab.key !== "abonelik" || canWriteSettings), [canWriteSettings]);
+  const tabKeys = useMemo(() => visibleTabs.map((tab) => tab.key), [visibleTabs]);
   const [paramTab, setActiveTab] = useTabParam<SettingsTab>(tabKeys, "klinik");
   const activeTab: SettingsTab = alias ? alias.tab : paramTab;
 
@@ -277,7 +281,7 @@ export default function AyarPage() {
       <Tabs
         ariaLabel="Ayar bölümleri"
         // Kaydedilmemiş klinik formu sekme adının yanında işaretle gösterilir (SaveBar yalnız Klinik'te).
-        items={TABS.map((tab) => ({ key: tab.key, label: tab.label, marker: tab.key === "klinik" && dirty ? "unsaved" as const : undefined }))}
+        items={visibleTabs.map((tab) => ({ key: tab.key, label: tab.label, marker: tab.key === "klinik" && dirty ? "unsaved" as const : undefined }))}
         value={activeTab}
         onChange={setActiveTab}
         panelIdPrefix="ayar-panel"
@@ -337,6 +341,8 @@ export default function AyarPage() {
           {priceList === "fiyat" && canReadPrices ? <FiyatPage /> : <PosTab canWrite={canWriteSettings} scopeBadge={branchBadge} />}
         </>
       ))}
+
+      {canWriteSettings && panel("abonelik", <AbonelikTab />)}
 
       {activeTab === "klinik" && (
         <SaveBar

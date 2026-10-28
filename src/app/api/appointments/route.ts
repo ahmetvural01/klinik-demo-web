@@ -185,6 +185,8 @@ export const GET = withApiTiming("appointments", async function GET(request: Nex
         smsInfo: true,
         smsReminder: true,
         smsSurvey: true,
+        patientResponse: true,
+        patientRespondedAt: true,
         doctorId: true,
         patientId: true,
         clinicUnitId: true,

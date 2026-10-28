@@ -266,6 +266,14 @@ const period = useDateRangeParam(DATE_PRESET_SETS.takvim, "ay"); // period.range
   (her ton rengini korur); satır tek satırda 48 px'tir (§9 K3, K9).
 - Telefon kartında "…" `mobileCardActions` ile kartın sağ üst köşesine konur; ayrı eylem
   sırası açılmaz. Aynı menü `mobileCard` içinde ikinci kez çizilmez.
+- Tablo ekran genişliğine değil LİSTENİN KENDİ genişliğine uyar: 4–5 sütunlu liste 760 px'ten,
+  6+ sütunlu liste 900 px'ten darsa ya da içerik yine sığmıyorsa satırlar `mobileCard` olarak
+  gösterilir. Tablo yana kaymaz; yapışkan eylem sütunu yazıyı kesmez. Bu yüzden her listeye
+  `mobileCard` verilir.
+- Eylem sütunundaki görünür düğme sütun genişliğini doldurur: farklı uzunluktaki satır
+  düğmeleri aynı genişlikte ve hizalı durur.
+- Toplam satırı `totals` ile verilir (`cells` sütun anahtarına göre, `mobile` kart görünümünde
+  tek satır); sayfalanmış listede tüm satırların toplamıdır.
 - İlk yükleme hatası `error` ile verilir (liste yerine görünür). Veri ekrandayken gelen hata
   `staleError` ile verilir; şerit "{staleError} Son yüklenen liste gösteriliyor." yazar, bu
   yüzden metin tam cümledir ("Tahsilatlar yüklenemedi.").

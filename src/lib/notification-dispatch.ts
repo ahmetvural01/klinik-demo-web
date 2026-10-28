@@ -134,7 +134,7 @@ export async function dispatchPatientMessage(params: DispatchParams): Promise<Di
   }
 
   const [institution, setting, smsPreference] = await Promise.all([
-    prisma.institution.findUnique({ where: { id: institutionId }, select: { whatsappEnabled: true } }),
+    prisma.institution.findUnique({ where: { id: institutionId }, select: { whatsappEnabled: true, smsSender: true } }),
     prisma.setting.findUnique({
       where: { institutionId },
       select: {
@@ -331,7 +331,7 @@ export async function dispatchPatientMessage(params: DispatchParams): Promise<Di
 
   let smsResult;
   try {
-    smsResult = await sendSms(patient.phone, message);
+    smsResult = await sendSms(patient.phone, message, { sender: institution.smsSender });
   } catch (error) {
     // Sağlayıcı çağrısı başlamadan/sonuç üretmeden hata verdiyse ayrılan kredi
     // mutlaka geri alınır. Dış servis sonucu belirsizse aynı idempotency anahtarı

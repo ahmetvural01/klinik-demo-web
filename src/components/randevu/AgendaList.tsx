@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { AlertTriangle, Check } from "lucide-react";
+import { AlertTriangle, Check, CheckCheck } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { ListTable, EmptyValue, type ListTableColumn } from "@/components/ui/ListTable";
@@ -99,6 +99,13 @@ export function AppointmentStatusBadge({ appointment }: { appointment: Appointme
   }
   if (isLateUnmarked(appointment.status, appointment.startAt)) {
     return warning("saati geçti", `${statusChipLabel(appointment.status)} — saati geçti, gelişi işaretlenmedi`);
+  }
+  // Hasta hatırlatmadaki bağlantıdan geleceğini bildirdiyse aynı rozette yazar.
+  if (appointment.patientResponse === "GELECEK" && (appointment.status === "BEKLIYOR" || appointment.status === "ONAYLANDI")) {
+    return <Badge tone="success" icon={CheckCheck} title="Hasta mesajdaki bağlantıdan geleceğini bildirdi">{statusChipLabel(appointment.status)} · onaylı</Badge>;
+  }
+  if (appointment.patientResponse === "GELEMEYECEK" && appointment.status === "IPTAL") {
+    return <Badge tone={statusTone(appointment.status)} icon={Icon} title="Hasta mesajdaki bağlantıdan gelemeyeceğini bildirdi">İptal · hasta bildirdi</Badge>;
   }
   return <Badge tone={statusTone(appointment.status)} icon={Icon}>{statusChipLabel(appointment.status)}</Badge>;
 }

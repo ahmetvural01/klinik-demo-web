@@ -45,7 +45,7 @@ function clinicDefaults(clinic: InvoiceClinicOption | null): { amount: string; d
 
 /**
  * Fatura kesme penceresi — Faturalar sayfası ("Yeni fatura") ve klinik
- * dosyası ("Dönem faturası kes") AYNI kuralları kullanır: tutar kliniğin
+ * dosyası ("Fatura kes") AYNI kuralları kullanır: tutar kliniğin
  * plan ücretinden, vade fatura döneminden önerilir; vade zorunludur (vadesiz
  * fatura ödeme takibine hiç girmez). Aynı açıklamalı açık fatura varsa
  * mükerrer kesime karşı uyarır — klinik seçilince o kliniğin açık faturaları
@@ -204,8 +204,8 @@ export function InvoiceCreateModal({
     <FormModal
       open={open}
       onClose={onClose}
-      title={lockedClinic ? "Dönem faturası kes" : "Yeni fatura"}
-      description={lockedClinic ? `${lockedClinic.name} · ${planLabel(lockedClinic.subscriptionPlan, lockedClinic.billingCycle)}` : "Kliniğe platform kullanım faturası keser."}
+      title={lockedClinic ? "Fatura kes" : "Yeni fatura"}
+      description={`${lockedClinic ? `${lockedClinic.name} · ${planLabel(lockedClinic.subscriptionPlan, lockedClinic.billingCycle)} · ` : ""}Abonelik faturası her ayın 1'inde otomatik kesilir; buradan açılış ayı ya da ek ücret faturası kesin.`}
       size="md"
       onSubmit={() => submit()}
       submitting={saving}

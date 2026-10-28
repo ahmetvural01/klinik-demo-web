@@ -18,7 +18,8 @@ import {
   useMessageTemplates,
   type AutomationState,
 } from "@/components/sms/communication-status";
-import { SMS_CREDIT_REQUEST_HREF, formatCount } from "@/components/sms/communication-labels";
+import { formatCount } from "@/components/sms/communication-labels";
+import { SmsPackagePurchaseModal } from "@/components/sms/SmsPackagePurchaseModal";
 import type { PickedPatient } from "@/components/patient/PatientPicker";
 import SendTab from "./_tabs/SendTab";
 
@@ -118,6 +119,7 @@ export default function SmsPage() {
   }, [tab]);
 
   const { status, loaded: statusLoaded, error: statusError, reload: reloadStatus, patch: patchStatus } = useCommunicationStatus();
+  const [buyOpen, setBuyOpen] = useState(false);
   // Metinler ve özel gün kataloğu sayfada BİR kez yüklenir (Mesaj gönder ve
   // Otomatik mesajlar ortak kullanır); yalnız bu sekmelerden biri açılınca.
   const needsTexts = mountedTabs.has("gonder") || mountedTabs.has("otomatik");
@@ -146,11 +148,11 @@ export default function SmsPage() {
       return { tone: "critical", title: "SMS gönderimi kapalı", text: canManageSettings ? "Hatırlatmalar dahil hiçbir SMS gitmez." : "Hatırlatmalar dahil hiçbir SMS gitmez. Açmayı klinik yöneticisi yapar.", action: goToSettings };
     }
     if (noCredit) {
-      return { tone: "critical", title: "SMS krediniz bitti", text: "Kredi yüklenene kadar SMS'ler gitmez.", action: canManageSettings ? <Button variant="secondary" size="sm" href={SMS_CREDIT_REQUEST_HREF}>Kredi iste</Button> : undefined, aboutCredit: true };
+      return { tone: "critical", title: "SMS krediniz bitti", text: "Kredi yüklenene kadar SMS'ler gitmez.", action: canManageSettings ? <Button variant="secondary" size="sm" onClick={() => setBuyOpen(true)}>SMS paketi al</Button> : undefined, aboutCredit: true };
     }
     if (lowCredit && sms) {
       // Kalan sayı şeritte yazar; başlıkta ayrıca "Kalan kredi" tekrar etmez.
-      return { tone: "warning", title: "SMS krediniz azaldı", text: `${formatCount(sms.balance)} kredi kaldı; bitince SMS'ler gitmez.`, action: canManageSettings ? <Button variant="secondary" size="sm" href={SMS_CREDIT_REQUEST_HREF}>Kredi iste</Button> : undefined, aboutCredit: true };
+      return { tone: "warning", title: "SMS krediniz azaldı", text: `${formatCount(sms.balance)} kredi kaldı; bitince SMS'ler gitmez.`, action: canManageSettings ? <Button variant="secondary" size="sm" onClick={() => setBuyOpen(true)}>SMS paketi al</Button> : undefined, aboutCredit: true };
     }
     if (status.whatsapp && !status.whatsapp.connected && status.defaultChannel === "WHATSAPP") {
       return status.whatsappSmsFallback
@@ -253,8 +255,16 @@ export default function SmsPage() {
           canManageWhatsappConnection={canManageWhatsappConnection}
           onStatusChange={patchStatus}
           onConnectionChanged={() => void reloadStatus()}
+          onBuyCredit={() => setBuyOpen(true)}
         />
       ))}
+      {canManageSettings && (
+        <SmsPackagePurchaseModal
+          open={buyOpen}
+          onClose={() => setBuyOpen(false)}
+          onPurchased={(balance) => patchStatus((current) => (current.sms ? { ...current, sms: { ...current.sms, balance } } : current))}
+        />
+      )}
     </div>
   );
 }

@@ -42,7 +42,7 @@ export type CommunicationStatus = {
     reviewLink: string;
   };
   branch: { name: string; multiple: boolean };
-  sms: { enabled: boolean; balance: number; lowBalanceThreshold: number } | null;
+  sms: { enabled: boolean; balance: number; lowBalanceThreshold: number; sender?: string; customSender?: boolean } | null;
   whatsapp: { connected: boolean; phone?: string | null } | null;
   automations: AutomationState;
   defaultChannel: "SMS" | "WHATSAPP";

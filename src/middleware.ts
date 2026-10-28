@@ -23,6 +23,9 @@ const PUBLIC_PREFIXES = [
   "/api/public/booking",
   "/sms-onay",
   "/api/public/sms-consent",
+  // Hatırlatmadaki randevu onay bağlantısı (sondaki "/" ile: /randevu korumalı kalır).
+  "/r/",
+  "/api/public/appointment-response",
   // Google AdSense yetkili satıcı dosyası (oturumsuz okunur). Noktalı adres
   // aşağıdaki statik dosya kuralından da geçer; açıkça burada da durur.
   "/ads.txt",

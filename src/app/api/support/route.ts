@@ -2,6 +2,7 @@
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit, withApiTiming } from "@/lib/api";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { notifyPlatformOwnersLater } from "@/lib/platform-notify";
 
 export const GET = withApiTiming("support", async function GET() {
   const auth = await requireAuth("support:read");
@@ -56,5 +57,13 @@ export async function POST(request: NextRequest) {
   });
 
   await writeAudit(auth.user.id, "SUPPORT_CREATE", `Destek talebi oluşturuldu: ${subject || "Genel"}`);
+  if (!auth.user.ghostSession) {
+    const clinic = await prisma.institution.findUnique({ where: { id: auth.user.institutionId }, select: { name: true } });
+    notifyPlatformOwnersLater(
+      `Yeni destek talebi — ${clinic?.name ?? "Klinik"}`,
+      [`Klinik: ${clinic?.name ?? "-"}`, `Konu: ${subject || "Genel"}`, "", message.slice(0, 1_000)],
+      { path: "/superadmin/support", label: "Destek taleplerini aç" },
+    );
+  }
   return NextResponse.json(ticket, { status: 201 });
 }

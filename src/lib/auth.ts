@@ -65,6 +65,12 @@ export type AuthPayload = {
   ghostOwnerName?: string;
   /** Sunucu taraflı oturum iptali için — bkz. requireAuth() ve User.tokenVersion */
   tokenVersion?: number;
+  /**
+   * "Oturumu açık tut": true → 24 saat açık kalır. false → 2 saat işlem
+   * yapılmazsa kapanır (süre her işlemde /api/auth/refresh ile uzar).
+   * Alanı olmayan eski oturumlar açık tut sayılır.
+   */
+  rm?: boolean;
 };
 
 export type TokenUser = {
@@ -86,14 +92,17 @@ export async function verifyPassword(password: string, hash: string) {
   return bcrypt.compare(password, hash);
 }
 
-// "Oturumu açık tut" işaretliyse oturum 24 saat, işaretli değilse 3 saat
-// sonra sona erer (bkz. kullanıcı geri bildirimi). Diğer (giriş formu dışı)
-// çağıranlar için varsayılan true — mevcut oturumu aynı sürede yeniler.
+// "Oturumu açık tut" işaretliyse oturum 24 saat açık kalır. İşaretli değilse
+// 2 saat İŞLEM YAPILMAZSA kapanır: kullanıcı çalıştıkça panel oturumu
+// /api/auth/refresh ile uzatır (IdleSessionGuard), bilgisayar başından
+// kalkılınca hasta bilgisi ekranda açık kalmaz. Diğer (giriş formu dışı)
+// çağıranlar mevcut oturumun seçimini `currentSessionRememberMe()` ile korur.
+export const IDLE_TIMEOUT_MINUTES = 120;
 function sessionExpiresIn(rememberMe: boolean) {
-  return rememberMe ? "24h" : "3h";
+  return rememberMe ? "24h" : `${IDLE_TIMEOUT_MINUTES}m`;
 }
 function sessionMaxAgeSeconds(rememberMe: boolean) {
-  return rememberMe ? 60 * 60 * 24 : 60 * 60 * 3;
+  return rememberMe ? 60 * 60 * 24 : IDLE_TIMEOUT_MINUTES * 60;
 }
 
 export function signToken(payload: AuthPayload, rememberMe: boolean = true) {
@@ -103,7 +112,40 @@ export function signToken(payload: AuthPayload, rememberMe: boolean = true) {
     throw new Error("JWT_SECRET tanımlı değil");
   }
 
-  return jwt.sign(payload, secret, { expiresIn: sessionExpiresIn(rememberMe) });
+  // Yeniden imzalanan (çözülmüş) yükteki eski iat/exp alanları taşınmaz.
+  const { iat: _iat, exp: _exp, ...claims } = payload as AuthPayload & { iat?: number; exp?: number };
+  void _iat;
+  void _exp;
+  return jwt.sign({ ...claims, rm: rememberMe }, secret, { expiresIn: sessionExpiresIn(rememberMe) });
+}
+
+/** Klinik oturumu "açık tut" ile mi açıldı (yeniden imzalanan token aynı seçimi korur). */
+export async function currentSessionRememberMe() {
+  try {
+    const token = (await cookies()).get(TOKEN_NAME)?.value;
+    if (!token) return true;
+    return verifyToken(token).rm !== false;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * "Açık tut" işaretsiz oturumun süresini işlemden itibaren yeniden 2 saate
+ * çeker. Açık tut oturumları (24 saat) ve gizli giriş dokunulmadan kalır.
+ */
+export async function refreshIdleSession(): Promise<boolean> {
+  const token = (await cookies()).get(TOKEN_NAME)?.value;
+  if (!token) return false;
+  let payload: AuthPayload;
+  try {
+    payload = verifyToken(token);
+  } catch {
+    return false;
+  }
+  if (payload.rm !== false || payload.ghost) return false;
+  await setAuthCookie(signToken(payload, false), false);
+  return true;
 }
 
 type PendingTwoFactorPayload = {
@@ -214,7 +256,7 @@ export function decodeTokenUserFromToken(token: string): TokenUser | null {
 }
 
 /** JWT'den DB sorgusu yapmadan kullanıcı bilgilerini al (layout için hızlı) */
-export async function getCurrentUserFast(): Promise<{ id: string; role: string; rawRole: string; institution: string; fullName: string; displayName: string; ghost: boolean; previewRole: string | null } | null> {
+export async function getCurrentUserFast(): Promise<{ id: string; role: string; rawRole: string; institution: string; fullName: string; displayName: string; ghost: boolean; previewRole: string | null; rememberMe: boolean } | null> {
   const token = await readAuthToken();
   if (!token) return null;
   try {
@@ -235,6 +277,7 @@ export async function getCurrentUserFast(): Promise<{ id: string; role: string; 
       displayName: (payload.ghost && payload.ghostOwnerName) || payload.fullName || "",
       ghost: payload.ghost ?? false,
       previewRole,
+      rememberMe: payload.rm !== false,
     };
   } catch {
     return null;

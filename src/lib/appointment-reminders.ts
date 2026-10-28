@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { appointmentConfirmUrl, ensureAppointmentConfirmToken } from "@/lib/appointment-confirm";
 import { renderCommunicationTemplate, resolveSmsTemplate } from "@/lib/sms-templates";
 import { dispatchPatientMessage } from "@/lib/notification-dispatch";
 import { operationalInstitutionWhere } from "@/lib/operational-state";
@@ -89,6 +90,8 @@ export async function runAppointmentReminderSweep(options: SweepOptions = {}) {
           startAt: true,
           status: true,
           smsReminder: true,
+          confirmToken: true,
+          patientResponse: true,
           patient: {
             select: {
               id: true,
@@ -206,6 +209,12 @@ export async function runAppointmentReminderSweep(options: SweepOptions = {}) {
       doctorName: appointment.doctor.fullName,
       dateTime: dateText,
     }, fallbackMessage);
+    // "Geleceğim / Gelemeyeceğim" bağlantısı (hasta henüz yanıt vermediyse).
+    // Gelemeyecek hastanın saati boşalır, klinik yeni randevu için arar.
+    const confirmUrl = appointment.patientResponse
+      ? null
+      : await ensureAppointmentConfirmToken(appointment.id, appointment.confirmToken).then((token) => (token ? appointmentConfirmUrl(token) : null));
+    const confirmLine = confirmUrl ? ` Onaylamak ya da iptal etmek için: ${confirmUrl}` : "";
 
     // Kanal seçimi, hasta SMS izni, bakiye rezervasyonu/iadesi ve idempotency
     // artık tek merkezden yönetiliyor (bkz. src/lib/notification-dispatch.ts).
@@ -215,8 +224,8 @@ export async function runAppointmentReminderSweep(options: SweepOptions = {}) {
       eventType: "APPOINTMENT_REMINDER",
       purpose: "SERVICE",
       templateCode: "HATIRLATMA",
-      message: rendered.smsMessage,
-      whatsappMessage: rendered.whatsappMessage,
+      message: `${rendered.smsMessage}${confirmLine}`,
+      whatsappMessage: rendered.whatsappMessage ? `${rendered.whatsappMessage}${confirmLine}` : rendered.whatsappMessage,
       idempotencyKey: `appt-reminder:${reminder.id}`,
       whatsappTemplate: rendered.whatsappTemplate,
     });

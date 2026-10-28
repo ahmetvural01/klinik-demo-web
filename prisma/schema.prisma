@@ -30,6 +30,9 @@ model Institution {
   // Klinik panelinde Google AdSense reklamı gösterilsin mi (Süperadmin ›
   // Reklamlar). Platform anahtarı (PlatformAdConfig.enabled) kapalıysa etkisiz.
   adsEnabled             Boolean                   @default(true)
+  // Kliniğe özel SMS gönderen adı (NetGSM'de onaylı başlık; ücretli ek).
+  // Boşsa platformun başlığı kullanılır. Süperadmin › Klinik › Düzenle.
+  smsSender              String?
   maxActiveDoctors       Int?
   maxActiveUsers         Int?
   maxActiveBranches      Int?
@@ -500,6 +503,11 @@ model Invoice {
   status        InvoiceStatus     @default(PENDING)
   dueDate       DateTime?
   paidAt        DateTime?
+  // Otomatik abonelik faturasının kapsadığı dönem [periodStart, periodEnd)
+  // (bkz. src/lib/subscription-invoices.ts). Elle kesilen faturalarda boş;
+  // aynı kliniğe aynı dönem için ikinci otomatik fatura kesilemez.
+  periodStart   DateTime?
+  periodEnd     DateTime?
   createdAt     DateTime          @default(now())
   updatedAt     DateTime          @updatedAt
   institution   Institution       @relation(fields: [institutionId], references: [id])
@@ -510,6 +518,7 @@ model Invoice {
   @@index([dueDate])
   @@index([institutionId, status])
   @@unique([id, institutionId])
+  @@unique([institutionId, periodStart])
 }
 
 model InvoiceReminder {
@@ -555,6 +564,14 @@ model RolePermissionConfig {
 
 // Tüm platform için tek, sistem geneli aktif görsel tema (renk paleti + yazı
 // tipi). Kurum bazlı değil — SiteContent gibi tek satırlık bir singleton.
+// Kliniklerin platform faturalarını nasıl ödeyeceği (IBAN, alıcı adı vb.).
+// Süperadmin › Faturalar'da düzenlenir; klinik Ayarlar › Abonelik'te görür.
+model PlatformBillingConfig {
+  id                  Int      @id @default(1)
+  paymentInstructions String   @default("")
+  updatedAt           DateTime @updatedAt
+}
+
 model PlatformTheme {
   id          Int      @id @default(1)
   activeTheme String   @default("klasik")
@@ -843,6 +860,11 @@ model Appointment {
   createdAt        DateTime              @default(now())
   updatedAt        DateTime              @updatedAt
   status           AppointmentStatus     @default(BEKLIYOR)
+  // Hatırlatma mesajındaki "Geleceğim / Gelemeyeceğim" bağlantısı
+  // (sayfa: src/app/r/[token], kurallar: src/lib/appointment-confirm.ts).
+  confirmToken       String?                     @unique
+  patientResponse    AppointmentPatientResponse?
+  patientRespondedAt DateTime?
   institution      Institution           @relation(fields: [institutionId], references: [id])
   branch           ClinicBranch          @relation(fields: [branchId, institutionId], references: [id, institutionId])
   doctor           User                  @relation(fields: [doctorId, institutionId], references: [id, institutionId], onDelete: NoAction)
@@ -2124,6 +2146,11 @@ enum AppointmentType {
   STANDART
   KONTROL
   ACIL
+}
+
+enum AppointmentPatientResponse {
+  GELECEK
+  GELEMEYECEK
 }
 
 enum AppointmentStatus {

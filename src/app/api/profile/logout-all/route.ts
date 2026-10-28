@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit, invalidateUserSessionCache, rejectGhostAccountChange } from "@/lib/api";
-import { signToken, setAuthCookie } from "@/lib/auth";
+import { currentSessionRememberMe, signToken, setAuthCookie } from "@/lib/auth";
 
 /**
  * Kullanıcının kendi hesabına ait, bu tarayıcı/cihaz dışındaki TÜM
@@ -23,14 +23,15 @@ export async function POST() {
   invalidateUserSessionCache(auth.user.id);
   await writeAudit(auth.user.id, "LOGOUT_ALL_DEVICES", "Kullanıcı diğer tüm cihazlardaki oturumları sonlandırdı");
 
+  const rememberMe = await currentSessionRememberMe();
   const freshToken = signToken({
     userId: updated.id,
     role: updated.role,
     institutionId: updated.institutionId,
     fullName: updated.fullName,
     tokenVersion: updated.tokenVersion,
-  });
-  await setAuthCookie(freshToken);
+  }, rememberMe);
+  await setAuthCookie(freshToken, rememberMe);
 
   return NextResponse.json({ ok: true });
 }

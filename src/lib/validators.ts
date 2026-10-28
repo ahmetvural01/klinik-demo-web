@@ -46,8 +46,8 @@ export const loginSchema = z.object({
   institution: z.string().trim().min(2),
   identityNo: z.string().trim().min(5),
   password: z.string().min(6),
-  // "Oturumu açık tut" işaretliyse oturum 24 saat, işaretli değilse 3 saat
-  // sonra sona erer (bkz. src/lib/auth.ts signToken/setAuthCookie).
+  // "Oturumu açık tut" işaretliyse oturum 24 saat açık kalır, işaretli değilse
+  // 2 saat işlem yapılmazsa kapanır (bkz. src/lib/auth.ts signToken/setAuthCookie).
   rememberMe: z.boolean().optional(),
 });
 

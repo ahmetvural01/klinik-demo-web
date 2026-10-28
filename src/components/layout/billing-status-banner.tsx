@@ -18,6 +18,7 @@ export type BillingStatus = {
 
 const APPROACHING_WARNING_DAYS = 7;
 const SUPPORT_HREF = "/destek?yeni=1";
+const INVOICES_HREF = "/ayar?tab=abonelik";
 
 /**
  * Tam şeridin göründüğü sayfalar (sadelik K7). Diğer sayfalarda yaklaşan/
@@ -55,9 +56,11 @@ export type BillingNotice = {
   detail?: string;
   /** "Destek'e yaz" gösterilsin mi (support:write). */
   canSupport: boolean;
+  /** "Faturaları gör" (Ayarlar › Abonelik) gösterilsin mi (klinik yöneticisi). */
+  canSeeInvoices: boolean;
 };
 
-function buildBillingNotice(status: BillingStatus, options: { canActOnBilling: boolean; canSupport: boolean }): BillingNotice | null {
+function buildBillingNotice(status: BillingStatus, options: { canActOnBilling: boolean; canSupport: boolean; canSeeInvoices: boolean }): BillingNotice | null {
   if (status.isRestricted) {
     return {
       tone: "critical",
@@ -65,6 +68,7 @@ function buildBillingNotice(status: BillingStatus, options: { canActOnBilling: b
       shortTitle: "Ödeme süresi doldu: kayıt kapalı",
       detail: `Yeni kayıt, düzenleme ve silme kapalı; kayıtlarınızı görüntüleyebilirsiniz.${status.restrictedNote ? ` ${status.restrictedNote}` : ""}`,
       canSupport: false,
+      canSeeInvoices: options.canSeeInvoices,
     };
   }
   if (!options.canActOnBilling || status.daysUntilDue === null || status.daysUntilDue > APPROACHING_WARNING_DAYS) return null;
@@ -87,6 +91,7 @@ function buildBillingNotice(status: BillingStatus, options: { canActOnBilling: b
     title: `${timing}${dueLabel ? ` (son tarih ${dueLabel})` : ""}.`,
     shortTitle: `${shortTiming}${shortDue}`,
     canSupport: options.canSupport,
+    canSeeInvoices: options.canSeeInvoices,
   };
 }
 
@@ -130,6 +135,7 @@ export function BillingStatusBanner({ initialStatus }: { initialStatus?: Billing
   // ilgili bir şey yapamaz; bant telefonda her sayfada ~130 px yer kaplıyordu.
   const canActOnBilling = can("settings:write") || can("finance:read");
   const canSupport = can("support:write");
+  const canSeeInvoices = can("settings:write");
   const [fetched, setFetched] = useState<BillingStatus | null>(null);
   const status = initialStatus !== undefined ? initialStatus : fetched;
 
@@ -144,8 +150,8 @@ export function BillingStatusBanner({ initialStatus }: { initialStatus?: Billing
   }, [initialStatus]);
 
   const notice = useMemo(
-    () => (status ? buildBillingNotice(status, { canActOnBilling, canSupport }) : null),
-    [status, canActOnBilling, canSupport],
+    () => (status ? buildBillingNotice(status, { canActOnBilling, canSupport, canSeeInvoices }) : null),
+    [status, canActOnBilling, canSupport, canSeeInvoices],
   );
 
   useEffect(() => { publishBillingNotice(notice); }, [notice]);
@@ -157,12 +163,12 @@ export function BillingStatusBanner({ initialStatus }: { initialStatus?: Billing
   if (!full && notice.tone === "warning") return null;
 
   const Icon = notice.tone === "critical" ? Lock : AlertTriangle;
-  const action = notice.canSupport ? (
+  const action = notice.canSeeInvoices || notice.canSupport ? (
     <Link
-      href={SUPPORT_HREF}
+      href={notice.canSeeInvoices ? INVOICES_HREF : SUPPORT_HREF}
       className="ui-touch-target shrink-0 rounded-sm text-xs font-bold underline underline-offset-2 hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:text-sm"
     >
-      Destek&apos;e yaz
+      {notice.canSeeInvoices ? "Faturaları gör" : "Destek'e yaz"}
     </Link>
   ) : undefined;
   // Ana sayfa / Ayarlar masaüstünde açıklama da yazar; diğer sayfalarda ve
@@ -201,9 +207,9 @@ export function BillingNoticeDetails({ notice, onNavigate }: { notice: BillingNo
       <div className="min-w-0 flex-1">
         <p className="text-sm font-semibold text-slate-800">{notice.title}</p>
         {notice.detail && <p className="mt-0.5 text-xs leading-5 text-slate-500">{notice.detail}</p>}
-        {notice.canSupport && (
-          <Button size="sm" variant="secondary" href={SUPPORT_HREF} onClick={onNavigate} className="mt-2">
-            Destek&apos;e yaz
+        {(notice.canSeeInvoices || notice.canSupport) && (
+          <Button size="sm" variant="secondary" href={notice.canSeeInvoices ? INVOICES_HREF : SUPPORT_HREF} onClick={onNavigate} className="mt-2">
+            {notice.canSeeInvoices ? "Faturaları gör" : "Destek'e yaz"}
           </Button>
         )}
       </div>

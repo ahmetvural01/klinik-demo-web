@@ -1038,6 +1038,44 @@ input:where([type="checkbox"], [type="radio"], [type="range"]) {
   animation: ui-field-message-in 160ms var(--ease-product);
 }
 
+/* ListTable genişliğe uyum: liste kendi genişliğini ölçer (container query).
+   Liste data-fit değerinden darsa satırlar kart olarak gösterilir; tablo yana
+   kaymaz, yapışkan eylem sütunu yazıyı kesmez. Seçici özgüllüğü Tailwind'in
+   md:hidden / md:block sınıflarını geçer. */
+.ui-list-cq {
+  container-type: inline-size;
+  width: 100%;
+  min-width: 0;
+}
+@container (max-width: 759.98px) {
+  .ui-list-cq[data-fit="760"] .ui-list-cards { display: block; }
+  .ui-list-cq[data-fit="760"] .ui-list-tablewrap { display: none; }
+}
+@container (max-width: 899.98px) {
+  .ui-list-cq[data-fit="900"] .ui-list-cards { display: block; }
+  .ui-list-cq[data-fit="900"] .ui-list-tablewrap { display: none; }
+}
+/* Ölçüm: tablo içeriği yine de sığmıyorsa (ListTable data-cards) kartlar. */
+.ui-list-cq[data-cards="true"] .ui-list-cards { display: block; }
+.ui-list-cq[data-cards="true"] .ui-list-tablewrap { display: none; }
+/* Boşluksuz uzun metin (kod, bağlantı) tabloyu genişletip yana kaydırmasın. */
+.ui-list-table td:not(.ui-list-actions-cell) {
+  overflow-wrap: anywhere;
+}
+/* Eylem sütununda görünür düğme sütun genişliğini doldurur: satırlarda
+   farklı uzunluktaki düğmeler ("Laboratuvardan geldi" / "Hastaya takıldı")
+   aynı genişlikte ve hizalı durur; "…" menüsü sağda sabit kalır. */
+.ui-list-table td.ui-list-actions-cell > div {
+  width: 100%;
+}
+.ui-list-table td.ui-list-actions-cell .ui-button-premium {
+  flex: 1 1 auto;
+  justify-content: center;
+}
+.ui-list-table td.ui-list-actions-cell > .ui-button-premium {
+  width: 100%;
+}
+
 /* ListTable yapışkan eylem sütunu (md+): hücre opaktır (yatay kayan içerik
    altından görünmez) ve satırın zeminini aynen taşır — üzerine gelme,
    seçim, odak ve rowClassName vurgusu (ör. geciken satırın kırmızısı)

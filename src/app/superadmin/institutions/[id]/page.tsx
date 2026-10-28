@@ -72,7 +72,7 @@ type Institution = EditableInstitution & {
   invoices: InvoiceRow[];
   smsTransactions: SmsRow[];
   whatsappProvider?: { exists: boolean; connectionStatus?: string; verifiedName?: string | null; name?: string; displayPhoneNumber?: string | null };
-  usage: { activeUsers: number; activeDoctors: number };
+  usage: { activeBranches?: number; activeUsers: number; activeDoctors: number };
   paymentSummary: {
     overdueCount: number;
     overdueAmount: number;
@@ -165,6 +165,7 @@ export default function InstitutionDetailPage() {
 
   const summary = institution.paymentSummary;
   const planPrice = getPlanPrice(institution.subscriptionPlan as SubscriptionPlanId, (institution.billingCycle || "AYLIK") as BillingCycleId);
+  const branchCount = Math.max(1, institution.usage.activeBranches ?? 1);
   const nextDueDays = daysUntil(summary.nextDueDate);
   const clinicForModals = { id: institution.id, name: institution.name, smsBalance: institution.smsBalance };
   const lowSms = institution.smsBalance < LOW_SMS_THRESHOLD;
@@ -224,7 +225,7 @@ export default function InstitutionDetailPage() {
   // Giriş bilgisinin iletilmesi izlenemediği için yalnız açılıştan hemen
   // sonra hatırlatılır.
   const setupSteps = [
-    { key: "invoice", done: summary.totalInvoices > 0, label: "İlk dönem faturasını kesin", action: <Button size="sm" variant="secondary" icon={FileText} onClick={() => setInvoiceOpen(true)}>Fatura kes</Button> },
+    { key: "invoice", done: summary.totalInvoices > 0, label: "Açılış ayının faturasını kesin (sonraki aylar otomatik kesilir)", action: <Button size="sm" variant="secondary" icon={FileText} onClick={() => setInvoiceOpen(true)}>Fatura kes</Button> },
     { key: "sms", done: institution.smsTransactions.length > 0 || institution.smsBalance > 0, label: "SMS paketi satın (hatırlatma SMS'leri için)", action: <Button size="sm" variant="secondary" icon={MessageSquarePlus} onClick={() => setSaleOpen(true)}>Paket sat</Button> },
     ...(justCreated ? [{ key: "login", done: false, label: `Klinik yöneticisine giriş bilgisini iletin: klinik adı "${institution.name}", TC kimlik no ve geçici şifre`, action: <Button size="sm" variant="ghost" onClick={() => setTab("personel")}>Personel</Button> }] : []),
   ];
@@ -361,7 +362,23 @@ export default function InstitutionDetailPage() {
                 layout="rows"
                 items={[
                   { key: "plan", label: "Plan", value: planLabel(institution.subscriptionPlan, institution.billingCycle) },
-                  { key: "price", label: `Plan ücreti (${cycleLabel(institution.billingCycle).toLocaleLowerCase("tr-TR")})`, value: planPrice != null ? money(planPrice) : "Özel teklif" },
+                  {
+                    key: "price",
+                    label: `Plan ücreti (${cycleLabel(institution.billingCycle).toLocaleLowerCase("tr-TR")})`,
+                    value: planPrice == null
+                      ? <>Özel teklif <span className="text-xs text-slate-500">· elle faturalanır</span></>
+                      : (
+                        <>
+                          {money(planPrice * branchCount)}
+                          {branchCount > 1 && <span className="text-xs text-slate-500"> ({money(planPrice)} × {branchCount} şube)</span>}
+                          <span className="block text-xs text-slate-500">
+                            {institution.isDemo || !institution.isActive
+                              ? "Demo ya da kapalı klinik: fatura kesilmez"
+                              : institution.billingCycle === "YILLIK" ? "Yılda bir, dönem başında otomatik kesilir" : "Her ayın 1'inde otomatik kesilir (7 gün vade)"}
+                          </span>
+                        </>
+                      ),
+                  },
                   {
                     key: "debt",
                     label: "Açık borç",
@@ -426,12 +443,12 @@ export default function InstitutionDetailPage() {
               )}
             </>
           )}
-          actions={<Button size="sm" variant="secondary" icon={FileText} onClick={() => setInvoiceOpen(true)}>Dönem faturası kes</Button>}
+          actions={<Button size="sm" variant="secondary" icon={FileText} onClick={() => setInvoiceOpen(true)}>Fatura kes</Button>}
           columns={invoiceColumns}
           rows={institution.invoices}
           rowKey={(row) => row.id}
           emptyText="Henüz fatura yok"
-          emptyDescription="İlk dönem faturasını “Dönem faturası kes” ile oluşturun."
+          emptyDescription="Açılış ayının faturasını “Fatura kes” ile oluşturun; sonraki aylar otomatik kesilir."
           rowClassName={(row) => (row.status === "CANCELLED" ? "opacity-60" : "")}
           mobileCard={(row) => (
             <div className="space-y-1.5">

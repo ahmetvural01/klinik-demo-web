@@ -422,8 +422,17 @@ export async function testProviderBalance(providerId: string) {
   return getProviderBalanceInternal(decryptProvider(provider));
 }
 
-export async function sendSms(phoneRaw: string, message: string): Promise<SmsSendResult> {
+// NetGSM "40": gönderen adı (başlık) bu hesapta tanımlı/onaylı değil.
+const NETGSM_UNKNOWN_HEADER = "40";
+
+/**
+ * `sender`: kliniğe özel gönderen adı (Institution.smsSender). Yalnız NetGSM
+ * başlığı olarak kullanılır; NetGSM başlığı tanımıyorsa mesaj kaybolmasın diye
+ * aynı gönderim platform başlığıyla bir kez daha denenir.
+ */
+export async function sendSms(phoneRaw: string, message: string, options: { sender?: string | null } = {}): Promise<SmsSendResult> {
   const normalizedPhone = normalizePhone(phoneRaw);
+  const senderOverride = options.sender?.trim() || null;
 
   if (!normalizedPhone) {
     return {
@@ -442,6 +451,14 @@ export async function sendSms(phoneRaw: string, message: string): Promise<SmsSen
     const errors: string[] = [];
     for (const storedProvider of providers) {
       const provider = decryptProvider(storedProvider);
+      if (senderOverride && provider.code === "NETGSM" && senderOverride !== provider.sender?.trim()) {
+        const custom = await sendWithProvider({ ...provider, sender: senderOverride }, normalizedPhone, message);
+        if (custom.success) return custom;
+        if (custom.providerRaw?.trim() !== NETGSM_UNKNOWN_HEADER) {
+          errors.push(`${provider.code}: ${custom.error || custom.providerRaw}`);
+          continue;
+        }
+      }
       const result = await sendWithProvider(provider, normalizedPhone, message);
       if (result.success) return result;
       errors.push(`${provider.code}: ${result.error || result.providerRaw}`);

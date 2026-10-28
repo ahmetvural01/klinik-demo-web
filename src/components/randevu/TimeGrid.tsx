@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
-import { AlertTriangle, Ban, Plus } from "lucide-react";
+import { AlertTriangle, Ban, CheckCheck, Plus } from "lucide-react";
 import { avatarInitials } from "@/components/ui/Avatar";
 import type { TreatmentOption } from "@/lib/appointment-follow-up";
 import {
@@ -196,7 +196,8 @@ export function TimeGrid({
     const height = Math.max(ROW_HEIGHT - 4, ((item.end - item.start) / step) * ROW_HEIGHT - 3);
     const tall = height >= ROW_HEIGHT * 1.6;
     const time = formatClock(appointment.startAt);
-    const label = `${time}, ${appointment.patient?.fullName || "Hasta"}, ${statusLabel(appointment.status)}, ${treatment.label}${appointment.doctor?.fullName ? `, ${appointment.doctor.fullName}` : ""}${stale ? ", gün geçti durum işaretlenmedi" : ""}${appointment.patient?.hasContagiousDisease ? ", bulaşıcı hastalık uyarısı" : ""}`;
+    const confirmedByPatient = appointment.patientResponse === "GELECEK" && (appointment.status === "BEKLIYOR" || appointment.status === "ONAYLANDI");
+    const label = `${time}, ${appointment.patient?.fullName || "Hasta"}, ${statusLabel(appointment.status)}${confirmedByPatient ? ", hasta geleceğini bildirdi" : ""}, ${treatment.label}${appointment.doctor?.fullName ? `, ${appointment.doctor.fullName}` : ""}${stale ? ", gün geçti durum işaretlenmedi" : ""}${appointment.patient?.hasContagiousDisease ? ", bulaşıcı hastalık uyarısı" : ""}`;
     const widthPercent = 100 / laneCount;
     return (
       <div
@@ -223,6 +224,7 @@ export function TimeGrid({
           <Icon className="h-3 w-3 shrink-0 text-slate-500" aria-hidden="true" />
           <span className="shrink-0 font-bold tabular-nums text-slate-600">{time}</span>
           <span className="min-w-0 flex-1 truncate font-semibold text-slate-900">{appointment.patient?.fullName || "Hasta"}</span>
+          {confirmedByPatient && <CheckCheck className="h-3 w-3 shrink-0 text-emerald-600" aria-hidden="true" />}
           {appointment.patient?.hasContagiousDisease && <AlertTriangle className="h-3 w-3 shrink-0 text-red-600" aria-hidden="true" />}
           {stale && <span className="shrink-0 rounded bg-amber-500 px-1 text-[10px] font-bold text-white" aria-hidden="true">!</span>}
           {showDoctorOnCard && appointment.doctor?.fullName && (
