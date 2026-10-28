@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Check, ClipboardList, Plus } from "lucide-react";
+import { Check, ClipboardList } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
@@ -88,10 +88,10 @@ export function TasksSection() {
     ...(canWrite ? [{ key: "actions", header: "", align: "right" as const, render: action }] : []),
   ];
 
-  // Hastaya bağlı görev yoksa bölüm çizilmez: üstteki "Yapılacaklar" zaten
-  // "bekleyen iş yok" diyor, boş "Görevler" tablosu aynı şeyi ikinci kez
-  // söylüyordu. Yeni görev "İşlem ekle > Yeni görev"den açılır. Görevler
-  // gelene kadar da yer ayrılmaz (bölüm sütunun en altında; ekran kaymaz).
+  // Hastaya bağlı görev yoksa bölüm çizilmez: boş "Görevler" tablosu yer
+  // kaplıyordu. Yeni görev TEK yerden, başlıktaki "İşlem ekle > Yeni görev"den
+  // açılır (önceden bu listenin başlığında ikinci bir "Yeni görev" vardı).
+  // Görevler gelene kadar da yer ayrılmaz (bölüm sütunun en altında; ekran kaymaz).
   if (!tasksLoaded || (!tasksError && clinicTasks.length === 0)) return null;
 
   return (
@@ -99,7 +99,6 @@ export function TasksSection() {
       <ListTable
         title="Görevler"
         titleAs="h2"
-        actions={canWrite ? <Button size="sm" variant="secondary" icon={Plus} onClick={() => openTaskForm()}>Yeni görev</Button> : undefined}
         columns={columns}
         rows={rows}
         rowKey={(task) => task.id}

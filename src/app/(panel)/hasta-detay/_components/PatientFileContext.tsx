@@ -4,7 +4,7 @@ import { createContext, useContext } from "react";
 import type { PatientFormSection } from "@/components/patient/PatientFormModal";
 import type { StaffLike } from "@/lib/staff-roles";
 import type { ClinicLetterhead } from "./clinic-letterhead";
-import type { ClinicTask, Pay, PatientBalance, PatientDetailData, TabKey, TreatmentPlanLite } from "./patient-file-shared";
+import type { ClinicTask, Pay, PatientBalance, PatientDetailData, TabKey } from "./patient-file-shared";
 
 /**
  * "İşlem ekle" menüsünden gelen ve sekme açılınca yapılacak iş: menü yalnız
@@ -78,10 +78,6 @@ export type PatientFileContextValue = {
   tasksError: boolean;
   /** Görevleri ilk kez okur; `retry` ile hata sonrası yeniden dener. */
   loadTasks: (retry?: boolean) => void;
-  /** Tedavi planları yalnız Tedavi sekmesi açılınca okunur (açılışı yavaşlatmasın). */
-  treatmentPlans: TreatmentPlanLite[];
-  treatmentPlansLoaded: boolean;
-  loadTreatmentPlans: () => void;
   /** Laboratuvar adları yalnız Lab sekmesi ya da yeni lab işi penceresi açılınca okunur. */
   labNames: string[];
   labsLoading: boolean;
@@ -96,6 +92,8 @@ export type PatientFileContextValue = {
   appointmentHref: string;
   intent: PatientFileIntent | null;
   clearIntent: () => void;
+  /** Sekmeyi açar ve işi başlatır ("İşlem ekle" menüsüyle aynı yol; ör. randevu penceresindeki "Tedavi gir"). */
+  startIntent: (key: TabKey, next: PatientFileIntent) => void;
 };
 
 const PatientFileContext = createContext<PatientFileContextValue | null>(null);

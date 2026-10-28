@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { PackageCheck } from "lucide-react";
 import { FormModal } from "@/components/ui/FormModal";
 import { ChoiceCards } from "@/components/ui/ChoiceCards";
 import { Checkbox } from "@/components/ui/Checkbox";
@@ -9,26 +10,25 @@ import { FormField } from "@/components/ui/FormField";
 import { Input, Select } from "@/components/ui/Input";
 import { MoneyInput } from "@/components/ui/MoneyInput";
 import { SearchSelect } from "@/components/ui/SearchSelect";
+import { Button } from "@/components/ui/Button";
+import { Callout } from "@/components/ui/Callout";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
 import { formatCurrency } from "@/lib/format";
 import { moneyInputError, toMoneyValue } from "@/lib/money-input";
-import { formatDateText } from "@/components/ui/Money";
 import { PAYMENT_METHODS } from "@/components/firma/FirmaPaymentModal";
 import { PurchaseLineEditor } from "@/components/firma/PurchaseLineEditor";
 import { matchesSearch, newRequestKey, searchKey, todayKey } from "@/components/stock/stock-shared";
 import {
-  KDV_OPTIONS,
   centsToMoney,
   emptyLine,
   friendlyPurchaseError,
   isBlankLine,
   lineErrorSummary,
   linesToPayload,
+  moneyToCents,
   newLineKey,
   purchaseTotalCents,
-  readRememberedKdv,
-  rememberKdv,
   validateLines,
   type LineErrors,
   type Purchase,
@@ -40,9 +40,7 @@ import {
 
 type FormState = {
   tarih: string;
-  faturaNo: string;
   aciklama: string;
-  kdvOrani: string;
   receiptStatus: Purchase["receiptStatus"];
   paidNow: boolean;
   paymentDate: string;
@@ -72,6 +70,11 @@ type PurchaseFormModalProps = {
   /** Listede olmayan tedarikçiyi formdan çıkmadan ekleyebilir (finance:write). */
   canCreateFirma?: boolean;
   onFirmaCreated?: (firma: PurchaseFirmaOption) => void;
+  /**
+   * Seçili tedarikçinin teslim alınmamış siparişi varsa yeni alım yerine
+   * siparişi teslim almaya geçer (form kapanır). Verilmezse uyarı çıkmaz.
+   */
+  onOpenPendingOrders?: (firmaId: string, count: number) => void;
   stockItems: StockItem[];
   stockLoading?: boolean;
   onClose: () => void;
@@ -82,9 +85,7 @@ const NEW_FIRMA_OPTION = "__yeni_firma__";
 
 const newForm = (prefill?: PurchasePrefill | null): FormState => ({
   tarih: todayKey(),
-  faturaNo: "",
   aciklama: "",
-  kdvOrani: "0",
   receiptStatus: prefill?.receiptStatus || "TESLIM_ALINDI",
   paidNow: false,
   paymentDate: todayKey(),
@@ -95,9 +96,7 @@ const newForm = (prefill?: PurchasePrefill | null): FormState => ({
 
 const editForm = (purchase: Purchase): FormState => ({
   tarih: purchase.tarih.substring(0, 10),
-  faturaNo: purchase.faturaNo || "",
   aciklama: purchase.aciklama || "",
-  kdvOrani: String(purchase.kdvOrani ?? 0),
   receiptStatus: purchase.receiptStatus,
   paidNow: false,
   paymentDate: todayKey(),
@@ -112,8 +111,6 @@ const editForm = (purchase: Purchase): FormState => ({
     unit: item.unit,
     quantity: String(item.quantity),
     unitPrice: toMoneyValue(item.unitPrice) ?? "",
-    lotNo: item.lotNo || "",
-    expiresAt: item.expiresAt?.substring(0, 10) || "",
     locked: Boolean(item.consumed),
   })),
 });
@@ -123,20 +120,19 @@ const snapshot = (firmaId: string, firmaQuery: string, form: FormState) => JSON.
   firmaId,
   firmaQuery: firmaQuery.trim(),
   ...form,
-  items: form.items.filter((line) => !isBlankLine(line)).map(({ key: _key, showLot: _showLot, ...rest }) => rest),
+  items: form.items.filter((line) => !isBlankLine(line)).map(({ key: _key, ...rest }) => rest),
 });
 
 /**
  * Satın alma / sipariş için TEK form — oluşturma ve düzenleme aynı alanları
- * aynı düzende kullanır (önceden iki ayrı, farklı düzenli kopya vardı).
- * Sık kullanılan alanlar üstte: Firma · Tarih · Durum; fatura bilgileri
- * siparişte katlanır; not isteğe bağlı bölümde; ödeme tek onay kutusu.
- * Listede olmayan tedarikçi formdan çıkmadan eklenir. Kaydedilmemiş bilgi
- * varken Esc/✕/Vazgeç onay ister (önceden 20 adımlık form sorgusuz siliniyordu).
+ * aynı düzende kullanır. Sık kullanılan alanlar üstte: Durum · Tedarikçi ·
+ * Tarih; sonra ürünler; ödeme tek onay kutusu; not isteğe bağlı bölümde.
+ * Fiyatlar faturadaki gibi (vergi dahil) girilir. Listede olmayan tedarikçi
+ * formdan çıkmadan eklenir. Kaydedilmemiş bilgi varken Esc/✕/Vazgeç onay ister.
  */
 export function PurchaseFormModal({
   open, mode, purchase, prefill, initialFirmaId, lockFirma = false,
-  firmas, firmasLoading = false, firmasError, canCreateFirma = false, onFirmaCreated,
+  firmas, firmasLoading = false, firmasError, canCreateFirma = false, onFirmaCreated, onOpenPendingOrders,
   stockItems, stockLoading = false, onClose, onSaved,
 }: PurchaseFormModalProps) {
   const isEdit = mode === "edit";
@@ -148,7 +144,6 @@ export function PurchaseFormModal({
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [creatingFirma, setCreatingFirma] = useState(false);
-  const [kdvTouched, setKdvTouched] = useState(false);
   const requestKeyRef = useRef("");
   const initialRef = useRef("");
   // Düzenlemede kayıtlı tarih: ileri tarih kuralı yalnız tarih değiştirilince uygulanır.
@@ -174,8 +169,6 @@ export function PurchaseFormModal({
       nextFirmaId = setup.initialFirmaId || "";
       nextQuery = known?.name || setup.prefill?.firmaName || "";
       nextForm = newForm(setup.prefill);
-      const rememberedKdv = nextFirmaId ? readRememberedKdv(nextFirmaId) : null;
-      if (rememberedKdv) nextForm = { ...nextForm, kdvOrani: rememberedKdv };
     }
     setFirmaId(nextFirmaId);
     setFirmaQuery(nextQuery);
@@ -183,7 +176,6 @@ export function PurchaseFormModal({
     setErrors({});
     setLineErrors({});
     setFormError(null);
-    setKdvTouched(false);
     setFocusQuantity(setup.mode !== "edit" && Boolean(nextFirmaId) && Boolean(setup.prefill?.lines?.length));
     requestKeyRef.current = newRequestKey("purchase");
     initialRef.current = snapshot(nextFirmaId, nextQuery, nextForm);
@@ -208,6 +200,8 @@ export function PurchaseFormModal({
   const showPayment = !isEdit && !isOrder;
   const paymentValue = form.paymentAmount === "" ? totalMoney : form.paymentAmount;
   const dirty = open && snapshot(firmaId, firmaQuery, form) !== initialRef.current;
+  const selectedFirma = firmaId ? firmas.find((firma) => firma.id === firmaId) : undefined;
+  const pendingOrders = !isEdit && !isOrder && onOpenPendingOrders ? selectedFirma?.bekleyenSiparis || 0 : 0;
 
   const firmaOptions = useMemo(() => {
     const query = firmaQuery.trim();
@@ -221,12 +215,6 @@ export function PurchaseFormModal({
     }
     return options;
   }, [firmas, firmaQuery, canCreateFirma, firmasLoading, firmasError]);
-
-  const applyRememberedKdv = (id: string) => {
-    if (kdvTouched || isEdit) return;
-    const remembered = readRememberedKdv(id);
-    if (remembered) setForm((current) => ({ ...current, kdvOrani: remembered }));
-  };
 
   const createFirma = async (name: string) => {
     if (creatingFirma) return;
@@ -252,19 +240,21 @@ export function PurchaseFormModal({
     }
   };
 
-  /** Aynı firmaya aynı fatura no daha önce girildiyse kullanıcıya sorar. */
-  const confirmDuplicateInvoice = async (targetFirmaId: string, faturaNo: string, excludeId?: string) => {
-    const invoice = faturaNo.trim();
-    if (!invoice) return true;
+  /**
+   * Aynı tedarikçiye aynı gün aynı tutarda kayıt varsa sorar: aynı alımı
+   * ikinci kez girmek stoğu ve firma borcunu iki kat yapar.
+   */
+  const confirmDuplicatePurchase = async (targetFirmaId: string, date: string, total: string) => {
     try {
-      const response = await fetch(`/api/purchases?firmaId=${encodeURIComponent(targetFirmaId)}&q=${encodeURIComponent(invoice)}`, { cache: "no-store" });
+      const response = await fetch(`/api/purchases?firmaId=${encodeURIComponent(targetFirmaId)}&from=${date}&to=${date}`, { cache: "no-store" });
       if (!response.ok) return true;
       const rows: Purchase[] = await response.json().catch(() => []);
-      const duplicate = (Array.isArray(rows) ? rows : []).find((row) => row.id !== excludeId && searchKey(row.faturaNo) === searchKey(invoice));
+      const target = moneyToCents(total);
+      const duplicate = (Array.isArray(rows) ? rows : []).find((row) => moneyToCents(row.total ?? 0) === target);
       if (!duplicate) return true;
       return confirmDialog({
-        title: "Bu fatura daha önce girilmiş olabilir",
-        message: `${duplicate.faturaNo} numaralı fatura ${formatDateText(duplicate.tarih)} tarihinde ${formatCurrency(Number(duplicate.total || 0))} olarak kayıtlı. Aynı faturayı ikinci kez girerseniz stok ve firma borcu iki kat olur. Yine de kaydedilsin mi?`,
+        title: "Aynı alım ikinci kez mi giriliyor?",
+        message: `${duplicate.firma?.name || firmaQuery.trim() || "Bu tedarikçi"} için bu tarihte ${formatCurrency(Number(duplicate.total || 0))} tutarında bir ${duplicate.receiptStatus === "SIPARIS_VERILDI" ? "sipariş" : "alım"} zaten kayıtlı. İkinci kez girilirse stok ve firma borcu iki kat olur.`,
         confirmText: "Yine de kaydet",
         cancelText: "Vazgeç",
       });
@@ -279,7 +269,7 @@ export function PurchaseFormModal({
     const nextErrors: FieldErrors = {};
     if (!isEdit && !firmaId) nextErrors.firma = firmaQuery.trim() ? "Listeden tedarikçi seçin ya da yeni tedarikçi olarak ekleyin." : "Tedarikçi seçin.";
     if (!form.tarih) nextErrors.tarih = "Tarih seçin.";
-    // Fatura/sipariş tarihi ileri bir gün olamaz (teslim ve ödeme tarihleriyle aynı kural).
+    // Alım/sipariş tarihi ileri bir gün olamaz (teslim ve ödeme tarihleriyle aynı kural).
     // Düzenlemede eski kaydın tarihine dokunulmadıysa kural uygulanmaz (önceden ileri
     // tarihli eski kayıt, tarih değişmese de kaydedilemiyordu).
     else if (form.tarih > todayKey() && !(isEdit && form.tarih === initialTarihRef.current)) nextErrors.tarih = "Tarih bugünden sonra olamaz.";
@@ -298,9 +288,6 @@ export function PurchaseFormModal({
     setFormError(null);
     setSaving(true);
     try {
-      // Düzenlemede fatura no değişmediyse mükerrer kontrolü gerekmez (ek istek atılmaz).
-      const invoiceChanged = !isEdit || form.faturaNo.trim() !== (purchase?.faturaNo || "").trim();
-      if (invoiceChanged && !(await confirmDuplicateInvoice(firmaId, form.faturaNo, isEdit ? purchase?.id : undefined))) return;
       let savedId = purchase?.id || "";
       if (isEdit && purchase) {
         const response = await fetch(`/api/purchases/${purchase.id}`, {
@@ -308,9 +295,7 @@ export function PurchaseFormModal({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             tarih: form.tarih,
-            faturaNo: form.faturaNo.trim() || null,
             aciklama: form.aciklama.trim() || null,
-            kdvOrani: Number(form.kdvOrani),
             items: linesToPayload(items).map((line, index) => ({ ...line, id: items[index].id || null })),
           }),
         });
@@ -318,6 +303,7 @@ export function PurchaseFormModal({
         if (!response.ok) throw new Error(friendlyPurchaseError(data.error || data.message, "Satın alma güncellenemedi."));
         showToastSafe({ title: isOrder ? "Sipariş güncellendi" : "Satın alma güncellendi", message: isOrder ? "Teslim alınınca yeni miktar ve fiyatlar işlenir." : "Stok ve firma borcu farka göre düzeltildi.", type: "success", icon: "firma" });
       } else {
+        if (!(await confirmDuplicatePurchase(firmaId, form.tarih, totalMoney))) return;
         const paid = showPayment && form.paidNow;
         const response = await fetch("/api/purchases", {
           method: "POST",
@@ -326,9 +312,7 @@ export function PurchaseFormModal({
             firmaId,
             tarih: form.tarih,
             receiptStatus: form.receiptStatus,
-            faturaNo: form.faturaNo.trim() || null,
             aciklama: form.aciklama.trim() || null,
-            kdvOrani: Number(form.kdvOrani),
             paidNow: paid,
             paymentDate: paid ? form.paymentDate : null,
             paymentMethod: paid ? form.paymentMethod : null,
@@ -340,7 +324,6 @@ export function PurchaseFormModal({
         if (!response.ok) throw new Error(friendlyPurchaseError(data.error || data.message, "Satın alma kaydedilemedi. Bilgileri kontrol edip tekrar deneyin."));
         savedId = String(data.id || "");
         requestKeyRef.current = "";
-        rememberKdv(firmaId, form.kdvOrani);
         showToastSafe({
           title: isOrder ? "Sipariş kaydedildi" : "Satın alma kaydedildi",
           message: isOrder
@@ -363,24 +346,19 @@ export function PurchaseFormModal({
     }
   };
 
+  const openPendingOrders = async () => {
+    if (!onOpenPendingOrders || !firmaId) return;
+    if (dirty && !(await confirmDialog({
+      title: "Yeni alım bırakılsın mı?",
+      message: "Bu formda yazdıklarınız kaydedilmez; bekleyen sipariş teslim alma için açılır.",
+      confirmText: "Siparişe geç",
+      cancelText: "Vazgeç",
+    }))) return;
+    onOpenPendingOrders(firmaId, pendingOrders);
+  };
+
   const updateForm = (patch: Partial<FormState>) => setForm((current) => ({ ...current, ...patch }));
   const firmaName = purchase?.firma?.name || firmaQuery;
-
-  const invoiceFields = (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,220px)_minmax(0,1fr)] sm:items-start">
-      <FormField label="Fatura no" htmlFor="purchase-invoice">
-        <Input id="purchase-invoice" value={form.faturaNo} onChange={(event) => updateForm({ faturaNo: event.target.value })} />
-      </FormField>
-      <ChoiceCards<string>
-        label="KDV oranı"
-        variant="pills"
-        value={form.kdvOrani}
-        onChange={(value) => { setKdvTouched(true); updateForm({ kdvOrani: value }); }}
-        hint="Fiyatları KDV dahil girin; oran Raporlar'daki KDV özetinde kullanılır."
-        options={[...new Set([...KDV_OPTIONS, form.kdvOrani])].map((value) => ({ value, label: `%${value}` }))}
-      />
-    </div>
-  );
 
   const title = isEdit
     ? `${isOrder ? "Siparişi" : "Satın almayı"} düzenle`
@@ -390,7 +368,7 @@ export function PurchaseFormModal({
     : undefined;
 
   return (
-    // Kirli formda Esc / × / Vazgeç onayı ortak pencereden (isDirty) gelir; önceden yerel onay da çıkıyordu.
+    // Kirli formda Esc / × / Vazgeç onayı ortak pencereden (isDirty) gelir.
     <FormModal
       open={open}
       onClose={onClose}
@@ -436,7 +414,6 @@ export function PurchaseFormModal({
                 setFirmaId(option.id);
                 setFirmaQuery(option.label);
                 setErrors((current) => ({ ...current, firma: undefined }));
-                applyRememberedKdv(option.id);
               }}
               placeholder="Tedarikçi adı yazın"
               emptyText="Bu adla tedarikçi yok"
@@ -444,16 +421,27 @@ export function PurchaseFormModal({
             />
           </FormField>
         )}
-        <FormField label={isOrder ? "Sipariş tarihi" : "Fatura / teslim tarihi"} htmlFor="purchase-date" required error={errors.tarih}>
+        <FormField label={isOrder ? "Sipariş tarihi" : "Alım tarihi"} htmlFor="purchase-date" required error={errors.tarih}>
           <Input id="purchase-date" type="date" max={todayKey()} value={form.tarih} onChange={(event) => { updateForm({ tarih: event.target.value }); setErrors((current) => ({ ...current, tarih: undefined })); }} />
         </FormField>
       </div>
 
-      {isOrder && !isEdit ? (
-        <Disclosure title="Fatura bilgileri" summary="teslim alırken de girilebilir" defaultOpen={Boolean(form.faturaNo)}>
-          {invoiceFields}
-        </Disclosure>
-      ) : invoiceFields}
+      {pendingOrders > 0 && (
+        // Sipariş verilmiş ürün yeni alım olarak girilirse, sipariş sonra teslim
+        // alındığında stok ve borç iki kat olur.
+        <Callout
+          tone="warning"
+          compact
+          inline
+          action={(
+            <Button size="sm" variant="ghost" icon={PackageCheck} onClick={() => void openPendingOrders()}>
+              {pendingOrders === 1 ? "Siparişi teslim al" : "Siparişlere git"}
+            </Button>
+          )}
+        >
+          Bu tedarikçide teslim alınmamış sipariş var; ürünler o siparişle geldiyse siparişi teslim alın.
+        </Callout>
+      )}
 
       <PurchaseLineEditor
         items={form.items}

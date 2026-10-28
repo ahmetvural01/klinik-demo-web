@@ -3,7 +3,7 @@ import { ListRowSkeleton, TableRowsSkeleton } from "@/components/ui/ListSkeleton
 import { HOME_GRID, HOME_MAIN, HOME_SIDE_PANEL, HOME_SIDE_SECTION, HOME_TODO_ORDER } from "./home-layout";
 
 // Ana sayfa yüklenirken görünen iskelet — sayfanın gerçek düzeniyle aynı
-// sıra ve ızgara (başlık → Yapılacaklar → Bugünkü randevular → Duyurular /
+// sıra ve ızgara (başlık → Bekleyen işler → Bugünkü randevular → Duyurular /
 // Ekip mesajları; 1360 px ve üstünde randevular solda, diğerleri sağ sütunda).
 // Önceden 4 özet kutulu genel iskelet görünüyor, sayfa açılınca zıplıyordu.
 // Hook ve "use client" yok: loading.tsx (sunucu bileşeni) içinde çalışır.
@@ -66,29 +66,23 @@ function AgendaSkeleton({ className = "" }: { className?: string }) {
 }
 
 type HomeSkeletonProps = {
-  /** Randevu listesi (appointments:read). Yoksa (ör. Muhasebe) tek sütun: Yapılacaklar → Duyurular / Ekip mesajları. */
+  /** Randevu listesi (appointments:read). Yoksa (ör. Muhasebe) tek sütun: Bekleyen işler. */
   agenda?: boolean;
   /** Başlıkta "Yeni randevu" (appointments:write). */
   action?: boolean;
   /** Başlıkta "Bugünkü tahsilat" satırı (finance:center + payments:read). */
   stats?: boolean;
-  /** Duyurular kartı (announcements:read). */
-  announcements?: boolean;
-  /** Ekip mesajları kartı (messages:read). */
-  messages?: boolean;
 };
 
 /**
- * Sağ sütun (Yapılacaklar, Duyurular, Ekip mesajları): sayfayla aynı kap —
+ * Sağ sütun (Bekleyen işler): sayfayla aynı kap —
  * geniş ekranda tek kartın bölümleri, dar ekranda ayrı kartlar (home-layout.ts).
  */
-function SidePanelSkeleton({ agenda, announcements, messages }: { agenda: boolean; announcements: boolean; messages: boolean }) {
+function SidePanelSkeleton({ agenda }: { agenda: boolean }) {
   const section = agenda ? HOME_SIDE_SECTION : "";
   return (
     <div className={agenda ? HOME_SIDE_PANEL : "grid gap-4"}>
       <CardSkeleton titleWidth="w-28" rows={3} leading="icon" className={agenda ? `${section} ${HOME_TODO_ORDER}` : ""} />
-      {announcements && <CardSkeleton titleWidth="w-24" rows={2} className={section} />}
-      {messages && <CardSkeleton titleWidth="w-32" rows={3} leading="avatar" className={section} />}
     </div>
   );
 }
@@ -96,17 +90,17 @@ function SidePanelSkeleton({ agenda, announcements, messages }: { agenda: boolea
 // Ekran okuyucu metni kabın SONUNDA: ilk çocuk olunca `space-y-4` başlığa
 // 16 px üst boşluk veriyor, iskelet sayfadan 16 px aşağıda durup açılışta
 // bütün içerik yukarı zıplıyordu.
-export function HomeSkeleton({ agenda = true, action = agenda, stats = false, announcements = true, messages = true }: HomeSkeletonProps) {
+export function HomeSkeleton({ agenda = true, action = agenda, stats = false }: HomeSkeletonProps) {
   return (
     <div className="space-y-4 pb-4" role="status" aria-busy="true">
       <HomeHeaderSkeleton action={action} stats={stats} />
       {agenda ? (
         <div className={HOME_GRID}>
           <AgendaSkeleton className={HOME_MAIN} />
-          <SidePanelSkeleton agenda announcements={announcements} messages={messages} />
+          <SidePanelSkeleton agenda />
         </div>
       ) : (
-        <SidePanelSkeleton agenda={false} announcements={announcements} messages={messages} />
+        <SidePanelSkeleton agenda={false} />
       )}
       <span className="sr-only">Ana sayfa yükleniyor</span>
     </div>

@@ -107,8 +107,7 @@ function main() {
   const platformAuth = source("src/lib/platform-auth.ts");
   assert(
     verifySuperadminTwoFactor.includes("completePlatformLogin")
-      && platformAuth.includes("DEFAULT_SUPERADMIN_MODULES")
-      && platformAuth.includes("superadminModules: modules"),
+      && platformAuth.includes("export async function startPlatformSession"),
     "Platform sahibi 2FA sonrası eksiksiz yönetim kapsamıyla oturum açmalı.",
   );
 

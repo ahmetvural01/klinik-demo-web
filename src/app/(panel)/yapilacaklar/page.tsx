@@ -22,7 +22,7 @@ import {
 } from "./_components/query-state";
 
 /**
- * Yapılacaklar: "Hasta aramaları" (eski Hasta Takip) ve "Ekip görevleri"
+ * Aramalar ve görevler: "Hasta aramaları" (eski Hasta Takip) ve "Ekip görevleri"
  * (eski Görevler) tek sayfada, aynı liste kalıbıyla. Sekmeler izne göre
  * görünür (hastatracking:read / clinictasks:read); birincil eylem görünen
  * sekmeye göre "Yeni arama" ya da "Yeni görev". Eski adresler (/hasta-takip,
@@ -141,10 +141,10 @@ function YapilacaklarContent() {
 
   return (
     <section className="space-y-3">
-      <PageHeader icon="clipboard" title="Yapılacaklar" actions={primaryAction} />
+      <PageHeader icon="clipboard" title="Aramalar ve görevler" actions={primaryAction} />
 
       {tabItems.length > 1 && (
-        <Tabs ariaLabel="Yapılacaklar" value={tab} onChange={changeTab} items={tabItems} panelIdPrefix="yapilacaklar" />
+        <Tabs ariaLabel="Aramalar ve görevler" value={tab} onChange={changeTab} items={tabItems} panelIdPrefix="yapilacaklar" />
       )}
 
       {canFollowUps && visited.has("arama") && (
@@ -169,7 +169,7 @@ function YapilacaklarContent() {
 
 export default function YapilacaklarPage() {
   return (
-    <Suspense fallback={<PageSkeleton tabs={2} toolbar body="table" rows={6} label="Yapılacaklar yükleniyor" />}>
+    <Suspense fallback={<PageSkeleton tabs={2} toolbar body="table" rows={6} label="Aramalar ve görevler yükleniyor" />}>
       <YapilacaklarContent />
     </Suspense>
   );

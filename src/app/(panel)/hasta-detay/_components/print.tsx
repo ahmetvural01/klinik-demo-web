@@ -1,8 +1,8 @@
 "use client";
 
-// Hasta dosyasından yazdırılan belgeler (tedavi raporu, tahsilat dökümü,
-// taksit planı). Hepsi aynı antet ve hasta şeridini kullanır; yalnız
-// @media print altında görünen #ks-print-area alanına yazılır.
+// Hasta dosyasından yazdırılan belgeler (tedavi raporu, tedavi teklifi,
+// tahsilat dökümü, taksit planı). Hepsi aynı antet ve hasta şeridini kullanır;
+// yalnız @media print altında görünen #ks-print-area alanına yazılır.
 
 import { TOOTH_STATUS_LABELS, type ToothStatus } from "@/components/ToothChart";
 import { formatDateText } from "@/components/ui/Money";
@@ -71,7 +71,8 @@ function patientBar({ data, hidePhone }: PrintContext) {
   </div>`;
 }
 
-const footer = `<div class="footer"><span>Bu belge bilgi amaçlı hazırlanmıştır.</span><div class="sign-area"><div class="sign-line">Hekim İmza / Kaşe</div></div></div>`;
+const footerWith = (note: string) => `<div class="footer"><span>${escapeHtml(note)}</span><div class="sign-area"><div class="sign-line">Hekim İmza / Kaşe</div></div></div>`;
+const footer = footerWith("Bu belge bilgi amaçlı hazırlanmıştır.");
 
 function toothChartHtml(toothChart?: string | null) {
   if (!toothChart) return "";
@@ -117,6 +118,40 @@ export function printTreatmentReport(context: PrintContext, treatments: Exam[], 
       </table>
     </div>
     ${footer}
+  `);
+}
+
+/**
+ * Tedavi teklifi: planlanan (henüz yapılmamış) tedavilerin fiyat teklifi.
+ * Hastaya verilir; borca yansımaz. Hastanın indirimi varsa indirim ve net
+ * tutar da yazılır (tedavi raporu ve Hesap sekmesindeki oranla aynı).
+ */
+export function printTreatmentQuote(context: PrintContext, treatments: Exam[]) {
+  const total = roundMoney(treatments.reduce((sum, exam) => sum + toNumber(exam.amount), 0));
+  const rate = toNumber(context.data.discountRate);
+  const discounted = roundMoney(total * (1 - rate / 100));
+  const rows = treatments.map((exam, index) => `<tr>
+      <td style="text-align:center">${index + 1}</td>
+      <td>${escapeHtml(exam.treatmentName)}</td>
+      <td style="text-align:center">${escapeHtml(exam.toothNo || "—")}</td>
+      <td>${escapeHtml(exam.doctor?.fullName || "—")}</td>
+      <td style="text-align:right">${escapeHtml(money(exam.amount))}</td>
+    </tr>`).join("");
+  printHtml(`
+    ${header(context, "TEDAVİ TEKLİFİ")}
+    ${patientBar(context)}
+    <div class="content">
+      <div class="sec-title">Teklif edilen tedaviler</div>
+      <table><thead><tr><th style="text-align:center">#</th><th>Tedavi</th><th style="text-align:center">Diş</th><th>Hekim</th><th style="text-align:right">Tutar</th></tr></thead>
+      <tbody>${rows || `<tr><td colspan="5" style="text-align:center;padding:12px;color:#9ca3af">Kayıt yok</td></tr>`}</tbody>
+      <tfoot>
+        <tr><td colspan="4" style="text-align:right">Toplam:</td><td style="text-align:right">${escapeHtml(money(total))}</td></tr>
+        ${rate > 0 ? `<tr><td colspan="4" style="text-align:right">İndirim (%${escapeHtml(rate)}):</td><td style="text-align:right">-${escapeHtml(money(total - discounted))}</td></tr>
+        <tr><td colspan="4" style="text-align:right">Net tutar:</td><td style="text-align:right">${escapeHtml(money(discounted))}</td></tr>` : ""}
+      </tfoot>
+      </table>
+    </div>
+    ${footerWith("Bu belge fiyat teklifidir; fatura ya da borç belgesi değildir.")}
   `);
 }
 

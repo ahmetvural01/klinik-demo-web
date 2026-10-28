@@ -174,6 +174,10 @@ export function TodayAppointments({
       .map((option) => ({ value: option.value, label: option.label, count: counts[option.value], countTone: option.tone })),
   ];
   const singleDoctor = new Set(scoped.map((row) => row.doctor?.id || "")).size <= 1;
+  // Tek durum varsa ("Aktif 1 · Planlandı 1" aynı şeyi iki kez sayıyordu) çipler gösterilmez.
+  const distinctStatuses = STATUS_OPTIONS.filter((option) => counts[option.value] > 0).length;
+  const showStatusFilter = distinctStatuses >= 2 || statusFilter !== "AKTIF";
+  const showScopeFilter = hasMine && hasOthers;
 
   const replaceRow = (updated: Appointment) => {
     setLoaded((current) => current && { ...current, rows: current.rows.map((row) => (row.id === updated.id ? { ...row, ...updated } : row)) });
@@ -200,9 +204,9 @@ export function TodayAppointments({
   const listReady = !firstLoad && ready;
   const firstLoadFailed = firstLoad && !loading && Boolean(error);
 
-  const filterBar = listReady && rows.length > 0 ? (
+  const filterBar = listReady && rows.length > 0 && (showStatusFilter || showScopeFilter) ? (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-slate-100 px-4 py-2.5">
-      {hasMine && hasOthers && (
+      {showScopeFilter && (
         <ChoiceCards<ScopeKey>
           label="Kimin randevuları"
           labelHidden
@@ -216,7 +220,7 @@ export function TodayAppointments({
         />
       )}
       {/* Telefonda durum çipleri tek satırda yana kayar (3-4 satıra yayılıp listeyi aşağı itmesin). */}
-      <ChoiceCards<StatusFilter>
+      {showStatusFilter && <ChoiceCards<StatusFilter>
         label="Duruma göre süz"
         labelHidden
         variant="pills"
@@ -224,7 +228,7 @@ export function TodayAppointments({
         onChange={setStatusFilter}
         options={statusOptions}
         className="min-w-0 max-w-full max-sm:overflow-x-auto max-sm:pb-1 max-sm:[&_[role=radio]]:shrink-0 max-sm:[&_[role=radiogroup]]:flex-nowrap"
-      />
+      />}
     </div>
   ) : undefined;
 

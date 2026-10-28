@@ -163,7 +163,7 @@ export default function KlinikTab({ form, onChange, canWrite, bookingLink, login
             label="Değerlendirme bağlantısı"
             htmlFor="ayar-reviewLink"
             error={fieldError("reviewLink")}
-            hint="Değerlendirme mesajındaki bağlantı; ör. Google yorum sayfanız."
+            hint="Tamamlanan randevudan sonra hastaya giden değerlendirme mesajındaki bağlantı (ör. Google yorum sayfanız). Açıp kapatmak: İletişim › Otomatik mesajlar."
           >
             <Input
               id="ayar-reviewLink"

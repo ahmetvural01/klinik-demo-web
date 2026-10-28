@@ -184,7 +184,7 @@ export function DocumentsTab() {
     } catch (error) {
       xhrRefs.current.delete(item.key);
       const aborted = error instanceof Error && error.message === "aborted";
-      updateItem(item.key, { status: aborted ? "canceled" : "error", error: aborted ? undefined : "Bağlantı hatası; tekrar deneyin." });
+      updateItem(item.key, { status: aborted ? "canceled" : "error", error: aborted ? undefined : "Bağlantı hatası; yeniden deneyin." });
     }
   };
 

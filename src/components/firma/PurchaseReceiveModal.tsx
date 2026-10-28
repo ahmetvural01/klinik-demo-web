@@ -14,12 +14,8 @@ import { PAYMENT_METHODS } from "@/components/firma/FirmaPaymentModal";
 import { newRequestKey, todayKey } from "@/components/stock/stock-shared";
 import { centsToMoney, centsToNumber, moneyToCents, type Purchase } from "@/components/firma/purchase-model";
 
-type LotInput = { purchaseItemId: string; productName: string; quantity: number; unit: string; lotNo: string; expiresAt: string };
-
 type ReceiveForm = {
   receivedAt: string;
-  faturaNo: string;
-  itemLots: LotInput[];
   paidNow: boolean;
   paymentDate: string;
   paymentMethod: string;
@@ -36,17 +32,8 @@ type PurchaseReceiveModalProps = {
   onEditOrder?: (purchase: Purchase) => void;
 };
 
-const initialForm = (purchase: Purchase | null): ReceiveForm => ({
+const initialForm = (): ReceiveForm => ({
   receivedAt: todayKey(),
-  faturaNo: purchase?.faturaNo || "",
-  itemLots: (purchase?.items || []).map((item) => ({
-    purchaseItemId: item.id,
-    productName: item.productName,
-    quantity: Number(item.quantity),
-    unit: item.unit,
-    lotNo: item.lotNo || "",
-    expiresAt: item.expiresAt?.substring(0, 10) || "",
-  })),
   paidNow: false,
   paymentDate: todayKey(),
   paymentMethod: "HAVALE_EFT",
@@ -55,23 +42,22 @@ const initialForm = (purchase: Purchase | null): ReceiveForm => ({
 
 /**
  * Siparişi teslim al: ürünler stoğa girer, tutar firma borcuna eklenir.
- * Lot ve SKT biliniyorsa satır satır girilir; ödeme yapıldıysa tek onay
- * kutusu. İstek anahtarı hata sonrası korunur — çift teslim yazılmaz.
+ * Gelen ürünler listede görünür (farklıysa önce sipariş düzeltilir); ödeme
+ * yapıldıysa tek onay kutusu. İstek anahtarı hata sonrası korunur — çift
+ * teslim yazılmaz.
  */
 export function PurchaseReceiveModal({ open, purchase, onClose, onSaved, onEditOrder }: PurchaseReceiveModalProps) {
-  const [form, setForm] = useState<ReceiveForm>(() => initialForm(null));
+  const [form, setForm] = useState<ReceiveForm>(initialForm);
   const [formError, setFormError] = useState<string | null>(null);
   const [amountError, setAmountError] = useState<string | undefined>();
   const [saving, setSaving] = useState(false);
   const requestKeyRef = useRef("");
   const initialRef = useRef("");
-  const purchaseRef = useRef(purchase);
-  useEffect(() => { purchaseRef.current = purchase; });
 
   const purchaseId = purchase?.id || "";
   useEffect(() => {
     if (!open || !purchaseId) return;
-    const next = initialForm(purchaseRef.current);
+    const next = initialForm();
     setForm(next);
     setFormError(null);
     setAmountError(undefined);
@@ -79,15 +65,11 @@ export function PurchaseReceiveModal({ open, purchase, onClose, onSaved, onEditO
     initialRef.current = JSON.stringify(next);
   }, [open, purchaseId]);
 
-  const totalCents = (purchase?.items || []).reduce((sum, item) => sum + moneyToCents(item.lineTotal), BigInt(0));
+  const items = purchase?.items || [];
+  const totalCents = items.reduce((sum, item) => sum + moneyToCents(item.lineTotal), BigInt(0));
   const totalMoney = centsToMoney(totalCents);
   const paymentValue = form.paymentAmount === "" ? totalMoney : form.paymentAmount;
   const dirty = open && JSON.stringify(form) !== initialRef.current;
-
-  const updateLot = (id: string, patch: Partial<LotInput>) => setForm((current) => ({
-    ...current,
-    itemLots: current.itemLots.map((line) => (line.purchaseItemId === id ? { ...line, ...patch } : line)),
-  }));
 
   const submit = async () => {
     if (!purchase || saving) return;
@@ -105,12 +87,6 @@ export function PurchaseReceiveModal({ open, purchase, onClose, onSaved, onEditO
         headers: { "Content-Type": "application/json", "Idempotency-Key": requestKeyRef.current || newRequestKey("receive") },
         body: JSON.stringify({
           receivedAt: form.receivedAt,
-          faturaNo: form.faturaNo.trim() || null,
-          itemLots: form.itemLots.map((item) => ({
-            purchaseItemId: item.purchaseItemId,
-            lotNo: item.lotNo.trim() || null,
-            expiresAt: item.expiresAt || null,
-          })),
           paidNow: form.paidNow,
           paymentDate: form.paidNow ? form.paymentDate : null,
           paymentMethod: form.paidNow ? form.paymentMethod : null,
@@ -138,53 +114,34 @@ export function PurchaseReceiveModal({ open, purchase, onClose, onSaved, onEditO
   };
 
   return (
-    // Kirli formda kapatma onayı ortak pencereden (isDirty) gelir; önceden yerel onay da çıkıyordu.
+    // Kirli formda kapatma onayı ortak pencereden (isDirty) gelir.
     <FormModal
       open={open && Boolean(purchase)}
       onClose={onClose}
       module="firma"
       title="Siparişi teslim al"
-      description={purchase ? `${purchase.firma?.name || ""} · ${(purchase.items || []).length} kalem · ${formatCurrency(centsToNumber(totalCents))}` : undefined}
+      description={purchase ? `${purchase.firma?.name || ""} · ${formatCurrency(centsToNumber(totalCents))}` : undefined}
       size="lg"
       onSubmit={() => submit()}
       submitting={saving}
       error={formError}
       isDirty={dirty}
     >
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <FormField label="Teslim tarihi" htmlFor="receive-date" required>
-          <Input id="receive-date" type="date" max={todayKey()} value={form.receivedAt} onChange={(event) => setForm((current) => ({ ...current, receivedAt: event.target.value }))} />
-        </FormField>
-        <FormField label="Fatura no" htmlFor="receive-invoice">
-          <Input id="receive-invoice" value={form.faturaNo} onChange={(event) => setForm((current) => ({ ...current, faturaNo: event.target.value }))} />
-        </FormField>
-      </div>
-      <div className="space-y-2">
-        <p className="ui-form-label text-xs font-bold text-slate-800">Lot ve son kullanma <span className="font-normal text-slate-500">(biliniyorsa)</span></p>
-        {form.itemLots.map((item) => (
-          <div key={item.purchaseItemId} className="grid gap-2 rounded-lg border border-slate-200 p-2.5 sm:grid-cols-[minmax(0,1fr)_150px_160px] sm:items-center">
-            <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-slate-800">{item.productName}</p>
-              <p className="text-xs text-slate-500">{item.quantity} {item.unit}</p>
-            </div>
-            <Input
-              size="sm"
-              aria-label={`${item.productName} lot no`}
-              placeholder="Lot no"
-              value={item.lotNo}
-              onChange={(event) => updateLot(item.purchaseItemId, { lotNo: event.target.value })}
-            />
-            <Input
-              size="sm"
-              type="date"
-              aria-label={`${item.productName} son kullanma tarihi`}
-              value={item.expiresAt}
-              onChange={(event) => updateLot(item.purchaseItemId, { expiresAt: event.target.value })}
-            />
-          </div>
-        ))}
+      <FormField label="Teslim tarihi" htmlFor="receive-date" required className="sm:max-w-[220px]">
+        <Input id="receive-date" type="date" max={todayKey()} value={form.receivedAt} onChange={(event) => setForm((current) => ({ ...current, receivedAt: event.target.value }))} />
+      </FormField>
+      <div>
+        <p className="ui-form-label mb-1.5 text-xs font-bold text-slate-800">Gelen ürünler</p>
+        <ul className="divide-y divide-slate-100 text-sm">
+          {items.map((item) => (
+            <li key={item.id} className="flex items-center justify-between gap-3 py-1.5">
+              <span className="min-w-0 truncate text-slate-800">{item.productName}</span>
+              <span className="shrink-0 tabular-nums text-slate-600">{item.quantity} {item.unit}</span>
+            </li>
+          ))}
+        </ul>
         {purchase && onEditOrder && (
-          <p className="flex flex-wrap items-center gap-x-2 text-xs text-slate-500">
+          <p className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-slate-500">
             Gelen miktar ya da fiyat farklıysa önce siparişi düzeltin.
             <Button variant="ghost" size="sm" onClick={() => onEditOrder(purchase)} className="!h-7 !px-1.5">Siparişi düzenle</Button>
           </p>

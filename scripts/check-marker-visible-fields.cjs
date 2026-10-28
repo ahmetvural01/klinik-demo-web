@@ -11,12 +11,10 @@ const m = "[DEMO_PAKET_20260506]";
     ["appointment", "note"],
     ["examination", "note"],
     ["payment", "description"],
-    ["treatmentPlan", "title"],
     ["labOrder", "notes"],
     ["supportTicket", "subject"],
     ["message", "text"],
     ["announcement", "text"],
-    ["advertisement", "title"],
     ["invoice", "description"]
   ];
 

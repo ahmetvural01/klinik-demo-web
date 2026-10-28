@@ -26,7 +26,7 @@ export async function POST(_req: NextRequest, props: { params: Promise<{ id: str
     },
     select: { id: true, name: true, isActive: true, institutionId: true, branchId: true },
   });
-  if (!existing) return NextResponse.json({ error: "Stok kartı bulunamadı" }, { status: 404 });
+  if (!existing) return NextResponse.json({ error: "Ürün bulunamadı" }, { status: 404 });
   if (existing.isActive) return NextResponse.json({ ok: true, alreadyActive: true });
 
   // Aynı adla (harf farkı gözetmeden) aktif başka kart varsa geri almak
@@ -38,7 +38,7 @@ export async function POST(_req: NextRequest, props: { params: Promise<{ id: str
   const conflict = activeItems.find((row: { name: string }) => nameKey(row.name) === nameKey(existing.name));
   if (conflict) {
     return NextResponse.json(
-      { error: `"${conflict.name}" adıyla aktif bir stok kartı var. Bu kartı geri almak yerine mevcut kartı kullanın.` },
+      { error: `"${conflict.name}" adıyla listede bir ürün var. Bunu geri almak yerine o ürünü kullanın.` },
       { status: 409 },
     );
   }

@@ -7,6 +7,7 @@ import { FormField } from "@/components/ui/FormField";
 import { Input, Select } from "@/components/ui/Input";
 import { MoneyInput } from "@/components/ui/MoneyInput";
 import { Button } from "@/components/ui/Button";
+import { Callout } from "@/components/ui/Callout";
 import { ChoiceCards } from "@/components/ui/ChoiceCards";
 import { Disclosure } from "@/components/ui/Disclosure";
 import { SearchSelect } from "@/components/ui/SearchSelect";
@@ -49,8 +50,6 @@ export type EditableExpense = {
   description?: string | null;
   tutar: number | string;
   yontem?: string | null;
-  faturaNo?: string | null;
-  kdvOrani?: number | null;
   doctorId?: string | null;
   doctor?: { id: string; fullName: string } | null;
   periodYear?: number | null;
@@ -72,12 +71,12 @@ export type ExpenseFormProps = BaseProps & (
       kinds?: readonly OutgoingKind[];
       /** Firma ekranından: firma sabit (seçici yok). */
       firma?: FirmaOption | null;
-      /** Firma: önerilen tutar (ör. bir faturanın kalanı). */
+      /** Firma: önerilen tutar (ör. bir satın almanın kalanı). */
       suggestedAmount?: number;
-      /** Firma: açıklama boş bırakılırsa yazılacak metin (ör. "Fatura A-114 ödemesi"). */
+      /** Firma: açıklama boş bırakılırsa yazılacak metin (ör. "Satın alma ödemesi"). */
       reference?: string;
       /**
-       * Firma: ödeme önce bu satın almanın (faturanın) borcuna düşsün
+       * Firma: ödeme önce bu satın almanın borcuna düşsün
        * (POST /api/firma/[id]/islemler isteğe bağlı purchaseId). Verilmezse
        * sunucu en eski açık borçtan düşer.
        */
@@ -97,8 +96,6 @@ type Values = {
   method: PaymentMethod;
   date: string;
   note: string;
-  faturaNo: string;
-  kdv: string;
   categoryId: string;
   categoryText: string;
   firmaId: string;
@@ -119,19 +116,40 @@ const KIND_LABEL: Record<OutgoingKind, string> = {
   hakedis: "Hakediş ödemesi",
 };
 const DEFAULT_METHOD: Record<OutgoingKind, PaymentMethod> = { gider: "NAKIT", firma: "HAVALE_EFT", hakedis: "NAKIT" };
-const KDV_OPTIONS = [
-  { value: "0", label: "Yok" },
-  { value: "10", label: "%10" },
-  { value: "20", label: "%20" },
-];
 const AY_ADLARI = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"];
 const monthName = (year: number, month: number) => `${AY_ADLARI[month - 1] || month} ${year}`;
 const periodKey = (year: number, month: number) => `${year}-${String(month).padStart(2, "0")}`;
 
 const EMPTY: Values = {
-  amount: "", method: "NAKIT", date: "", note: "", faturaNo: "", kdv: "0",
+  amount: "", method: "NAKIT", date: "", note: "",
   categoryId: "", categoryText: "", firmaId: "", firmaText: "", payoutDoctorId: "", period: "",
 };
+
+/** Karşılaştırma anahtarı: Türkçe küçük harf, aksansız, tek boşluk. */
+const nameKey = (value: string) => value
+  .toLocaleLowerCase("tr-TR")
+  .replace(/ı/g, "i")
+  .normalize("NFD")
+  .replace(/[̀-ͯ]/g, "")
+  .replace(/[^a-z0-9]+/g, " ")
+  .trim();
+
+/**
+ * Yazılan gider türü ya da açıklamada kayıtlı bir firmanın adı geçiyor mu?
+ * Firma adının tamamı ya da ilk iki sözcüğü (tek sözcüklüyse en az 4 harfli
+ * adı) bütün sözcük olarak aranır. Eşleşme yalnız uyarıdır; kayıt engellenmez.
+ */
+function findFirmaMention(firmas: readonly FirmaOption[], texts: string[]): FirmaOption | null {
+  const haystack = ` ${texts.map(nameKey).filter(Boolean).join(" ")} `;
+  if (haystack.trim().length < 3) return null;
+  for (const firma of firmas) {
+    const words = nameKey(firma.name).split(" ").filter(Boolean);
+    if (words.length === 0) continue;
+    const needle = words.length === 1 ? (words[0].length >= 4 ? words[0] : "") : words.slice(0, 2).join(" ");
+    if (needle && haystack.includes(` ${needle} `)) return firma;
+  }
+  return null;
+}
 
 function initialValues(props: ExpenseFormProps): Values {
   const today = turkeyDateKey();
@@ -143,8 +161,6 @@ function initialValues(props: ExpenseFormProps): Values {
       method: isPaymentMethod(expense.yontem) ? expense.yontem : "NAKIT",
       date: turkeyDateKey(new Date(expense.tarih)),
       note: visibleNote(expense.description),
-      faturaNo: expense.faturaNo || "",
-      kdv: String(expense.kdvOrani ?? 0),
       categoryId: expense.categoryId || "",
       categoryText: expense.category || "",
     };
@@ -153,7 +169,7 @@ function initialValues(props: ExpenseFormProps): Values {
     ? (() => {
         const balance = toMoneyValue(Math.max(0, props.firma.bakiye));
         const proposed = props.suggestedAmount && props.suggestedAmount > 0 ? toMoneyValue(props.suggestedAmount) : null;
-        // Önerilen tutar (fatura kalanı) firmanın toplam borcunu aşamaz.
+        // Önerilen tutar (satın almanın kalanı) firmanın toplam borcunu aşamaz.
         return proposed && balance && compareMoney(proposed, balance) === 1 ? balance : proposed;
       })()
     : null;
@@ -194,8 +210,10 @@ async function loadPayoutPeriods(doctorId: string): Promise<{ periods: PayoutPer
 /**
  * Para ÇIKIŞI formu — gider, firma (tedarikçi) ödemesi, hakediş ödemesi ve
  * gider/hakediş düzeltmesi. Zorunlular üstte (tutar, yöntem, tarih bugün);
- * KDV, fatura no ve açıklama "Ek bilgiler"de. Firma ekranındaki "Ödeme yap"
- * da bu formu kullanır (önceden iki ayrı firma ödeme formu vardı).
+ * açıklama katlanır bölümde. Firma ekranındaki "Ödeme yap" da bu formu
+ * kullanır (önceden iki ayrı firma ödeme formu vardı). "Gider"de tedarikçi
+ * malzemesinin Satın alma'dan, ödemesinin "Firma ödemesi"nden girileceği
+ * söylenir; aksi halde aynı maliyet iki kez gider yazılır.
  *
  * Korunan kurallar: Idempotency-Key her açılışta ve tür değişince yeni;
  * bağlantı koparsa anahtar korunur; ileri tarih yok; firma ödemesi ≤ firma
@@ -240,7 +258,7 @@ export function ExpenseForm(props: ExpenseFormProps) {
     setErrors({});
     setServerError("");
     setSaving(false);
-    setMoreOpen(current.mode === "edit" && Boolean(next.note || next.faturaNo || next.kdv !== "0"));
+    setMoreOpen(current.mode === "edit" && Boolean(next.note));
     setPeriodsState(null);
     requestKeyRef.current = newRequestKey("odeme");
   });
@@ -451,8 +469,6 @@ export function ExpenseForm(props: ExpenseFormProps) {
             body.categoryId = match?.id || null;
             body.category = match?.name || typed;
           }
-          if (values.kdv !== initial.kdv) body.kdvOrani = Number(values.kdv);
-          if (values.faturaNo.trim() !== initial.faturaNo.trim()) body.faturaNo = values.faturaNo.trim() || null;
         }
         if (Object.keys(body).length === 0) { onClose(); return; }
         const response = await fetch(`/api/gider/${encodeURIComponent(current.expense.id)}`, {
@@ -482,8 +498,6 @@ export function ExpenseForm(props: ExpenseFormProps) {
             description: note || null,
             tutar: amount,
             yontem: values.method,
-            faturaNo: values.faturaNo.trim() || null,
-            kdvOrani: Number(values.kdv),
           }),
         }).catch(() => null);
         message = `${category.name} gideri kaydedildi (${formatMoney(values.amount)}).`;
@@ -514,8 +528,6 @@ export function ExpenseForm(props: ExpenseFormProps) {
             islemTipi: "ODEME",
             tutar: amount,
             yontem: values.method,
-            faturaNo: values.faturaNo.trim() || null,
-            kdvOrani: 0,
             aciklama: note || (current.mode === "new" ? current.reference : "") || "Firma ödemesi",
             ...(current.mode === "new" && current.purchaseId ? { purchaseId: current.purchaseId } : {}),
           }),
@@ -537,9 +549,14 @@ export function ExpenseForm(props: ExpenseFormProps) {
   // ── Görünüm
   const switcherKinds = props.mode === "new" && !fixedFirma && !payout ? (props.kinds || []) : [];
   const showSwitcher = switcherKinds.length > 1;
-  // Faturadan açılan ödeme: faturanın kalanı (firmanın toplam borcunu aşamaz). Önceden
+  // "Gider"de tedarikçi malzemesi yazılırsa aynı maliyet iki kez gider olur (Satın
+  // alma + ödeme). Firma ödemesi seçilebiliyorsa yol gösterilir; firma listesi bu
+  // pencerede zaten yüklendiyse (Firma ödemesine bakıldıysa) adı geçen firma uyarılır.
+  const showSupplierHint = showSwitcher && kind === "gider" && switcherKinds.includes("firma");
+  const mentionedFirma = showSupplierHint && firmas ? findFirmaMention(firmas, [values.categoryText, values.note]) : null;
+  // Satın almadan açılan ödeme: o alımın kalanı (firmanın toplam borcunu aşamaz). Önceden
   // başlık yalnız firmanın toplam borcunu yazıyor, "Borcun tamamı" onu dolduruyor ve
-  // fazlası başka faturalara gidiyordu.
+  // fazlası başka alımlara gidiyordu.
   const invoiceRemaining = (() => {
     if (!fixedFirma || props.mode !== "new" || !props.purchaseId || !props.suggestedAmount || props.suggestedAmount <= 0) return null;
     const proposed = toMoneyValue(props.suggestedAmount);
@@ -556,39 +573,22 @@ export function ExpenseForm(props: ExpenseFormProps) {
       : undefined
     : fixedFirma
       ? invoiceRemaining && firmaDebt && isPositiveMoney(firmaDebt)
-        ? [fixedFirma.name, `Bu faturanın kalanı ${formatMoney(invoiceRemaining)}`, `firmanın toplam borcu ${formatMoney(firmaDebt)}`].join(" · ")
+        ? [fixedFirma.name, `Bu alımın kalanı ${formatMoney(invoiceRemaining)}`, `toplam borç ${formatMoney(firmaDebt)}`].join(" · ")
         : [fixedFirma.name, firmaDebt && isPositiveMoney(firmaDebt) ? `Kalan borç ${formatMoney(firmaDebt)}` : "Açık borç yok"].join(" · ")
       : undefined;
 
   const initial = initialRef.current;
   const dirty = open && (
-    values.amount !== initial.amount || values.note !== initial.note || values.faturaNo !== initial.faturaNo
-      || values.kdv !== initial.kdv || values.date !== initial.date || values.categoryText !== initial.categoryText
+    values.amount !== initial.amount || values.note !== initial.note
+      || values.date !== initial.date || values.categoryText !== initial.categoryText
       || (!fixedFirma && values.firmaId !== initial.firmaId) || methodTouched
       || (!payout && values.payoutDoctorId !== initial.payoutDoctorId)
   );
 
   const methods: readonly PaymentMethod[] = kind === "hakedis" ? DOCTOR_PAYOUT_METHODS : kind === "firma" ? VENDOR_PAYMENT_METHODS : PAYMENT_METHOD_VALUES;
-  const showKdvAndInvoice = kind === "gider" || kind === "firma";
-  const moreSummary = [
-    kind === "gider" && values.kdv !== "0" ? `KDV %${values.kdv}` : "",
-    values.faturaNo.trim() ? (kind === "firma" ? "dekont no" : "fatura no") : "",
-    values.note.trim() ? "açıklama" : "",
-  ].filter(Boolean).join(" · ");
+  const notePreview = values.note.trim().length > 40 ? `${values.note.trim().slice(0, 40)}…` : values.note.trim();
   const invoiceContext = Boolean(fixedFirma && props.mode === "new" && (props.reference || props.suggestedAmount));
   const targetsInvoice = Boolean(fixedFirma && props.mode === "new" && props.purchaseId);
-  const noteInput = (
-    <Input
-      id={`${baseId}-note`}
-      aria-label="Açıklama"
-      value={values.note}
-      maxLength={1000}
-      placeholder={kind === "firma"
-        ? (props.mode === "new" && props.reference) || "Örn. Eylül faturası ödemesi"
-        : kind === "hakedis" ? "Örn. Eylül hakedişi" : "Örn. Ekim ayı kirası"}
-      onChange={(event) => set("note", event.target.value)}
-    />
-  );
 
   return (
     <>
@@ -614,6 +614,37 @@ export function ExpenseForm(props: ExpenseFormProps) {
             onChange={changeKind}
           />
         )}
+        {showSupplierHint && (mentionedFirma ? (
+          <Callout
+            tone="warning"
+            compact
+            inline
+            className="-mt-2"
+            // Firma ödemesine geçerken adı geçen firma seçili gelir.
+            action={(
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  changeKind("firma");
+                  setValues((current) => ({ ...current, firmaId: mentionedFirma.id, firmaText: mentionedFirma.name }));
+                }}
+              >
+                Firma ödemesi
+              </Button>
+            )}
+          >
+            “{mentionedFirma.name}” kayıtlı firma: ödemeyi “Firma ödemesi” ile girin, yoksa iki kez gider yazılır.
+          </Callout>
+        ) : (
+          <p className="-mt-2 text-xs leading-5 text-slate-500">
+            Tedarikçiden aldığınız malzeme mi?{" "}
+            <Link href="/firma?yeni=1" className="font-semibold text-primary hover:underline">{"Satın alma'dan girin"}</Link>;
+            ödemesini buradan{" "}
+            <button type="button" className="font-semibold text-primary hover:underline" onClick={() => changeKind("firma")}>“Firma ödemesi”</button>{" "}
+            ile yapın.
+          </p>
+        ))}
 
         {kind === "firma" && !fixedFirma && (
           <FormField
@@ -698,15 +729,15 @@ export function ExpenseForm(props: ExpenseFormProps) {
             htmlFor={`${baseId}-amount`}
             error={errors.amount}
             hint={kind === "firma" && invoiceContext && !errors.amount
-              ? targetsInvoice ? "Ödeme önce bu faturanın borcundan düşülür." : "Ödeme firmanın en eski açık borcundan başlayarak düşülür."
+              ? targetsInvoice ? "Ödeme önce bu alımın borcundan düşülür." : "Ödeme firmanın en eski açık borcundan başlayarak düşülür."
               : undefined}
           >
             <MoneyInput id={`${baseId}-amount`} value={values.amount} onChange={(value) => set("amount", value)} data-autofocus />
           </FormField>
-          {/* Faturadan açılınca hızlı doldurma faturanın kalanıdır; yoksa firmanın borcunun tamamı. */}
+          {/* Satın almadan açılınca hızlı doldurma o alımın kalanıdır; yoksa firmanın borcunun tamamı. */}
           {kind === "firma" && invoiceRemaining && compareMoney(values.amount, invoiceRemaining) !== 0 && (
             <Button variant="secondary" size="sm" className="mt-2" onClick={() => set("amount", invoiceRemaining)}>
-              Faturanın tamamı
+              Kalanın tamamı
             </Button>
           )}
           {kind === "firma" && !invoiceRemaining && firmaDebt && isPositiveMoney(firmaDebt) && compareMoney(values.amount, firmaDebt) !== 0 && (
@@ -748,23 +779,18 @@ export function ExpenseForm(props: ExpenseFormProps) {
           <Input id={`${baseId}-date`} type="date" max={today} value={values.date} onChange={(event) => set("date", event.target.value)} />
         </FormField>
 
-        <Disclosure title={showKdvAndInvoice && !editPayout ? "Ek bilgiler" : "Açıklama"} summary={moreSummary || undefined} open={moreOpen} onOpenChange={setMoreOpen}>
-          <div className="space-y-4">
-            {kind === "gider" && !editPayout && (
-              <ChoiceCards label="KDV" variant="pills" options={KDV_OPTIONS} value={values.kdv} onChange={(value) => set("kdv", value)} />
-            )}
-            {showKdvAndInvoice && !editPayout && (
-              <FormField label={kind === "firma" ? "Fatura / dekont no" : "Fatura no"} htmlFor={`${baseId}-fatura`}>
-                <Input id={`${baseId}-fatura`} value={values.faturaNo} maxLength={kind === "firma" ? 80 : 100} onChange={(event) => set("faturaNo", event.target.value)} />
-              </FormField>
-            )}
-            {/* Bölümde yalnız açıklama varsa başlık zaten "Açıklama": alan etiketi tekrar yazılmaz. */}
-            {showKdvAndInvoice && !editPayout ? (
-              <FormField label="Açıklama" htmlFor={`${baseId}-note`}>
-                {noteInput}
-              </FormField>
-            ) : noteInput}
-          </div>
+        {/* Bölümde yalnız açıklama var; başlık zaten "Açıklama" olduğu için alan etiketi tekrar yazılmaz. */}
+        <Disclosure title="Açıklama" summary={notePreview || undefined} open={moreOpen} onOpenChange={setMoreOpen}>
+          <Input
+            id={`${baseId}-note`}
+            aria-label="Açıklama"
+            value={values.note}
+            maxLength={1000}
+            placeholder={kind === "firma"
+              ? (props.mode === "new" && props.reference) || "Örn. Eylül ödemesi"
+              : kind === "hakedis" ? "Örn. Eylül hakedişi" : "Örn. Ekim ayı kirası"}
+            onChange={(event) => set("note", event.target.value)}
+          />
         </Disclosure>
       </FormModal>
 

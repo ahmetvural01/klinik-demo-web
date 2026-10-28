@@ -10,7 +10,7 @@ import { Disclosure } from "@/components/ui/Disclosure";
 import { formatDateText } from "@/components/ui/Money";
 import { DoctorSelect } from "@/components/staff/DoctorSelect";
 import { PatientPicker, type PickedPatient } from "@/components/patient/PatientPicker";
-import { PaymentMethodPicker } from "@/components/finance/PaymentMethodPicker";
+import { PaymentMethodPicker, usePosDevices } from "@/components/finance/PaymentMethodPicker";
 import { useFocusWhenReady, useOpenReset } from "@/components/finance/use-open-reset";
 import {
   CONNECTION_LOST,
@@ -199,6 +199,9 @@ export function PaymentForm(props: PaymentFormProps) {
   const initKey = open ? recordKey : "";
 
   const [values, setValues] = useState<Values>(EMPTY);
+  // POS seçimi yalnız klinikte aktif POS cihazı tanımlıysa zorunlu (sunucu kuralıyla aynı).
+  const { devices: posDevices } = usePosDevices(requiresPos(values.method));
+  const posAvailable = posDevices === null || posDevices.some((device) => device.isActive);
   const [patient, setPatient] = useState<PickedPatient | null>(null);
   const [errors, setErrors] = useState<Errors>({});
   const [serverError, setServerError] = useState("");
@@ -322,7 +325,7 @@ export function PaymentForm(props: PaymentFormProps) {
     if (amountError) next.amount = amountError;
     // Doktor kilitliyse (düzeltmede iade izni yok) doktoru olmayan eski kayıtta da açıklama düzeltilebilsin.
     if (!isInstallment && canAdjust && !values.doctorId) next.doctor = "Tahsilatın sayılacağı doktoru seçin.";
-    if (requiresPos(values.method) && !values.posId) next.pos = "Kart / mail order tahsilatında POS cihazı seçin.";
+    if (requiresPos(values.method) && !values.posId && posAvailable) next.pos = "Kart / mail order tahsilatında POS cihazı seçin.";
     if (!values.date) next.date = "Tarihi seçin.";
     else if (values.date > today) next.date = "İleri bir tarih seçilemez.";
     else if (minDate && values.date < minDate) next.date = `Plan ${formatDateText(`${minDate}T12:00:00.000Z`)} tarihinde oluşturuldu; daha önceki bir gün seçilemez.`;

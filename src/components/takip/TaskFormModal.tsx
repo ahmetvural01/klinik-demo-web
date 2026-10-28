@@ -77,7 +77,7 @@ type TaskFormModalProps = {
   /**
    * Tür "Arama" ve hasta seçiliyken aynı sayfada hasta araması açar (görev
    * kaydedilmez; başlık ve açıklama aramanın notuna taşınır). Verilmezse
-   * Yapılacaklar > Hasta aramaları'na bağlantı gösterilir.
+   * Aramalar ve görevler > Hasta aramaları'na bağlantı gösterilir.
    */
   onConvertToFollowUp?: (patient: PickedPatient, note: string) => void;
 };
@@ -124,7 +124,7 @@ function initialForm(task: ClinicTask | null | undefined, initialPatient: Picked
 }
 
 /**
- * Görev oluşturma ve düzenleme için TEK form (Yapılacaklar > Ekip görevleri;
+ * Görev oluşturma ve düzenleme için TEK form (Aramalar ve görevler > Ekip görevleri;
  * hasta dosyası da kullanabilir). Zorunlu yalnız görev metni; sorumlu
  * varsayılan olarak açan kişi, son tarih hızlı gün seçimiyle. Tür, öncelik ve
  * firma "Diğer bilgiler" altında (önceden hep açıktı; firma alanı hasta

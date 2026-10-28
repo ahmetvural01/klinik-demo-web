@@ -18,10 +18,9 @@ type NavItem = { href: string; icon: ModuleKey; label: string; countKey?: CountK
 type NavGroup = { label: string; items: NavItem[] };
 type NavCounts = Record<CountKey, number>;
 
-// Üç grup, 11 öğe; menü adı her sayfanın başlığıyla aynıdır. Tek öğeli
-// "Ayarlar" grubu "Yönetim"e katıldı. Reklamlar menüde yok: klinik panelinde reklam
-// gösterilen bir alan bulunmadığı için orada yapılan ayar hiçbir kliniğe
-// ulaşmıyor (sayfa adresiyle hâlâ açılabilir).
+// Üç grup, 12 öğe; menü adı her sayfanın başlığıyla aynıdır. Tek öğeli
+// "Ayarlar" grubu "Yönetim"e katıldı. Reklamlar: klinik panelindeki Google
+// AdSense alanlarının kurulumu ve kliniğe göre açma/kapama.
 const NAV_GROUPS: NavGroup[] = [
   {
     label: "Genel",
@@ -46,6 +45,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/superadmin/role-permissions", icon: "sa-roles", label: "Rol Yetkileri" },
       { href: "/superadmin/admins", icon: "sa-admins", label: "Platform Yöneticileri" },
       { href: "/superadmin/audit", icon: "sa-audit", label: "Denetim Günlüğü" },
+      { href: "/superadmin/ads", icon: "sa-ads", label: "Reklamlar" },
       { href: "/superadmin/sistem", icon: "settings", label: "Sistem Ayarları" },
     ],
   },

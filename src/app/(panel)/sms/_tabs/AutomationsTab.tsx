@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ComponentType } from "react";
-import { AlarmClock, BellRing, Cake, CalendarCheck, CalendarClock, CalendarX, Eye, Hourglass, PartyPopper, PenSquare, ShieldCheck, SlidersHorizontal, Wallet } from "lucide-react";
+import { AlarmClock, BellRing, Cake, CalendarCheck, CalendarClock, CalendarX, Eye, Hourglass, PartyPopper, PenSquare, ShieldCheck, SlidersHorizontal, Star, Wallet } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { ChoiceCards } from "@/components/ui/ChoiceCards";
@@ -41,6 +41,7 @@ const EVENT_ICONS: Record<string, ComponentType<{ className?: string }>> = {
   ODEME_VADE_GUNU: Wallet,
   ODEME_GECIKTI: AlarmClock,
   DOGUM_GUNU: Cake,
+  ANKET: Star,
 };
 
 const eventOf = (code: string) => EVENT_MESSAGES.find((item) => item.code === code) as EventMessage;
@@ -391,6 +392,22 @@ export default function AutomationsTab({
                 label: "Yeni randevularda hatırlatma seçili gelsin",
                 onChange: (on) => void persist("reminder", { ...values, smsDefaultReminder: on }, { smsDefaultReminder: on },
                   on ? "Yeni randevularda hatırlatma seçili gelecek." : "Yeni randevularda hatırlatma seçili gelmeyecek."),
+              }}
+            />
+            <SettingsRow
+              icon={EVENT_ICONS.ANKET}
+              title="Tedavi sonrası değerlendirme"
+              description={status?.clinic.reviewLink
+                ? `${eventOf("ANKET").when} · ${values.smsDefaultSurvey ? "yeni randevularda seçili gelir" : "randevuda elle seçilir"}`
+                : "Önce Ayarlar › Klinik'te değerlendirme bağlantısını (ör. Google yorum sayfanız) girin"}
+              status={customBadge("ANKET")}
+              actions={textAction("ANKET")}
+              toggle={{
+                checked: Boolean(status?.clinic.reviewLink) && values.smsDefaultSurvey,
+                disabled: busy || !status?.clinic.reviewLink,
+                label: "Yeni randevularda değerlendirme seçili gelsin",
+                onChange: (on) => void persist("survey", { ...values, smsDefaultSurvey: on }, { smsDefaultSurvey: on },
+                  on ? "Yeni randevularda değerlendirme seçili gelecek." : "Yeni randevularda değerlendirme seçili gelmeyecek."),
               }}
             />
             <SettingsRow

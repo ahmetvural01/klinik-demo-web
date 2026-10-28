@@ -42,7 +42,7 @@ function clockTR(date: Date) {
 
 /**
  * İptal/Gelmedi randevu yeniden açılırken (kısmi durum güncellemesi) yeni
- * randevudaki kuralların aynısı: hasta, tedavi alanı ve doktorun kapalı
+ * randevudaki kuralların aynısı: hasta, koltuk / oda ve doktorun kapalı
  * zamanı kesin engel; doktorun başka randevusu onayla geçilebilir. Önceden
  * "Yeniden aç" hiçbir kontrol yapmıyor, aynı hasta aynı saatte iki doktora
  * randevulu kalabiliyordu (canlı test H3). Yalnız gelecekteki randevular için
@@ -74,7 +74,7 @@ async function reactivationConflict(params: {
     });
     if (unitConflict) {
       return NextResponse.json({
-        message: `Tedavi alanı ${clockTR(unitConflict.startAt)}–${clockTR(unitConflict.endAt)} saatleri arasında dolu; randevu yeniden açılamaz.`,
+        message: `Koltuk / oda ${clockTR(unitConflict.startAt)}–${clockTR(unitConflict.endAt)} saatleri arasında dolu; randevu yeniden açılamaz.`,
       }, { status: 409 });
     }
   }
@@ -308,15 +308,6 @@ export async function PUT(request: NextRequest, props: Params) {
       });
       if (conflictResponse) return conflictResponse;
     }
-    // Bir randevudan paket seansı düşüldükten (GELDI/TAMAMLANDI iken
-    // /api/patient-packages/[id]/use ile) sonra randevu BEKLIYOR/GELMEDI/
-    // IPTAL'e geri alınırsa, o seans hiçbir yerde iade edilmiyordu — hasta
-    // paketinden "boşa" bir seans düşülmüş kalıyordu (bkz. denetim raporu).
-    const revertingFromUsedStatus = typeof body.status === "string"
-      && body.status !== existing.status
-      && ["GELDI", "TAMAMLANDI"].includes(existing.status)
-      && !["GELDI", "TAMAMLANDI"].includes(body.status);
-
     let appointment;
     try {
       appointment = await prisma.$transaction(async (tx) => {
@@ -334,16 +325,6 @@ export async function PUT(request: NextRequest, props: Params) {
             select: { id: true },
           });
           if (patientRecheck) throw new Error("PATIENT_CONFLICT_RECHECK");
-        }
-        if (revertingFromUsedStatus) {
-          const usage = await tx.patientPackageUsage.findFirst({ where: { appointmentId: params.id, status: "ACTIVE" } });
-          if (usage) {
-            await tx.patientPackageUsage.update({ where: { id: usage.id }, data: { status: "VOID", voidedAt: new Date() } });
-            await tx.patientPackage.updateMany({
-              where: { id: usage.patientPackageId, sessionsUsed: { gt: 0 } },
-              data: { sessionsUsed: { decrement: 1 }, status: "AKTIF" },
-            });
-          }
         }
         return tx.appointment.update({
           where: { id: params.id },
@@ -411,7 +392,7 @@ export async function PUT(request: NextRequest, props: Params) {
   }
 
   // Doktor çakışması artık sert bir engel değil, bilinçli bir onaydır (bkz.
-  // POST /api/appointments üzerindeki aynı not) — tedavi alanı/hasta
+  // POST /api/appointments üzerindeki aynı not) — koltuk / oda/hasta
   // çakışmaları fiziksel olarak imkânsız olduğu için hâlâ kesin engellenir.
   const overrideDoctorConflict = body?.overrideConflict === true;
 
@@ -449,7 +430,7 @@ export async function PUT(request: NextRequest, props: Params) {
     });
   }
   if (requestedClinicUnitId && !selectedUnit) {
-    return NextResponse.json({ message: "Seçilen tedavi alanı bulunamadı veya pasif durumda." }, { status: 400 });
+    return NextResponse.json({ message: "Seçilen koltuk / oda bulunamadı veya pasif durumda." }, { status: 400 });
   }
 
   const newStart = new Date(parsed.data.startAt);
@@ -515,7 +496,7 @@ export async function PUT(request: NextRequest, props: Params) {
     if (unitConflict) {
       const cs = unitConflict.startAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Istanbul" });
       const ce = unitConflict.endAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Istanbul" });
-      return NextResponse.json({ message: `${selectedUnit.name} tedavi alanı ${cs}–${ce} saatleri arasında dolu (${unitConflict.patient?.fullName ?? "—"}).`, conflictId: unitConflict.id }, { status: 409 });
+      return NextResponse.json({ message: `${selectedUnit.name} koltuk / oda ${cs}–${ce} saatleri arasında dolu (${unitConflict.patient?.fullName ?? "—"}).`, conflictId: unitConflict.id }, { status: 409 });
     }
   }
 
@@ -656,7 +637,7 @@ export async function PUT(request: NextRequest, props: Params) {
       return NextResponse.json({ message: "Bu doktor için bu saat aralığı az önce başka bir kullanıcı tarafından dolduruldu. Lütfen tekrar deneyin." }, { status: 409 });
     }
     if (error instanceof Error && error.message === "CLINIC_UNIT_CONFLICT_RECHECK") {
-      return NextResponse.json({ message: "Bu tedavi alanı aynı saat aralığında başka bir randevuya ayrıldı. Lütfen tekrar deneyin." }, { status: 409 });
+      return NextResponse.json({ message: "Bu koltuk / oda aynı saat aralığında başka bir randevuya ayrıldı. Lütfen tekrar deneyin." }, { status: 409 });
     }
     if (error instanceof Error && error.message === "PATIENT_CONFLICT_RECHECK") {
       return NextResponse.json({ message: "Bu hastanın aynı saat aralığında başka bir randevusu az önce oluşturuldu. Lütfen tekrar deneyin." }, { status: 409 });
@@ -705,7 +686,7 @@ export async function PUT(request: NextRequest, props: Params) {
     beforeParts.push(`Doktor: ${fmt(existing.doctor?.fullName || existing.doctorId)}`);
     afterParts.push(`Doktor: ${fmt(appointment.doctor?.fullName || parsed.data.doctorId)}`);
   }
-  pushDiff("Tedavi alanı", existing.clinicUnit?.name, appointment.clinicUnit?.name);
+  pushDiff("Koltuk / oda", existing.clinicUnit?.name, appointment.clinicUnit?.name);
 
   const detail = [
     `${auth.user.fullName || "Personel"} tarafından ${maskPatientName(appointment.patient.fullName)} randevusu güncellendi.`,
@@ -744,21 +725,8 @@ export async function DELETE(_: NextRequest, props: Params) {
   if (!existing)
     return NextResponse.json({ message: "Randevu bulunamadı" }, { status: 404 });
 
-  // Soft delete — durumu IPTAL yap (veri kaybını önler). Durum güncellemesi
-  // (PUT status=IPTAL) ile aynı kural: Bekliyor/Tamamlandı iken paketten
-  // düşülmüş seans varsa iade edilir; önceden bu yoldan iptal edilen
-  // randevunun seansı hastanın paketinde "kullanılmış" kalıyordu.
+  // Soft delete — durumu IPTAL yap (veri kaybını önler).
   await prisma.$transaction(async (tx) => {
-    if (["GELDI", "TAMAMLANDI"].includes(existing.status)) {
-      const usage = await tx.patientPackageUsage.findFirst({ where: { appointmentId: existing.id, status: "ACTIVE" } });
-      if (usage) {
-        await tx.patientPackageUsage.update({ where: { id: usage.id }, data: { status: "VOID", voidedAt: new Date() } });
-        await tx.patientPackage.updateMany({
-          where: { id: usage.patientPackageId, sessionsUsed: { gt: 0 } },
-          data: { sessionsUsed: { decrement: 1 }, status: "AKTIF" },
-        });
-      }
-    }
     await tx.appointment.update({
       where: {
         id_institutionId_branchId: {

@@ -64,7 +64,6 @@ export async function GET(request: NextRequest) {
     fullName: user.fullName,
     role,
     institutionId: user.institutionId,
-    superadminModules: user.superadminModules ?? null,
     permissions: ["*"],
   });
 }

@@ -39,7 +39,7 @@ export function IlgiliAyarlar() {
       visible: can("sms:read") || canReadWhatsapp,
     },
     { label: "Mesaj kanalı ve kredi", description: "SMS / WhatsApp ve SMS kredisi", href: "/sms?tab=ayarlar", visible: canManageMessaging },
-    { label: "Rol yetkileri", description: "Platform ekibi değiştirir; Destek'ten isteyin", href: "/destek", visible: can("support:read") },
+    { label: "Rol yetkileri", description: "Rol izinlerini platform ekibi değiştirir; Destek'e yazın", href: "/destek?yeni=1", visible: can("support:read") },
   ].filter((item) => item.visible);
 
   const loadCategories = async () => {

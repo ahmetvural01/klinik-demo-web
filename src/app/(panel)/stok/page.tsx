@@ -17,21 +17,19 @@ import { ActionMenu, type ActionMenuItem } from "@/components/ui/ActionMenu";
 import { ExportMenu } from "@/components/ui/ExportMenu";
 import { Badge } from "@/components/ui/Badge";
 import { ListTable, type ListSort, type ListTableColumn } from "@/components/ui/ListTable";
-import { DateText, Money, formatDateText } from "@/components/ui/Money";
+import { Money } from "@/components/ui/Money";
 import { createSceneIllustration } from "@/components/ui/SceneIllustration";
 import { usePermissions } from "@/components/auth/PermissionProvider";
 import { StockItemFormModal } from "@/components/stock/StockItemFormModal";
-import { StockMovementModal, type StockLotPreview } from "@/components/stock/StockMovementModal";
+import { StockMovementModal } from "@/components/stock/StockMovementModal";
 import { StockItemDetailModal } from "@/components/stock/StockItemDetailModal";
 import { printBarcodeLabel } from "@/components/stock/barcode-print";
 import {
   STOCK_CATEGORIES,
   countCriticalStock,
-  expiryState,
   formatQuantity,
   isCriticalStock,
   isLowStock,
-  itemExpiry,
   matchesSearch,
   optionsWithCurrent,
   searchKey,
@@ -45,22 +43,27 @@ import { usePurchaseModals } from "@/components/firma/usePurchaseModals";
 
 const StockEmptyIcon = createSceneIllustration("stok");
 
-const VIEW_KEYS = ["tumu", "kritik", "siparis", "skt", "arsiv"] as const;
+/**
+ * Sekmeler ayrı iş listeleridir, süzgeç tekrarı değildir: Kritik = sipariş
+ * gereken (menü rozeti ve zil buraya bağlanır), Siparişte = siparişi verilmiş
+ * ürünler (Kritik'te görünmezler; Satın alma'yı göremeyen asistan/banko da
+ * buradan görür), Arşiv = geri alınabilecek kartlar (ayrı liste).
+ */
+const VIEW_KEYS = ["tumu", "kritik", "siparis", "arsiv"] as const;
 type StockView = typeof VIEW_KEYS[number];
 const PAGE_SIZE = 25;
 const NAME_SORT: ListSort = { key: "name", dir: "asc" };
-const EXPIRY_SORT: ListSort = { key: "expiry", dir: "asc" };
 
-/** Eski `?durum=` bağlantıları (menü, ana sayfa, yer imleri) yeni sekmelere eşlenir. */
-const LEGACY_VIEW: Record<string, StockView> = { tumu: "tumu", kritik: "kritik", siparis: "siparis", "skt-yakin": "skt", "skt-gecti": "skt", arsiv: "arsiv" };
+/**
+ * Eski `?durum=` bağlantıları (menü, ana sayfa, yer imleri) yeni sekmelere
+ * eşlenir. Kaldırılan son kullanma görünümü (`skt-yakin`, `skt-gecti`, `?tab=skt`)
+ * "Tümü"ne düşer.
+ */
+const LEGACY_VIEW: Record<string, StockView> = { tumu: "tumu", kritik: "kritik", siparis: "siparis", "skt-yakin": "tumu", "skt-gecti": "tumu", arsiv: "arsiv" };
 
 const VIEW_FILTER: Record<Exclude<StockView, "tumu" | "arsiv">, (item: StockItem) => boolean> = {
   kritik: (item) => isCriticalStock(item),
   siparis: (item) => (item.onOrderQuantity || 0) > 0,
-  skt: (item) => {
-    const state = expiryState(itemExpiry(item));
-    return state === "expired" || state === "soon";
-  },
 };
 
 function StokContent() {
@@ -93,7 +96,7 @@ function StokContent() {
   const [detailId, setDetailId] = useState<string | null>(null);
   const [formItem, setFormItem] = useState<StockItem | null>(null);
   const [formOpen, setFormOpen] = useState(false);
-  const [move, setMove] = useState<{ item: StockItem; lots: StockLotPreview[] | null } | null>(null);
+  const [moveItem, setMoveItem] = useState<StockItem | null>(null);
 
   const fetchItems = useCallback(async () => {
     const sequence = ++loadSequenceRef.current;
@@ -172,21 +175,13 @@ function StokContent() {
     window.history.replaceState(null, "", params.toString() ? `${pathname}?${params.toString()}` : pathname);
   }, [searchParams, canWriteStock, pathname]);
 
-  const activeSort = sort ?? (view === "skt" ? EXPIRY_SORT : NAME_SORT);
+  const activeSort = sort ?? NAME_SORT;
   useEffect(() => { setPage(1); }, [view, search, category, sort]);
 
-  const counts = useMemo(() => {
-    let siparis = 0;
-    let skt = 0;
-    let expired = 0;
-    for (const item of items) {
-      if (VIEW_FILTER.siparis(item)) siparis += 1;
-      const state = expiryState(itemExpiry(item));
-      if (state === "expired") expired += 1;
-      if (state === "expired" || state === "soon") skt += 1;
-    }
-    return { kritik: countCriticalStock(items), siparis, skt, expired };
-  }, [items]);
+  const counts = useMemo(() => ({
+    kritik: countCriticalStock(items),
+    siparis: items.filter(VIEW_FILTER.siparis).length,
+  }), [items]);
 
   const categoryOptions = useMemo(
     () => optionsWithCurrent(STOCK_CATEGORIES, ...items.map((item) => stockCategoryLabel(item.category))),
@@ -205,7 +200,6 @@ function StokContent() {
     const dir = activeSort.dir === "asc" ? 1 : -1;
     return [...rows].sort((a, b) => {
       if (activeSort.key === "quantity") return (a.quantity - b.quantity) * dir;
-      if (activeSort.key === "expiry") return ((itemExpiry(a) || "9999").localeCompare(itemExpiry(b) || "9999")) * dir;
       if (activeSort.key === "cost") return ((a.averageUnitPrice || 0) - (b.averageUnitPrice || 0)) * dir;
       return a.name.localeCompare(b.name, "tr") * dir;
     });
@@ -214,6 +208,8 @@ function StokContent() {
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const totalValue = useMemo(() => items.reduce((sum, item) => sum + item.quantity * (item.averageUnitPrice || 0), 0), [items]);
+  // Maliyeti bilinen ürün yoksa "Ort. maliyet" sütunu ve "Stok değeri ₺0,00" gösterilmez (boş/sıfır değer yazılmaz).
+  const hasCost = useMemo(() => items.some((item) => item.averageUnitPrice !== null && item.averageUnitPrice !== undefined && item.averageUnitPrice > 0), [items]);
   const detailItem = detailId ? items.find((item) => item.id === detailId) || null : null;
   const singleMatch = view !== "arsiv" && search.trim() && filtered.length === 1 ? filtered[0] : null;
 
@@ -230,21 +226,27 @@ function StokContent() {
     onChanged: async () => { afterChange(); },
   });
 
-  const openOrder = (item: StockItem) => {
+  /**
+   * Bu ürünle satın alma formu: son tedarikçi ve son fiyat hazır gelir.
+   * "Sipariş ver" sipariş açar (önerilen miktarla); "Sayım fazlası"ndaki
+   * "Satın alma gir" teslim alınmış alım açar (stok, firma borcu ve ödeme birlikte).
+   */
+  const openPurchaseFor = (item: StockItem, receiptStatus: "SIPARIS_VERILDI" | "TESLIM_ALINDI", quantity: number | null) => {
     purchaseManager.openAddPurchase(item.lastPurchase?.supplierId || undefined, {
-      receiptStatus: "SIPARIS_VERILDI",
+      receiptStatus,
       firmaName: item.lastPurchase?.supplier || null,
       lines: [{
         stockItemId: item.id,
         productQuery: item.name,
         unit: item.unit,
-        quantity: String(suggestedOrderQuantity(item)),
+        quantity: quantity ? String(quantity) : "",
         unitPrice: toMoneyValue(item.lastPurchase?.unitPrice) ?? "",
       }],
     });
   };
+  const openOrder = (item: StockItem) => openPurchaseFor(item, "SIPARIS_VERILDI", suggestedOrderQuantity(item));
 
-  const openMove = (item: StockItem, lots: StockLotPreview[] | null = null) => setMove({ item, lots });
+  const openMove = (item: StockItem) => setMoveItem(item);
 
   const onSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key !== "Enter" || view === "arsiv") return;
@@ -301,7 +303,7 @@ function StokContent() {
 
   const printBarcode = async (item: StockItem) => {
     // Pencere tıklamayla aynı anda açılır; barkod kütüphanesi ardından yüklenir.
-    const result = await printBarcodeLabel({ id: item.id, name: item.name, barcode: item.barcode, storageLocation: item.storageLocation, expiry: itemExpiry(item) });
+    const result = await printBarcodeLabel({ id: item.id, name: item.name, barcode: item.barcode, storageLocation: item.storageLocation });
     if (result === "popup-blocked") showToastSafe({ title: "Pencere açılamadı", message: "Tarayıcı açılır pencereyi engelledi. Bu site için açılır pencerelere izin verin.", type: "error" });
     if (result === "invalid-code") showToastSafe({ title: "Barkod basılamadı", message: "Barkod yalnız harf ve rakam içermeli. Ürünü düzenleyip barkodu kontrol edin.", type: "error" });
     if (result === "load-failed") showToastSafe({ title: "Barkod hazırlanamadı", message: "Bağlantınızı kontrol edip tekrar deneyin.", type: "error" });
@@ -318,7 +320,6 @@ function StokContent() {
       Siparişte: item.onOrderQuantity || 0,
       Birim: item.unit,
       Durum: stockBadges(item).map((badge) => badge.label).join(", ") || "Yeterli",
-      "En yakın SKT": itemExpiry(item) ? formatDateText(itemExpiry(item) as string) : "",
       ...(canSeeCost ? {
         "Ortalama maliyet": item.averageUnitPrice ?? "",
         "Stok değeri": item.averageUnitPrice ? Math.round(item.quantity * item.averageUnitPrice * 100) / 100 : "",
@@ -330,8 +331,9 @@ function StokContent() {
     showToastSafe({ title: "Dosya indirildi", message: `${filtered.length} ürün Excel'de açılabilir CSV olarak indirildi.`, type: "success" });
   };
 
+  // Arşiv sekmesinde her satıra "Arşivde" yazılmaz: sekme adı bunu zaten söylüyor.
   const statusBadges = (item: StockItem) => {
-    if (view === "arsiv") return <Badge tone="neutral">Arşivde</Badge>;
+    if (view === "arsiv") return null;
     const badges = stockBadges(item);
     if (badges.length === 0) return null;
     return (
@@ -406,20 +408,8 @@ function StokContent() {
         </div>
       ),
     },
-    { key: "durum", header: "Durum", render: statusBadges },
-    {
-      key: "expiry",
-      header: "En yakın SKT",
-      sortKey: "expiry",
-      // Boş değer yazılmaz (K5): SKT'siz ürünün hücresi boş kalır, "—" ile dolmaz.
-      render: (item) => {
-        const expiry = itemExpiry(item);
-        if (!expiry) return null;
-        const state = expiryState(expiry);
-        return <DateText value={expiry} className={state === "expired" ? "font-semibold text-red-700" : state === "soon" ? "font-semibold text-amber-700" : "text-slate-600"} />;
-      },
-    },
-    ...(canSeeCost ? [{
+    ...(view === "arsiv" ? [] : [{ key: "durum", header: "Durum", render: statusBadges }]),
+    ...(canSeeCost && hasCost ? [{
       key: "cost",
       header: "Ort. maliyet",
       align: "right" as const,
@@ -456,7 +446,7 @@ function StokContent() {
       <PageHeader
         icon="box"
         title="Stok"
-        stats={loaded && canSeeCost ? [{ label: "Stok değeri", value: formatCurrency(totalValue) }] : undefined}
+        stats={loaded && canSeeCost && totalValue > 0 ? [{ label: "Stok değeri", value: formatCurrency(totalValue) }] : undefined}
         actions={canWriteStock ? (
           <Button icon={Plus} onClick={() => { setFormItem(null); setFormOpen(true); }}>Yeni ürün</Button>
         ) : undefined}
@@ -470,7 +460,6 @@ function StokContent() {
           { key: "tumu", label: "Tümü" },
           { key: "kritik", label: "Kritik", count: loaded ? counts.kritik : undefined, countTone: "critical", countLabel: "kritik ürün" },
           { key: "siparis", label: "Siparişte", count: loaded ? counts.siparis : undefined, countLabel: "siparişteki ürün" },
-          { key: "skt", label: "SKT", count: loaded ? counts.skt : undefined, countTone: counts.expired > 0 ? "critical" : "warning", countLabel: "SKT’si yakın ya da geçmiş ürün" },
           { key: "arsiv", label: "Arşiv" },
         ]}
       />
@@ -516,8 +505,8 @@ function StokContent() {
         staleError={listStaleError}
         onRetry={() => void (view === "arsiv" ? fetchArchived() : fetchItems())}
         emptyText={emptyText}
-        emptyDescription={view === "tumu" && !filteredOut ? "İlk ürünü “Yeni ürün” ile ekleyin ya da Satın alma'da faturayı girin; ürünler otomatik eklenir." : undefined}
-        emptyAction={view === "tumu" && !filteredOut && canWriteStock ? <Button size="sm" icon={Plus} onClick={() => { setFormItem(null); setFormOpen(true); }}>Yeni ürün</Button> : undefined}
+        // Boş listede ayrı "Yeni ürün" düğmesi yok: başlıktaki aynı düğme zaten görünür (§0.2).
+        emptyDescription={view === "tumu" && !filteredOut ? "İlk ürünü “Yeni ürün” ile ekleyin ya da Satın alma'dan alımı girin; ürünler kendiliğinden eklenir." : undefined}
         emptyIcon={StockEmptyIcon}
         emptyIllustrative
         onRowClick={view === "arsiv" ? undefined : (item) => setDetailId(item.id)}
@@ -529,14 +518,8 @@ function StokContent() {
         // satırının yanında — eylemler ayrı bir sıra oluşturmaz, ad sıkışmaz.
         mobileCardActions={view === "arsiv" ? undefined : (item) => rowMenu(item)}
         mobileCard={(item) => {
-          const expiry = itemExpiry(item);
-          const expiryWarn = expiry ? expiryState(expiry) : null;
           const action = primaryAction(item);
           const badges = statusBadges(item);
-          // SKT tarihi rozetin yanında (miktar satırı uzayıp sarmasın).
-          const sktDate = expiry && (expiryWarn === "expired" || expiryWarn === "soon")
-            ? <DateText value={expiry} className={`text-xs font-semibold ${expiryWarn === "expired" ? "text-red-700" : "text-amber-700"}`} />
-            : null;
           return (
             <div className="space-y-1">
               {/* Telefonda ad kesilmez, alt satıra geçer. */}
@@ -548,12 +531,7 @@ function StokContent() {
                     {item.minQuantity > 0 ? ` · min ${item.minQuantity}` : ""}
                     {item.storageLocation ? ` · Raf ${item.storageLocation}` : ""}
                   </p>
-                  {(badges || sktDate) && (
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {badges}
-                      {sktDate}
-                    </div>
-                  )}
+                  {badges}
                 </div>
                 {action && <div className="shrink-0">{action}</div>}
               </div>
@@ -569,7 +547,7 @@ function StokContent() {
         canDelete={canDeleteStock}
         canOrder={canOrder}
         canSeeCost={canSeeCost}
-        onMove={(item, lots) => openMove(item, lots)}
+        onMove={(item) => openMove(item)}
         onEdit={(item) => { setFormItem(item); setFormOpen(true); }}
         onArchive={(item) => void archiveItem(item)}
         onOrder={(item) => { setDetailId(null); openOrder(item); }}
@@ -584,11 +562,11 @@ function StokContent() {
       />
 
       <StockMovementModal
-        open={Boolean(move)}
-        item={move ? items.find((row) => row.id === move.item.id) || move.item : null}
-        lots={move?.lots}
-        canSeeCost={canSeeCost}
-        onClose={() => setMove(null)}
+        open={Boolean(moveItem)}
+        item={moveItem ? items.find((row) => row.id === moveItem.id) || moveItem : null}
+        // Satın alınan ürün "Sayım fazlası" değil, satın almadır (firma borcu ve gideriyle).
+        onPurchase={canOrder ? (item, quantity) => { setMoveItem(null); setDetailId(null); openPurchaseFor(item, "TESLIM_ALINDI", quantity); } : undefined}
+        onClose={() => setMoveItem(null)}
         onSaved={() => afterChange()}
       />
 

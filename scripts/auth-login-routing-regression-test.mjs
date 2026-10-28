@@ -84,7 +84,7 @@ try {
   const platformToken = state.tokens.find(token => !token.ghost);
   const ghostToken = state.tokens.find(token => token.ghost);
   assert.equal(platformToken.institutionId, null);
-  assert(platformToken.superadminModules.length > 0);
+  assert.equal(platformToken.role, "SUPERADMIN");
   assert.equal(ghostToken.institutionId, "institution");
   assert.equal(ghostToken.role, "YONETICI");
   assert.equal(ghostToken.fullName, "Clinic", "Kliniğe yansıyan ad yöneticinin adı olmalı; sahibin adı yazılmamalı");
@@ -154,7 +154,7 @@ try {
   assert.equal(body.institutionId, null);
   assert.equal(state.tokens.length, 1);
   assert.equal(state.tokens[0].institutionId, null);
-  assert(state.tokens[0].superadminModules.length > 0);
+  assert.equal(state.tokens[0].role, "SUPERADMIN");
   assert(!state.tokens.some(token => token.ghost));
   state.twoFactor = true;
   response = await platformLogin("platform-password");

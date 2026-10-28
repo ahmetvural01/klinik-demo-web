@@ -75,7 +75,7 @@ export function ManagerRequestButton({ label, taskTitle, taskDetails, taskType =
     setState("sent");
     showToastSafe({
       title: "Yöneticiye iletildi",
-      message: managerIds.length > 0 ? "Görev yöneticinin Yapılacaklar listesine düştü." : "Görev Yapılacaklar › Ekip görevleri'ne eklendi.",
+      message: managerIds.length > 0 ? "Görev yöneticinin görev listesine düştü." : "Görev Aramalar ve görevler › Ekip görevleri'ne eklendi.",
       type: "success",
     });
   };

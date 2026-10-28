@@ -1,17 +1,15 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Check, ClipboardCheck, ExternalLink, NotebookPen, Pencil, Plus, Printer, Stethoscope, XCircle } from "lucide-react";
+import { Check, ClipboardCheck, NotebookPen, Pencil, Plus, Printer, Stethoscope, XCircle } from "lucide-react";
 import { ActionMenu } from "@/components/ui/ActionMenu";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { BulkActionBar } from "@/components/ui/BulkActionBar";
 import { Callout } from "@/components/ui/Callout";
 import { ChoiceCards } from "@/components/ui/ChoiceCards";
-import { Disclosure } from "@/components/ui/Disclosure";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
-import { FormErrorBanner, FormField } from "@/components/ui/FormField";
+import { FormField } from "@/components/ui/FormField";
 import { Input, Textarea } from "@/components/ui/Input";
 import { MoneyInput } from "@/components/ui/MoneyInput";
 import { SearchSelect } from "@/components/ui/SearchSelect";
@@ -30,7 +28,7 @@ import { EXAM_STATUS_DIAGNOSIS, EXAM_STATUS_DONE, examStatusKind } from "@/lib/e
 import { usePatientFile } from "./PatientFileContext";
 import { ExamEditModal } from "./ExamEditModal";
 import { PrintSelectModal } from "./PrintSelectModal";
-import { printTreatmentReport } from "./print";
+import { printTreatmentQuote, printTreatmentReport } from "./print";
 import {
   isChargeableExam,
   isPendingExam,
@@ -54,24 +52,19 @@ const AREA_OPTIONS: { value: Area; label: string }[] = [
 ];
 const AREA_LABEL: Record<Exclude<Area, "teeth" | "none">, string> = { upper: "Üst çene", lower: "Alt çene", all: "Tüm ağız" };
 
-const PLAN_STATUS: Record<string, { label: string; tone: "info" | "success" | "neutral" | "warning" }> = {
-  PLANLANDI: { label: "Planlandı", tone: "neutral" },
-  DEVAM_EDIYOR: { label: "Devam ediyor", tone: "info" },
-  TAMAMLANDI: { label: "Tamamlandı", tone: "success" },
-  IPTAL: { label: "İptal", tone: "neutral" },
-};
-
 const sortByDateDesc = (a: Exam, b: Exam) => new Date(b.diagnosedAt).getTime() - new Date(a.diagnosedAt).getTime();
 const toothOf = (key: string) => key.slice(key.indexOf(":") + 1) || undefined;
 
 /**
  * Tedavi sekmesi. Hekimin akışı yukarıdan aşağı tek yönde: diş(ler)i seç →
- * tedaviyi fiyat listesinden seç (tutar kendiliğinden gelir) → "Yapılacaklara
- * ekle" ya da "Yapıldı olarak kaydet". Altında yapılacak ve yapılan
- * tedaviler, en altta (katlanır) tedavi planları.
+ * tedaviyi fiyat listesinden seç (tutar kendiliğinden gelir) → "Plana ekle"
+ * ya da "Yapıldı olarak kaydet". Altında planlanan ve yapılan tedaviler.
  *
- * Adlar: borca yansımamış kayıt "yapılacak tedavi" (önceden "muayene listesi"),
- * borca yansıyan "yapılan tedavi". Veritabanı değerleri değişmedi.
+ * Tek kavram: tedavi planı = planlanan tedaviler listesi (borca yansımaz;
+ * "Yapıldı" işaretlenince borca eklenir). Hastaya verilecek fiyat teklifi bu
+ * listeden "Teklif yazdır" ile çıkar. Önceden ayrı bir "Tedavi planları
+ * (teklif)" bölümü ve sayfası vardı; hekim planı nereye yazacağını bilmiyordu.
+ * Veritabanı değerleri değişmedi (planlanan = "Diagnoz (Ön Teşhis)").
  */
 export function TreatmentTab() {
   const {
@@ -82,9 +75,6 @@ export function TreatmentTab() {
     doctors,
     currentUserId,
     recentDoctorId,
-    treatmentPlans,
-    treatmentPlansLoaded,
-    loadTreatmentPlans,
     getLetterhead,
     hidePatientPhone,
     intent,
@@ -97,8 +87,6 @@ export function TreatmentTab() {
   // (sunucu kuralı); başka hekimin satırında düzenleme/iptal düğmesi çıkmaz.
   const canModify = (exam: Exam) => !lockDoctorToSelf || exam.doctorId === currentUserId;
   const ownDoctorName = doctors.find((doctor) => doctor.id === currentUserId)?.fullName || "";
-  const canReadPlans = can("treatment:read");
-  const canPlan = can("treatment:write");
 
   // ── Ekleme formu ─────────────────────────────────────────────────────────
   const [priceList, setPriceList] = useState<PriceItem[]>([]);
@@ -122,9 +110,7 @@ export function TreatmentTab() {
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<Exam | null>(null);
   const [printOpen, setPrintOpen] = useState(false);
-
-  // Tedavi planları yalnız bu sekme açılınca okunur.
-  useEffect(() => { if (canReadPlans) loadTreatmentPlans(); }, [canReadPlans, loadTreatmentPlans]);
+  const [quoteOpen, setQuoteOpen] = useState(false);
 
   // "İşlem ekle > Tedavi ekle": tedavi arama kutusuna odaklan.
   useEffect(() => {
@@ -224,7 +210,7 @@ export function TreatmentTab() {
   // yüklenene kadar "Toplam ₺0" görünmesin.
   const doneTotal = roundMoney(done.reduce((sum, exam) => sum + toNumber(exam.amount), 0));
 
-  // Şemada hangi dişte iş olduğu: yapılacak (öncelikli) ya da yapılmış tedavi.
+  // Şemada hangi dişte iş olduğu: planlanan (öncelikli) ya da yapılmış tedavi.
   const markers = useMemo(() => {
     const map: Record<string, ToothMarker> = {};
     for (const exam of done) if (exam.toothNo && /^\d{2}$/.test(exam.toothNo)) map[exam.toothNo] = "done";
@@ -290,10 +276,10 @@ export function TreatmentTab() {
         if (area === "teeth") setTeeth((current) => current.filter((tooth) => !savedTeeth.has(tooth)));
         const failedTeeth = result.failed.map(toothOf).filter((tooth): tooth is string => Boolean(tooth) && area === "teeth");
         setFormError(result.succeeded.length > 0
-          ? `${result.succeeded.length} kayıt eklendi; ${result.failed.length} kayıt eklenemedi${failedTeeth.length ? ` (diş ${failedTeeth.join(", ")})` : ""}. Seçimde yalnız eklenemeyenler kaldı — tekrar deneyin.${firstError ? ` Neden: ${firstError}` : ""}`
+          ? `${result.succeeded.length} kayıt eklendi; ${result.failed.length} kayıt eklenemedi${failedTeeth.length ? ` (diş ${failedTeeth.join(", ")})` : ""}. Seçimde yalnız eklenemeyenler kaldı — yeniden deneyin.${firstError ? ` Neden: ${firstError}` : ""}`
           : firstError || "Kayıt eklenemedi.");
       } else {
-        const where = mode === "done" ? "yapılan tedavilere" : "yapılacak tedavilere";
+        const where = mode === "done" ? "yapılan tedavilere" : "planlanan tedavilere";
         showToastSafe({ type: "success", icon: "tedavi", message: `${treatmentName}: ${result.succeeded.length} kayıt ${where} eklendi.` });
         setTeeth([]);
         setNote("");
@@ -344,8 +330,8 @@ export function TreatmentTab() {
     const what = single ? `“${single.treatmentName}”${single.toothNo ? ` (diş ${single.toothNo})` : ""} · ${money(single.amount)}` : `${ids.length} tedavi`;
     const message = kind === "done"
       ? `${what} iptal edilsin mi? Tutarı hastanın borcundan düşülür; kayıt işlem geçmişinde saklanır.`
-      : `${what} yapılacaklardan çıkarılsın mı? Kayıt işlem geçmişinde saklanır.`;
-    if (!(await confirmDialog({ message, danger: true, confirmText: kind === "done" ? "Tedaviyi iptal et" : "Listeden çıkar" }))) return;
+      : `${what} plandan çıkarılsın mı? Kayıt işlem geçmişinde saklanır.`;
+    if (!(await confirmDialog({ message, danger: true, confirmText: kind === "done" ? "Tedaviyi iptal et" : "Plandan çıkar" }))) return;
     setBusy(true);
     try {
       const result = await runRecordBatch(ids, async (id) => {
@@ -355,7 +341,7 @@ export function TreatmentTab() {
         showToastSafe({ type: "error", message: `${result.succeeded.length} kayıt kaldırıldı; ${result.failed.length} kayıt kaldırılamadı.` });
         if (kind === "pending") setSelectedPending(result.failed);
       } else {
-        showToastSafe({ type: "success", message: kind === "done" ? "Tedavi iptal edildi." : "Yapılacaklardan çıkarıldı." });
+        showToastSafe({ type: "success", message: kind === "done" ? "Tedavi iptal edildi." : "Plandan çıkarıldı." });
         if (kind === "pending") setSelectedPending([]);
       }
       if (result.succeeded.length > 0) void reload(true);
@@ -383,7 +369,7 @@ export function TreatmentTab() {
         { key: "edit", label: "Düzenle", icon: Pencil, disabled: busy, onSelect: () => setEditing(exam) },
         ...(canDelete ? [{
           key: "cancel",
-          label: kind === "pending" ? "Yapılacaklardan çıkar" : "Tedaviyi iptal et",
+          label: kind === "pending" ? "Plandan çıkar" : "Tedaviyi iptal et",
           icon: XCircle,
           danger: true,
           disabled: busy,
@@ -445,10 +431,9 @@ export function TreatmentTab() {
     </div>
   );
 
-  // Tedavi planı sayfası ?patientId= ile listeyi bu hastaya süzer; yeni plan
-  // formu yalnız ?yeni=1 ile açılır (önceden "Planları yönet" de yeni plan formu açıyordu).
-  const planListHref = `/tedavi-plani?patientId=${encodeURIComponent(patientId)}&patientName=${encodeURIComponent(data.fullName)}`;
-  const newPlanHref = `${planListHref}&yeni=1`;
+  // Teklif ve rapor penceresinin satırları aynı biçimde.
+  const printRows = (exams: Exam[]) => exams.map((exam) => ({ id: exam.id, date: formatDateText(exam.diagnosedAt), label: exam.treatmentName, meta: exam.toothNo ? `Diş ${exam.toothNo}` : undefined, amount: money(exam.amount) }));
+  const byDateAsc = (a: Exam, b: Exam) => new Date(a.diagnosedAt).getTime() - new Date(b.diagnosedAt).getTime();
 
   const selectionText = area !== "teeth"
     ? null
@@ -466,7 +451,7 @@ export function TreatmentTab() {
       {canWrite && (
         <Section title="Tedavi ekle" icon={Stethoscope}>
           <div className="space-y-4">
-            <FormErrorBanner message={formError} />
+            {formError && <Callout tone="critical" role="alert">{formError}</Callout>}
             {/* Tek çip sırası (nereye); daimi/süt seçimi şemanın altında tek anahtar.
                 Önceden iki ayrı çip sırası ve şema için iki kat çerçeve vardı. */}
             <ChoiceCards
@@ -569,16 +554,19 @@ export function TreatmentTab() {
               </div>
               <div className="flex flex-col gap-2 sm:flex-row">
                 <Button variant="secondary" icon={ClipboardCheck} loading={adding === "done"} disabled={Boolean(adding)} onClick={() => void addRecords("done")}>Yapıldı olarak kaydet</Button>
-                <Button icon={Plus} loading={adding === "pending"} disabled={Boolean(adding)} onClick={() => void addRecords("pending")}>Yapılacaklara ekle</Button>
+                <Button icon={Plus} loading={adding === "pending"} disabled={Boolean(adding)} onClick={() => void addRecords("pending")}>Plana ekle</Button>
               </div>
             </div>
           </div>
         </Section>
       )}
 
+      {/* Tedavi planı bu listedir: borca yansımaz, hastaya "Teklif yazdır" ile
+          fiyat teklifi verilir. Listede seçim varsa teklif seçilenlerle açılır. */}
       <ListTable
-        title="Yapılacak tedaviler"
+        title="Planlanan tedaviler"
         subtitle={listSubtitle(pending.length, pendingTotal, pendingDoctor)}
+        actions={pending.length > 0 ? <Button size="sm" variant="secondary" icon={Printer} onClick={() => setQuoteOpen(true)}>Teklif yazdır</Button> : undefined}
         header={canWrite ? (
           <BulkActionBar
             count={selectedPending.length}
@@ -587,13 +575,13 @@ export function TreatmentTab() {
             actions={(
               <>
                 <Button size="sm" variant="secondary" icon={Check} loading={busy} onClick={() => void markDone(selectedPending)}>Yapıldı olarak işaretle</Button>
-                {canDelete && <Button size="sm" variant="danger-ghost" disabled={busy} onClick={() => void cancelRecords(selectedPending, "pending")}>Listeden çıkar</Button>}
+                {canDelete && <Button size="sm" variant="danger-ghost" disabled={busy} onClick={() => void cancelRecords(selectedPending, "pending")}>Plandan çıkar</Button>}
               </>
             )}
           />
         ) : undefined}
         columns={[
-          ...baseColumns(pendingDoctor, "Yapılacak tedavinin tutarı, “Yapıldı” işaretlenince hastanın borcuna eklenir."),
+          ...baseColumns(pendingDoctor, "Planlanan tedavinin tutarı, “Yapıldı” işaretlenince hastanın borcuna eklenir."),
           ...(canWrite ? [{ key: "actions", header: "", align: "right" as const, render: pendingActions }] : []),
         ]}
         rows={pending}
@@ -601,8 +589,8 @@ export function TreatmentTab() {
         selection={canWrite ? { selectedIds: selectedPending, onChange: setSelectedPending, isSelectable: canModify } : undefined}
         getRowAriaLabel={(exam) => `${exam.treatmentName}${exam.toothNo ? ` diş ${exam.toothNo}` : ""}`}
         emptyIcon={Stethoscope}
-        emptyText="Yapılacak tedavi yok"
-        emptyDescription={canWrite ? "Muayenede bulunan tedavileri yukarıdan “Yapılacaklara ekle” ile kaydedin; yapılınca tutarı borca eklenir." : undefined}
+        emptyText="Planlanan tedavi yok"
+        emptyDescription={canWrite ? "Muayenede bulunan tedavileri yukarıdan “Plana ekle” ile kaydedin; yapılınca tutarı borca eklenir." : undefined}
         mobileCard={(exam) => examCard(exam, pendingActions(exam), pendingDoctor)}
       />
 
@@ -618,40 +606,23 @@ export function TreatmentTab() {
         mobileCard={(exam) => examCard(exam, doneActions(exam), doneDoctor)}
       />
 
-      {canReadPlans && (canPlan || treatmentPlans.length > 0) && (
-        <Disclosure
-          className="bg-[rgb(var(--app-surface))]"
-          title="Tedavi planları (teklif)"
-          summary={treatmentPlansLoaded ? (treatmentPlans.length > 0 ? `${treatmentPlans.length} plan · borca yansımaz` : "Plan yok") : undefined}
-        >
-          <div className="space-y-3">
-            {treatmentPlans.length > 0 ? (
-              <ul className="-mx-3.5 divide-y divide-slate-100">
-                {treatmentPlans.map((plan) => {
-                  const status = PLAN_STATUS[plan.status] || { label: plan.status, tone: "neutral" as const };
-                  return (
-                    <li key={plan.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3.5 py-2 text-sm">
-                      {/* Plan sayfası ?planId= ile doğrudan bu planı açar. */}
-                      <Link href={`${planListHref}&planId=${encodeURIComponent(plan.id)}`} className="min-w-0 flex-1 font-medium text-slate-800 hover:text-primary hover:underline">{plan.title}</Link>
-                      <span className="text-xs text-slate-500">{plan.steps.length} adım</span>
-                      <Badge tone={status.tone}>{status.label}</Badge>
-                      {plan.totalCost != null && <span className="font-semibold tabular-nums text-slate-700">{money(plan.totalCost)}</span>}
-                    </li>
-                  );
-                })}
-              </ul>
-            ) : treatmentPlansLoaded ? (
-              <p className="text-sm text-slate-500">Bu hasta için tedavi planı yok.</p>
-            ) : null}
-            <div className="flex flex-wrap gap-2">
-              {treatmentPlans.length > 0 && <Button size="sm" variant="secondary" icon={ExternalLink} href={planListHref}>Planları aç</Button>}
-              {canPlan && <Button size="sm" variant="ghost" icon={Plus} href={newPlanHref}>Yeni plan</Button>}
-            </div>
-          </div>
-        </Disclosure>
-      )}
-
       {editing && <ExamEditModal exam={editing} onClose={() => setEditing(null)} />}
+
+      <PrintSelectModal
+        open={quoteOpen}
+        onClose={() => setQuoteOpen(false)}
+        title="Tedavi teklifi"
+        description="Teklife yazılacak tedavileri seçin."
+        itemLabel="tedavi"
+        rows={printRows(pending)}
+        initialSelectedIds={selectedPending}
+        onPrint={(ids) => {
+          void getLetterhead().then((clinic) => printTreatmentQuote(
+            { data, clinic, hidePhone: hidePatientPhone },
+            pending.filter((exam) => ids.includes(exam.id)).sort(byDateAsc),
+          ));
+        }}
+      />
 
       <PrintSelectModal
         open={printOpen}
@@ -660,11 +631,11 @@ export function TreatmentTab() {
         description="Belgeye yazılacak tedavileri seçin."
         itemLabel="tedavi"
         priceToggle
-        rows={done.map((exam) => ({ id: exam.id, date: formatDateText(exam.diagnosedAt), label: exam.treatmentName, meta: exam.toothNo ? `Diş ${exam.toothNo}` : undefined, amount: money(exam.amount) }))}
+        rows={printRows(done)}
         onPrint={(ids, showPrices) => {
           void getLetterhead().then((clinic) => printTreatmentReport(
             { data, clinic, hidePhone: hidePatientPhone },
-            done.filter((exam) => ids.includes(exam.id)).sort((a, b) => new Date(a.diagnosedAt).getTime() - new Date(b.diagnosedAt).getTime()),
+            done.filter((exam) => ids.includes(exam.id)).sort(byDateAsc),
             showPrices,
           ));
         }}

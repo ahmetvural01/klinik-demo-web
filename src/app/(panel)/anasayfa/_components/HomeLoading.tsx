@@ -19,8 +19,6 @@ export function HomeLoading() {
       agenda={can("appointments:read")}
       action={can("appointments:write")}
       stats={can("finance:center") && can("payments:read")}
-      announcements={can("announcements:read")}
-      messages={can("messages:read")}
     />
   );
 }

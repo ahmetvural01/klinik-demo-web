@@ -9,6 +9,7 @@ import { shouldHidePatientPhoneForUser } from "@/lib/patient-visibility-server";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
 import { addInstallmentPeriod, INSTALLMENT_PERIODS } from "@/lib/installment-schedule";
 import { requireActiveBranch } from "@/lib/branch-context";
+import { posSelectionRequired } from "@/lib/pos-requirement";
 import { computePatientBalances, loadOpenInstallmentSummaries } from "@/lib/patient-balance";
 import { BusinessRuleError } from "@/lib/public-error";
 import { formatCurrency } from "@/lib/format";
@@ -310,7 +311,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Geçersiz POS cihazı" }, { status: 400 });
       }
       const posRequired = yontem === "KREDI_KARTI" || yontem === "MAIL_ORDER";
-      if (posRequired && !posId) {
+      if (posRequired && !posId && await posSelectionRequired(yontem, auth.user.institutionId, branch.branchId)) {
         return NextResponse.json({ error: "Kart / mail order ile alınan peşinat için POS seçimi zorunlu" }, { status: 400 });
       }
       if (!posRequired && posId) {

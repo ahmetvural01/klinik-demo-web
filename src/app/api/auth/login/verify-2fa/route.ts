@@ -4,7 +4,6 @@ import { consumePendingTwoFactorChallenge, setAuthCookie, signToken, verifyPendi
 import { writeAudit } from "@/lib/api";
 import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rate-limit";
 import { verifyTwoFactorToken, verifyBackupCode, removeUsedBackupCode, currentTotpStep } from "@/lib/two-factor";
-import { DEFAULT_SUPERADMIN_MODULES } from "@/lib/superadmin-modules";
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
@@ -97,14 +96,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ message: "Bu doğrulama isteği daha önce kullanılmış." }, { status: 401 });
   }
 
-  const superadminModules = user.role === "SUPERADMIN" ? DEFAULT_SUPERADMIN_MODULES : undefined;
-
   const token = signToken({
     userId: user.id,
     role: user.role,
     institutionId: user.institutionId,
     fullName: user.fullName,
-    superadminModules,
     tokenVersion: user.tokenVersion,
   }, rememberMe);
 
@@ -116,6 +112,5 @@ export async function POST(req: NextRequest) {
     fullName: user.fullName,
     role: user.role,
     institutionId: user.institutionId,
-    ...(superadminModules ? { modules: superadminModules } : {}),
   });
 }

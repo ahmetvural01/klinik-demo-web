@@ -54,11 +54,11 @@ export const routes = {
   newLabOrder: (patientId?: string) => withQuery("/lab", { yeni: 1, patientId }),
   /** Laboratuvar listesi; isteğe bağlı sekme ("laboratuvarda", "klinikte"…). */
   labList: (tab?: string) => withQuery("/lab", { tab }),
-  /** Yapılacaklar: "arama" = Hasta aramaları, "gorev" = Ekip görevleri. */
+  /** Aramalar ve görevler: "arama" = Hasta aramaları, "gorev" = Ekip görevleri. */
   todos: (tab?: "arama" | "gorev", query: Query = {}) => withQuery("/yapilacaklar", { tab, ...query }),
-  /** Yeni görev formu (Yapılacaklar > Ekip görevleri); hasta verilirse seçili açılır. */
+  /** Yeni görev formu (Aramalar ve görevler > Ekip görevleri); hasta verilirse seçili açılır. */
   newTask: (options: PatientContext = {}) => withQuery("/yapilacaklar", { tab: "gorev", yeni: 1, patientId: options.patientId, patientName: options.patientName }),
-  /** Yeni hasta araması (Yapılacaklar > Hasta aramaları); hasta verilirse seçili açılır. */
+  /** Yeni hasta araması (Aramalar ve görevler > Hasta aramaları); hasta verilirse seçili açılır. */
   newFollowUp: (options: PatientContext = {}) => withQuery("/yapilacaklar", { tab: "arama", yeni: 1, patientId: options.patientId, patientName: options.patientName }),
   /** Tahsilat (gelir) formu; hasta verilirse seçili açılır (ad da verilmeli, form adı gösterir). */
   newCollection: (options: PatientContext = {}) =>
@@ -74,9 +74,7 @@ export const routes = {
    */
   stockList: (tab?: string) => withQuery("/stok", { tab }),
   /** Ana sayfadaki ekip mesajları bölümü. */
-  teamMessages: () => withQuery("/anasayfa", {}, "#ekip-mesajlari"),
   /** Yeni personel penceresi (Personel sayfasında). */
   newStaff: () => withQuery("/personel", { yeni: 1 }),
   /** İşlem kayıtları > Kayıt kontrolü (eski Sistem Durumu). */
-  recordCheck: () => withQuery("/log", { tab: "kontrol" }),
 } as const;

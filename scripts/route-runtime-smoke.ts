@@ -166,7 +166,6 @@ async function auditSuperadmin(browser: Awaited<ReturnType<typeof chromium.launc
   } finally {
     await context.close();
     await prisma.auditLog.deleteMany({ where: { userId: user.id } });
-    await prisma.superadminPermission.deleteMany({ where: { userId: user.id } });
     await prisma.user.delete({ where: { id: user.id } }).catch(() => {});
   }
 }

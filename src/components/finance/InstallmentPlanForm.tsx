@@ -12,7 +12,7 @@ import { Switch } from "@/components/ui/Switch";
 import { formatDateText } from "@/components/ui/Money";
 import { DoctorSelect } from "@/components/staff/DoctorSelect";
 import { PatientPicker, type PickedPatient } from "@/components/patient/PatientPicker";
-import { PaymentMethodPicker } from "@/components/finance/PaymentMethodPicker";
+import { PaymentMethodPicker, usePosDevices } from "@/components/finance/PaymentMethodPicker";
 import { useFocusWhenReady, useOpenReset } from "@/components/finance/use-open-reset";
 import type { PaymentContext } from "@/components/finance/PaymentForm";
 import {
@@ -148,6 +148,9 @@ export function InstallmentPlanForm({
   const [down, setDown] = useState("");
   const [collectDown, setCollectDown] = useState(true);
   const [downMethod, setDownMethod] = useState<PaymentMethod>("NAKIT");
+  // POS seçimi yalnız klinikte aktif POS cihazı tanımlıysa zorunlu (sunucu kuralıyla aynı).
+  const { devices: posDevices } = usePosDevices(requiresPos(downMethod));
+  const posAvailable = posDevices === null || posDevices.some((device) => device.isActive);
   const [downPosId, setDownPosId] = useState("");
   const [countChoice, setCountChoice] = useState<string>("3");
   const [customCount, setCustomCount] = useState("");
@@ -272,7 +275,7 @@ export function InstallmentPlanForm({
     if (!Number.isInteger(count) || count < 1 || count > MAX_INSTALLMENTS) next.count = `Taksit sayısı 1 ile ${MAX_INSTALLMENTS} arasında olmalı.`;
     if (!isValidDateKey(startDate)) next.start = "İlk taksit tarihini seçin.";
     if (!doctorId) next.doctor = "Planın hangi doktorun tedavisi için yapıldığını seçin.";
-    if (collectingDown && requiresPos(downMethod) && !downPosId) next.pos = "Kartla alınan peşinat için POS cihazı seçin.";
+    if (collectingDown && requiresPos(downMethod) && !downPosId && posAvailable) next.pos = "Kartla alınan peşinat için POS cihazı seçin.";
     if (!next.total && !next.down && !next.count && !next.start) {
       if (rows.length === 0 || rows.some((row) => !isValidDateKey(row.date) || !isPositiveMoney(row.amount) || Boolean(moneyInputError(row.amount)))) {
         next.rows = "Her taksidin tarihi ve 0'dan büyük tutarı olmalı.";

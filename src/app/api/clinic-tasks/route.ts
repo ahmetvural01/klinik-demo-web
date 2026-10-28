@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
     const status = sp.get("status") || undefined;
     const q = (sp.get("q") || "").trim();
     const take = Math.max(1, Math.min(500, Number(sp.get("take") || 100) || 100));
-    // Sayfalı kip (?paged=1&page=N): Yapılacaklar > Ekip görevleri'nin
+    // Sayfalı kip (?paged=1&page=N): Aramalar ve görevler > Ekip görevleri'nin
     // tamamlanan/iptal edilen listeleri. Önceden liste her açılışta kapanmış
     // görevler dahil 500 kaydı çekiyordu (hız raporu TG3). Yanıt yalnız bu
     // kipte { items, total, page, pageCount } olur; diğer çağıranlar (menü

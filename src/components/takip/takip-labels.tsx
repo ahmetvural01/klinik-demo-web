@@ -3,7 +3,7 @@ import { EmptyValue } from "@/components/ui/ListTable";
 import { formatDateText } from "@/components/ui/Money";
 import { turkeyDateKey } from "@/lib/tz";
 
-// Yapılacaklar ekranının (Hasta aramaları + Ekip görevleri) ve hasta
+// Aramalar ve görevler ekranının (Hasta aramaları + Ekip görevleri) ve hasta
 // dosyasındaki görev listesinin TEK etiket kaynağı. Önceden öncelik bir yerde
 // "Öncelik 2" sayısıyla, formda "Orta" diye yazılıyordu; görev durum/tür
 // etiketleri hasta dosyasında ayrı bir sözlükte farklı yazılıyordu ("Açık" /
@@ -51,7 +51,7 @@ export const TASK_TYPE_LABELS: Record<TaskType, string> = {
 };
 
 export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
-  ACIK: "Yapılacak",
+  ACIK: "Açık",
   BEKLEMEDE: "Beklemede",
   TAMAMLANDI: "Tamamlandı",
   IPTAL: "İptal edildi",

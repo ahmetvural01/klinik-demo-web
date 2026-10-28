@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { APPOINTMENT_VISITED_STATUSES } from "@/lib/appointment-status";
 import { computePatientBalances, moneyToNumber } from "@/lib/patient-balance";
 
 // Hasta listesinde (GET /api/patients?extras=1) satır başına "son ziyaret",
@@ -18,7 +19,6 @@ export type PatientListExtra = {
 };
 
 const UPCOMING_STATUSES = ["BEKLIYOR", "GELDI", "ONAYLANDI"] as const;
-const VISITED_STATUSES = ["GELDI", "TAMAMLANDI"] as const;
 
 export async function loadPatientListExtras(options: {
   institutionId: string | null;
@@ -50,7 +50,7 @@ export async function loadPatientListExtras(options: {
     includeVisits
       ? prisma.appointment.groupBy({
           by: ["patientId"],
-          where: { ...tenant, patientId: { in: ids }, startAt: { lt: now }, status: { in: [...VISITED_STATUSES] } },
+          where: { ...tenant, patientId: { in: ids }, startAt: { lt: now }, status: { in: [...APPOINTMENT_VISITED_STATUSES] } },
           _max: { startAt: true },
         })
       : Promise.resolve([]),

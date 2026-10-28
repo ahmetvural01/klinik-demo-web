@@ -27,8 +27,9 @@ model Institution {
   ownerId                String?                   @unique
   createdAt              DateTime                  @default(now())
   updatedAt              DateTime                  @updatedAt
-  adIntensity            AdIntensity               @default(MEDIUM)
-  adsEnabled             Boolean                   @default(false)
+  // Klinik panelinde Google AdSense reklamı gösterilsin mi (Süperadmin ›
+  // Reklamlar). Platform anahtarı (PlatformAdConfig.enabled) kapalıysa etkisiz.
+  adsEnabled             Boolean                   @default(true)
   maxActiveDoctors       Int?
   maxActiveUsers         Int?
   maxActiveBranches      Int?
@@ -41,12 +42,10 @@ model Institution {
   demoExpiresAt          DateTime?
   demoSourceRequestId    String?
   owner                  User?                     @relation("InstitutionOwner", fields: [ownerId], references: [id])
-  adAssignments          InstitutionAdAssignment[]
   announcements          Announcement[]
   clinicTasks            ClinicTask[]
   examinations           Examination[]
   prescriptions          Prescription[]
-  treatmentPlans         TreatmentPlan[]
   labOrders              LabOrder[]
   taksitPlans            TaksitPlan[]
   firmaIslemler          FirmaIslem[]
@@ -73,7 +72,6 @@ model Institution {
   whatsappWebSession     WhatsappWebSession?
   whatsappWebAuthKeys    WhatsappWebAuthKey[]
   whatsappMessages       WhatsappMessage[]
-  messages               Message[]
   documents              Document[]
   waitlistEntries        Waitlist[]
   bookingRequests        BookingRequest[]
@@ -81,8 +79,6 @@ model Institution {
   consentTemplates       ConsentTemplate[]
   patientConsents        PatientConsent[]
   smsTemplates           SmsTemplate[]
-  packageDefinitions     PackageDefinition[]
-  patientPackages        PatientPackage[]
   clinicUnits            ClinicUnit[]
   branches               ClinicBranch[]
   appointments           Appointment[]
@@ -94,8 +90,6 @@ model Institution {
   smsDispatches          SmsDispatch[]
   clinicTaskAssignees    ClinicTaskAssignee[]
   paymentRevisions       PaymentRevision[]
-  treatmentSteps         TreatmentStep[]
-  patientPackageUsages   PatientPackageUsage[]
   labTrips               LabTrip[]
   labOrderInvoices       LabOrderInvoice[]
   stockLotAllocations    StockMovementLotAllocation[]
@@ -140,8 +134,6 @@ model ClinicBranch {
   examinations    Examination[]
   payments        Payment[]
   prescriptions   Prescription[]
-  treatmentPlans  TreatmentPlan[]
-  patientPackages PatientPackage[]
   labOrders       LabOrder[]
   stockItems      StockItem[]
   stockMovements  StockMovement[]
@@ -156,7 +148,6 @@ model ClinicBranch {
   waitlistEntries Waitlist[]
   bookingRequests BookingRequest[]
   doctorBlocks    DoctorBlock[]
-  messages        Message[]
   patientFollowUps PatientFollowUp[]
   patientFollowUpEvents PatientFollowUpEvent[]
   reminders       Reminder[]
@@ -164,8 +155,6 @@ model ClinicBranch {
   whatsappMessages WhatsappMessage[]
   clinicTaskAssignees ClinicTaskAssignee[]
   paymentRevisions PaymentRevision[]
-  treatmentSteps TreatmentStep[]
-  patientPackageUsages PatientPackageUsage[]
   labTrips LabTrip[]
   labOrderInvoices LabOrderInvoice[]
   stockLotAllocations StockMovementLotAllocation[]
@@ -226,42 +215,6 @@ model DemoRequest {
   @@index([status])
   @@index([demoInstitutionId])
   @@index([createdAt])
-}
-
-model Advertisement {
-  id             String                    @id @default(cuid())
-  title          String
-  content        String
-  imageUrl       String?
-  ctaText        String?
-  ctaUrl         String?
-  sponsorName    String?
-  priority       Int                       @default(100)
-  isActive       Boolean                   @default(true)
-  startAt        DateTime?
-  endAt          DateTime?
-  maxImpressions Int?
-  dailyCap       Int?
-  createdAt      DateTime                  @default(now())
-  updatedAt      DateTime                  @updatedAt
-  assignments    InstitutionAdAssignment[]
-
-  @@index([isActive, priority])
-}
-
-model InstitutionAdAssignment {
-  id              String        @id @default(cuid())
-  institutionId   String
-  advertisementId String
-  isActive        Boolean       @default(true)
-  weight          Int           @default(100)
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
-  advertisement   Advertisement @relation(fields: [advertisementId], references: [id])
-  institution     Institution   @relation(fields: [institutionId], references: [id])
-
-  @@unique([institutionId, advertisementId])
-  @@index([institutionId, isActive])
 }
 
 model SmsPackage {
@@ -608,6 +561,19 @@ model PlatformTheme {
   updatedAt   DateTime @updatedAt
 }
 
+// Klinik paneli reklamları: tek sağlayıcı Google AdSense, tüm platform için
+// tek satır (id sabit 1). Kliniğe göre açma/kapama Institution.adsEnabled'da.
+// Kurallar: src/lib/panel-ads.ts; ayar ekranı: Süperadmin › Reklamlar.
+model PlatformAdConfig {
+  id          Int      @id @default(1)
+  enabled     Boolean  @default(false)
+  // "ca-pub-" + 16 hane (boşsa /ads.txt yayınlanmaz).
+  publisherId String   @default("")
+  // AdSense reklam birimi kimliği (yalnız rakam).
+  slotId      String   @default("")
+  updatedAt   DateTime @updatedAt
+}
+
 model SiteContent {
   id                Int      @id @default(1)
   heroBadge         String   @default("Dis Hekimi Klinikleri Icin Uretildi")
@@ -666,17 +632,14 @@ model User {
   labOrders               LabOrder[]             @relation("LabOrderDoctor")
   paymentsAsDoctor        Payment[]              @relation("PaymentDoctor")
   prescriptions           Prescription[]         @relation("PrescriptionDoctor")
-  messages                Message[]
   profile                 Profile?
   assignedFollowUps       PatientFollowUp[]      @relation("FollowUpAssignedDoctor")
   createdFollowUps        PatientFollowUp[]      @relation("FollowUpCreatedBy")
   createdFollowEvents     PatientFollowUpEvent[] @relation("FollowUpEventCreatedBy")
   updatedFollowEvents     PatientFollowUpEvent[] @relation("FollowUpEventUpdatedBy")
   stockMovements          StockMovement[]        @relation("StockMovementUser")
-  superadminPermission    SuperadminPermission?
   supportTickets          SupportTicket[]
   taksitPlanlari          TaksitPlan[]           @relation("TaksitPlanDoctor")
-  treatmentPlans          TreatmentPlan[]        @relation("TreatmentPlanDoctor")
   doctorBlocks            DoctorBlock[]
   assignedClinicTasks     ClinicTask[]           @relation("ClinicTaskAssignedUser")
   clinicTaskAssignments   ClinicTaskAssignee[]
@@ -697,8 +660,6 @@ model User {
   // yeniden kullanılmasını engeller (bkz. denetim raporu).
   twoFactorLastStep       Int?
   rateHistory             DoctorRateHistory[]    @relation("DoctorRateHistoryDoctor")
-  patientPackagesSold     PatientPackage[]       @relation("PatientPackageDoctor")
-  patientPackageUsages    PatientPackageUsage[]  @relation("PatientPackageUsageCreatedBy")
   patientAccessLogs       PatientAccessLog[]
   branchMemberships       UserBranch[]
 
@@ -753,15 +714,6 @@ model DoctorRateHistory {
   branch        ClinicBranch @relation(fields: [branchId, institutionId], references: [id, institutionId], onDelete: Cascade)
 
   @@index([institutionId, branchId, doctorId, effectiveFrom])
-}
-
-model SuperadminPermission {
-  id        String   @id @default(cuid())
-  userId    String   @unique
-  modules   Json
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Profile {
@@ -833,14 +785,12 @@ model Patient {
   followUpEvents             PatientFollowUpEvent[]
   clinicTasks                ClinicTask[]
   taksitPlanlari             TaksitPlan[]
-  treatmentPlans             TreatmentPlan[]
   documents                  Document[]
   consents                   PatientConsent[]
   waitlistEntries            Waitlist[]
   whatsappMessages           WhatsappMessage[]
   birthdaySmsLogs            BirthdaySmsLog[]
   celebrationSmsLogs         CelebrationSmsLog[]
-  packages                   PatientPackage[]
   accessLogs                 PatientAccessLog[]
   smsPreference              PatientSmsPreference?
   smsPreferenceEvents        PatientSmsPreferenceEvent[]
@@ -900,7 +850,6 @@ model Appointment {
   followUps        PatientFollowUp[]
   patient          Patient               @relation(fields: [patientId, institutionId, branchId], references: [id, institutionId, homeBranchId], onDelete: NoAction)
   waitlistEntries  Waitlist[]
-  packageUsages    PatientPackageUsage[]
   whatsappMessages WhatsappMessage[]
 
   @@index([doctorId])
@@ -1135,7 +1084,6 @@ model Payment {
   doctor         User?             @relation("PaymentDoctor", fields: [doctorId, institutionId], references: [id, institutionId], onDelete: NoAction)
   pos            PosDevice?        @relation(fields: [posId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: NoAction)
   taksitOdemeler TaksitOdeme[]
-  patientPackage PatientPackage?
   revisions      PaymentRevision[]
 
   @@unique([branchId, requestKey])
@@ -1304,6 +1252,8 @@ model SupportTicket {
   subject       String
   message       String
   answer        String?
+  answeredAt    DateTime?
+  answerSeenAt  DateTime?
   status        String       @default("OPEN")
   closedAt      DateTime?
   closedById    String?
@@ -1314,24 +1264,6 @@ model SupportTicket {
   @@index([userId])
   @@index([institutionId])
   @@index([institutionId, status, createdAt])
-}
-
-model Message {
-  id            String       @id @default(cuid())
-  userId        String
-  institutionId String
-  branchId      String
-  text          String
-  deletedAt     DateTime?
-  deletedById   String?
-  createdAt     DateTime     @default(now())
-  user          User         @relation(fields: [userId, institutionId], references: [id, institutionId], onDelete: NoAction)
-  institution   Institution  @relation(fields: [institutionId], references: [id], onDelete: Cascade)
-  branch        ClinicBranch @relation(fields: [branchId, institutionId], references: [id, institutionId], onDelete: Cascade)
-
-  @@index([userId])
-  @@index([institutionId, branchId, createdAt])
-  @@index([institutionId, branchId, deletedAt, createdAt])
 }
 
 model Announcement {
@@ -1372,148 +1304,6 @@ model Prescription {
   @@index([doctorId])
   @@unique([branchId, requestKey])
   @@unique([id, institutionId, branchId])
-}
-
-model TreatmentPlan {
-  id            String              @id @default(cuid())
-  institutionId String
-  branchId      String
-  requestKey    String?
-  patientId     String
-  doctorId      String
-  title         String
-  status        TreatmentPlanStatus @default(PLANLANDI)
-  totalCost     Decimal?            @db.Decimal(10, 2)
-  notes         String?
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @updatedAt
-  doctor        User                @relation("TreatmentPlanDoctor", fields: [doctorId, institutionId], references: [id, institutionId], onDelete: NoAction)
-  patient       Patient             @relation(fields: [patientId, institutionId, branchId], references: [id, institutionId, homeBranchId], onDelete: NoAction)
-  institution   Institution         @relation(fields: [institutionId], references: [id])
-  branch        ClinicBranch        @relation(fields: [branchId, institutionId], references: [id, institutionId])
-  steps         TreatmentStep[]
-
-  @@unique([id, institutionId, branchId])
-  @@unique([branchId, requestKey])
-  @@index([institutionId, branchId, patientId])
-  @@index([doctorId])
-}
-
-model TreatmentStep {
-  id            String        @id @default(cuid())
-  institutionId String
-  branchId      String
-  planId        String
-  order         Int
-  treatmentName String
-  toothNo       String?
-  amount        Decimal       @db.Decimal(10, 2)
-  status        String        @default("BEKLIYOR")
-  doneAt        DateTime?
-  note          String?
-  archivedAt    DateTime?
-  archivedById  String?
-  archiveReason String?
-  createdAt     DateTime      @default(now())
-  institution   Institution   @relation(fields: [institutionId], references: [id], onDelete: NoAction)
-  branch        ClinicBranch  @relation(fields: [branchId, institutionId], references: [id, institutionId], onDelete: NoAction)
-  plan          TreatmentPlan @relation(fields: [planId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: Cascade)
-
-  @@index([planId])
-  @@index([planId, archivedAt])
-}
-
-// Kurumun sattığı, yeniden kullanılabilir paket şablonu (ör. "6 Seans
-// Detertraj Paketi"). Satış anında PatientPackage bu şablondan bir kopya
-// alır (name/sessionCount/price snapshot) — tanım sonradan değişse veya
-// pasifleştirilse bile önceden satılmış paketlerin koşulları değişmez.
-model PackageDefinition {
-  id              String           @id @default(cuid())
-  institutionId   String
-  name            String
-  treatmentType   String?
-  sessionCount    Int
-  price           Decimal          @db.Decimal(10, 2)
-  validityDays    Int              @default(365)
-  isActive        Boolean          @default(true)
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-  institution     Institution      @relation(fields: [institutionId], references: [id])
-  patientPackages PatientPackage[]
-
-  @@unique([id, institutionId])
-  @@index([institutionId])
-}
-
-// Bir hastaya satılmış paket örneği — kalan/kullanılan seans sayısını ve
-// (varsa) bağlı ödeme/taksit planını takip eder. "Otomatik borçlandırma":
-// satış anında ya tek seferlik bir Payment ya da (peşinat tam değilse) bir
-// TaksitPlan otomatik oluşturulur; ikisi de muhasebe ekranında normal bir
-// tahsilat/taksit gibi görünür, ayrı bir "paket geliri" silosu yoktur.
-model PatientPackage {
-  id            String                @id @default(cuid())
-  requestKey    String?
-  institutionId String
-  branchId      String
-  patientId     String
-  definitionId  String?
-  doctorId      String?
-  name          String
-  sessionsTotal Int
-  sessionsUsed  Int                   @default(0)
-  totalPrice    Decimal               @db.Decimal(10, 2)
-  purchasedAt   DateTime              @default(now())
-  expiresAt     DateTime?
-  status        PatientPackageStatus  @default(AKTIF)
-  note          String?
-  paymentId     String?               @unique
-  taksitPlanId  String?               @unique
-  createdAt     DateTime              @default(now())
-  updatedAt     DateTime              @updatedAt
-  institution   Institution           @relation(fields: [institutionId], references: [id])
-  branch        ClinicBranch          @relation(fields: [branchId, institutionId], references: [id, institutionId])
-  patient       Patient               @relation(fields: [patientId, institutionId, branchId], references: [id, institutionId, homeBranchId], onDelete: NoAction)
-  definition    PackageDefinition?    @relation(fields: [definitionId, institutionId], references: [id, institutionId], onDelete: NoAction)
-  doctor        User?                 @relation("PatientPackageDoctor", fields: [doctorId, institutionId], references: [id, institutionId], onDelete: NoAction)
-  payment       Payment?              @relation(fields: [paymentId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: NoAction)
-  taksitPlan    TaksitPlan?           @relation(fields: [taksitPlanId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: NoAction)
-  usages        PatientPackageUsage[]
-
-  @@unique([branchId, requestKey])
-  @@unique([id, institutionId, branchId])
-  @@unique([paymentId, institutionId, branchId])
-  @@unique([taksitPlanId, institutionId, branchId])
-  @@index([institutionId, branchId])
-  @@index([patientId])
-  @@index([status])
-}
-
-// Paketten bir seansın "harcandığı" an — mümkünse ilgili randevuya bağlanır,
-// böylece paket kullanımı ile randevu geçmişi arasında iz kaybolmaz.
-model PatientPackageUsage {
-  id               String         @id @default(cuid())
-  institutionId    String
-  branchId         String
-  requestKey       String?
-  patientPackageId String
-  appointmentId    String?
-  usedAt           DateTime       @default(now())
-  note             String?
-  status           String         @default("ACTIVE")
-  voidedAt         DateTime?
-  createdById      String?
-  institution      Institution    @relation(fields: [institutionId], references: [id], onDelete: NoAction)
-  branch           ClinicBranch   @relation(fields: [branchId, institutionId], references: [id, institutionId], onDelete: NoAction)
-  patientPackage   PatientPackage @relation(fields: [patientPackageId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: Cascade)
-  appointment      Appointment?   @relation(fields: [appointmentId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: NoAction)
-  createdBy        User?          @relation("PatientPackageUsageCreatedBy", fields: [createdById, institutionId], references: [id, institutionId], onDelete: NoAction)
-
-  // Aynı randevu için aynı paketten iki kez seans düşülmesin.
-  @@unique([patientPackageId, appointmentId])
-  @@unique([branchId, requestKey])
-  @@index([patientPackageId])
-  @@index([appointmentId])
-  @@index([patientPackageId, status])
 }
 
 model LabOrder {
@@ -1738,7 +1528,6 @@ model TaksitPlan {
   patient        Patient          @relation(fields: [patientId, institutionId, branchId], references: [id, institutionId, homeBranchId], onDelete: NoAction)
   institution    Institution      @relation(fields: [institutionId], references: [id])
   branch         ClinicBranch     @relation(fields: [branchId, institutionId], references: [id, institutionId])
-  patientPackage PatientPackage?
 
   @@index([institutionId, branchId, patientId])
   @@index([doctorId])
@@ -2324,12 +2113,6 @@ enum BillingCycle {
   YILLIK
 }
 
-enum AdIntensity {
-  LOW
-  MEDIUM
-  HIGH
-}
-
 enum InvoiceStatus {
   PENDING
   PAID
@@ -2389,13 +2172,6 @@ enum ReminderStatus {
   IPTAL
 }
 
-enum TreatmentPlanStatus {
-  PLANLANDI
-  DEVAM_EDIYOR
-  TAMAMLANDI
-  IPTAL
-}
-
 enum LabOrderStatus {
   DEVAM_EDIYOR
   HASTAYA_TAKILDI
@@ -2414,13 +2190,6 @@ enum ClinicTaskStatus {
   ACIK
   BEKLEMEDE
   TAMAMLANDI
-  IPTAL
-}
-
-enum PatientPackageStatus {
-  AKTIF
-  TAMAMLANDI
-  SURESI_DOLDU
   IPTAL
 }
 

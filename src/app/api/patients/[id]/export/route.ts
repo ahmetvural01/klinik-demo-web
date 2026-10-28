@@ -9,16 +9,16 @@ type Params = { params: Promise<{ id: string }> };
 
 /**
  * Dışa aktarılan her bölüm, hasta dosyasında o bölümü görmek için gereken
- * okuma yetkisine bağlıdır (GET /api/patients/[id] ile aynı kural + belge,
- * plan ve takip uçlarının kendi yetkileri). Önceden uç yalnız `patients:read`
+ * okuma yetkisine bağlıdır (GET /api/patients/[id] ile aynı kural + belge ve
+ * takip uçlarının kendi yetkileri). Önceden uç yalnız `patients:read`
  * istiyordu: muayene kayıtlarını göremeyen bir rol "Yapılan tedaviler"i PDF
- * olarak indirebiliyordu (KVKK — en az yetki ilkesi).
+ * olarak indirebiliyordu (KVKK — en az yetki ilkesi). Planlanan tedaviler
+ * muayene kayıtlarının içindedir (ayrı tedavi planı kaldırıldı).
  */
 const SECTION_PERMISSIONS = {
   appointments: "appointments:read",
   waitlistEntries: "appointments:read",
   examinations: "examinations:read",
-  treatmentPlans: "treatment:read",
   payments: "payments:read",
   prescriptions: "prescriptions:read",
   labOrders: "lab:read",
@@ -107,14 +107,6 @@ export async function GET(request: NextRequest, props: Params) {
         include: {
           doctor: { select: { id: true, fullName: true } },
           taksitler: { orderBy: { vadeDate: "asc" } },
-        },
-        orderBy: { createdAt: "desc" },
-      } : false,
-      treatmentPlans: can.treatmentPlans ? {
-        where: inBranch,
-        include: {
-          doctor: { select: { id: true, fullName: true } },
-          steps: { orderBy: { order: "asc" } },
         },
         orderBy: { createdAt: "desc" },
       } : false,

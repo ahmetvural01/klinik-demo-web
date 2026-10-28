@@ -5,10 +5,9 @@ import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rate-limit";
 import { verifyTwoFactorToken, verifyBackupCode, removeUsedBackupCode, currentTotpStep } from "@/lib/two-factor";
 import { completePlatformLogin } from "@/lib/platform-auth";
 
-// Genel /api/auth/login/verify-2fa uç noktasından AYRI: süperadmin token'ı
-// superadminModules claim'ini taşımalı (bkz. superadmin-modules.ts), genel
-// uç bunu bilmiyor. İki yerde neredeyse aynı mantığı tutmak yerine, bu uç
-// sadece süperadmin'e özgü token imzalama kısmını ekliyor.
+// Genel /api/auth/login/verify-2fa uç noktasından AYRI: süperadmin oturumu
+// platform girişinin tek kaynağından (src/lib/platform-auth.ts) açılır; bu uç
+// yalnız süperadmin'e özgü doğrulama adımını ekliyor.
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const pendingToken = String(body?.pendingToken || "");

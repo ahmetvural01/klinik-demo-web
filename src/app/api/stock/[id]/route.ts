@@ -23,32 +23,12 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ id: stri
       ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
       branchId: branch.branchId,
     },
+    // Ürün ayrıntısı yalnız hareket geçmişini gösterir; maliyet katmanları (FIFO) ekranda yok.
     include: {
       movements: {
         orderBy: { createdAt: "desc" },
         take: 50,
-        include: {
-          user: { select: { fullName: true } },
-          lotAllocations: {
-            include: {
-              lot: {
-                select: {
-                  lotNo: true,
-                  expiresAt: true,
-                  unitCost: true,
-                  supplierName: true,
-                },
-              },
-            },
-          },
-        },
-      },
-      lots: {
-        where: { status: { not: "IPTAL" } },
-        orderBy: [
-          { expiresAt: { sort: "asc", nulls: "last" } },
-          { receivedAt: "desc" },
-        ],
+        include: { user: { select: { fullName: true } } },
       },
     },
   });
@@ -60,16 +40,7 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ id: stri
       ...item,
       unitPrice: null,
       category: normalizeCategory(item.category),
-      lots: (item.lots || []).map((lot: any) => ({ ...lot, unitCost: null })),
-      movements: (item.movements || []).map((movement: any) => ({
-        ...movement,
-        unitPrice: null,
-        lotAllocations: (movement.lotAllocations || []).map((allocation: any) => ({
-          ...allocation,
-          unitCost: null,
-          lot: allocation.lot ? { ...allocation.lot, unitCost: null } : allocation.lot,
-        })),
-      })),
+      movements: (item.movements || []).map((movement: any) => ({ ...movement, unitPrice: null })),
     });
   }
 
@@ -85,7 +56,7 @@ export async function PUT(req: NextRequest, props: { params: Promise<{ id: strin
 
   const parsed = stockItemUpdateSchema.safeParse(await req.json());
   if (!parsed.success) {
-    return NextResponse.json({ error: "Stok kartı bilgileri geçersiz", errors: formatZodError(parsed.error) }, { status: 400 });
+    return NextResponse.json({ error: "Ürün bilgileri geçersiz", errors: formatZodError(parsed.error) }, { status: 400 });
   }
   const { name, category, unit, minQuantity, barcode, expiresAt, storageLocation } = parsed.data;
   const existing = await (prisma as any).stockItem.findFirst({
@@ -111,7 +82,7 @@ export async function PUT(req: NextRequest, props: { params: Promise<{ id: strin
     });
     if (nameConflict) {
       return NextResponse.json(
-        { error: `"${nameConflict.name}" isimli başka bir stok kartı zaten var.` },
+        { error: `"${nameConflict.name}" adlı başka bir ürün zaten var.` },
         { status: 409 }
       );
     }
@@ -141,7 +112,7 @@ export async function PUT(req: NextRequest, props: { params: Promise<{ id: strin
     });
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2002") {
-      return NextResponse.json({ error: `"${name}" isimli başka bir stok kartı zaten var.` }, { status: 409 });
+      return NextResponse.json({ error: `"${name}" adlı başka bir ürün zaten var.` }, { status: 409 });
     }
     throw error;
   }
@@ -187,23 +158,31 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
   }
   const { type, quantity, note, supplier } = parsed.data;
   let { unitPrice } = parsed.data;
-  // Fiyatı girilmemiş giriş (sayım fazlası, iade) ₺0 maliyetli parti açıp
-  // ortalama maliyeti düşürmesin: mevcut partilerin ağırlıklı ortalaması kullanılır.
+  // Fiyatı girilmemiş giriş (sayım fazlası) ₺0 maliyetle girip ortalama
+  // maliyeti düşürmesin: kalan stoğun ağırlıklı ortalama maliyeti, stok
+  // kalmamışsa son teslim alınan alış fiyatı kullanılır (ekranda maliyet sorulmaz).
   if (type === "GIRIS" && unitPrice === undefined) {
+    const scope = { ...(institutionId ? { institutionId } : {}), branchId: branch.branchId };
     const lots = await (prisma as any).stockLot.findMany({
-      where: {
-        stockItemId: params.id,
-        ...(institutionId ? { institutionId } : {}),
-        branchId: branch.branchId,
-        status: "AKTIF",
-        quantityRemaining: { gt: 0 },
-      },
+      where: { stockItemId: params.id, ...scope, status: "AKTIF", quantityRemaining: { gt: 0 } },
       select: { quantityRemaining: true, unitCost: true },
     });
     const lotQuantity = lots.reduce((sum: number, lot: any) => sum + Number(lot.quantityRemaining || 0), 0);
     if (lotQuantity > 0) {
       const lotCost = lots.reduce((sum: number, lot: any) => sum + Number(lot.quantityRemaining || 0) * Number(lot.unitCost || 0), 0);
       unitPrice = Math.round((lotCost / lotQuantity) * 100) / 100;
+    } else {
+      const lastLine = await prisma.purchaseItem.findFirst({
+        where: {
+          stockItemId: params.id,
+          ...scope,
+          archivedAt: null,
+          purchase: { status: "AKTIF", receiptStatus: "TESLIM_ALINDI" },
+        },
+        orderBy: [{ purchase: { tarih: "desc" } }, { createdAt: "desc" }],
+        select: { unitPrice: true },
+      });
+      if (lastLine) unitPrice = Math.round(Number(lastLine.unitPrice) * 100) / 100;
     }
   }
   try {

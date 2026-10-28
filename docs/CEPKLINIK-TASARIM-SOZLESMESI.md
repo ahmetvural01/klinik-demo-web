@@ -589,11 +589,11 @@ silinir. O zamana kadar sayfada elle yama yazılmaz; aşağıdaki geçici kurala
 ## 3. Sözcükler
 
 **Ekran adları**
-- Menü: Ana sayfa · Randevular · Hastalar · Yapılacaklar · Laboratuvar · İletişim ·
+- Menü: Ana sayfa · Randevular · Hastalar · Aramalar ve görevler · Laboratuvar · İletişim ·
   Muhasebe · Hakedişim · Raporlar · Fiyat listesi · Stok · Satın alma · Personel · Ayarlar ·
   İşlem kayıtları.
-- Yapılacaklar sekmeleri "Hasta aramaları" ve "Ekip görevleri"dir.
-- İşlem kayıtları sekmeleri "Kayıtlar" ve "Kayıt kontrolü"dür.
+- Aramalar ve görevler sekmeleri "Hasta aramaları" ve "Ekip görevleri"dir. "Yapılacak" sözcüğü kullanılmaz:
+  ana sayfa listesi ve zil "Bekleyen işler", hasta dosyasındaki bekleyen tedaviler "Planlanan tedaviler".
 - Diğer ekranlar: Profilim · Destek.
 - Hastanın tüm bilgilerinin bulunduğu ekran **Hasta dosyası**dır.
 

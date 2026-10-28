@@ -76,6 +76,15 @@ export const EVENT_MESSAGES: EventMessage[] = [
     placeholders: APPOINTMENT_TOKENS,
   },
   {
+    code: "ANKET",
+    group: "randevu",
+    title: "Tedavi sonrası değerlendirme",
+    when: "Randevu tamamlanınca, 2 saat sonra gider",
+    detail: "Randevu “Tamamlandı” işaretlenince, bitişinden en az 2 saat sonra ve 09:00–20:00 arası bir kez gider; randevu formunda “Değerlendirme” seçili olmalı. Mesajda kliniğin değerlendirme bağlantısı (Ayarlar › Klinik) yer alır.",
+    rule: "appointment-flag",
+    placeholders: [...APPOINTMENT_TOKENS, "surveyLink"],
+  },
+  {
     code: "ODEME_YAKLASIYOR",
     group: "odeme",
     title: "Vadesi yaklaşan ödeme",

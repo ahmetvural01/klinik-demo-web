@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarPlus, PhoneCall, PhoneOff, UserPlus, X } from "lucide-react";
+import { CalendarPlus, PhoneCall, UserPlus, X } from "lucide-react";
+import { usePermissions } from "@/components/auth/PermissionProvider";
 import { Modal } from "@/components/ui/Modal";
 import { FormModal } from "@/components/ui/FormModal";
 import { Button } from "@/components/ui/Button";
@@ -52,7 +53,6 @@ type PendingRequestsModalProps = {
 };
 
 type OnlineStatus = "BEKLIYOR" | "ONAYLANDI" | "REDDEDILDI";
-type WaitlistFilter = "TUMU" | "BEKLIYOR" | "ARANDI";
 type ListState<T> = { items: T[]; loading: boolean; loaded: boolean; error: string | null };
 
 const APPROVE_REQUIRED = "Online talebe randevu vermek için “Randevu onaylama” yetkisi gerekir.";
@@ -127,11 +127,6 @@ function sinceText(iso: string, now: Date) {
   return formatDayShort(new Date(iso), now);
 }
 
-function stampNow() {
-  const now = new Date();
-  return `${now.getDate()}.${String(now.getMonth() + 1).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-}
-
 /**
  * "Talepler": internetten gelen randevu talepleri ve bekleme listesi tek
  * pencerede, sayaçlı sekmelerle. Online taleplerde durum süzgeci (bekleyen /
@@ -152,7 +147,8 @@ export function PendingRequestsModal({
 }: PendingRequestsModalProps) {
   const [tab, setTab] = useState<PendingTab>(initialTab);
   const [onlineStatus, setOnlineStatus] = useState<OnlineStatus>("BEKLIYOR");
-  const [waitlistFilter, setWaitlistFilter] = useState<WaitlistFilter>("TUMU");
+  // Aranacak hasta tek yerde izlenir: Aramalar ve görevler > Hasta aramaları.
+  const canTrackCalls = usePermissions().can("hastatracking:write");
   const pending = useList<BookingRequestEntry>("/api/booking-requests");
   // Geçmiş talepler yalnız o süzgeç seçilince yüklenir.
   const history = useList<BookingRequestEntry>(tab === "online" && onlineStatus !== "BEKLIYOR" ? `/api/booking-requests?status=${onlineStatus}` : null);
@@ -168,13 +164,8 @@ export function PendingRequestsModal({
     () => [...online.items].sort((a, b) => String(preferredDateKeyOf(a.preferredFrom)).localeCompare(String(preferredDateKeyOf(b.preferredFrom)))),
     [online.items],
   );
+  // Eski "Arandı" durumundaki kayıtlar da bekleyen hastadır (arama takibi artık Hasta aramaları'nda).
   const activeWaitlist = useMemo(() => waitlist.items.filter((entry) => entry.status === "BEKLIYOR" || entry.status === "ARANDI"), [waitlist.items]);
-  const waitlistRows = useMemo(
-    () => (waitlistFilter === "TUMU" ? activeWaitlist : activeWaitlist.filter((entry) => entry.status === waitlistFilter)),
-    [activeWaitlist, waitlistFilter],
-  );
-  const toCall = activeWaitlist.filter((entry) => entry.status === "BEKLIYOR").length;
-  const called = activeWaitlist.length - toCall;
   const canScheduleOnline = permissions.canCreate && permissions.canApprove;
 
   const closeUnlinked = async (request: BookingRequestEntry) => {
@@ -213,20 +204,32 @@ export function PendingRequestsModal({
     }
   };
 
-  const markCalled = async (entry: WaitlistEntry, outcome: "ulaşıldı" | "ulaşılamadı") => {
+  /**
+   * Bekleme listesindeki hastayı Hasta aramaları'na ekler (uygun saat teklif
+   * etmek için). Önceden listede ayrı bir "Arandı: ulaşıldı/ulaşılamadı" kaydı
+   * tutuluyordu; aynı hasta iki ayrı yerde izleniyordu. Hastaya randevu
+   * verilince açık araması kendiliğinden kapanır.
+   */
+  const addToCalls = async (entry: WaitlistEntry) => {
     setBusyId(entry.id);
     try {
-      const line = `[${stampNow()}] Arandı: ${outcome}`;
-      const nextNote = [entry.note || "", line].filter(Boolean).join("\n").slice(-1000);
-      await clientMutation(`/api/waitlist/${entry.id}`, {
-        method: "PATCH",
+      const from = preferredText(entry.preferredFrom);
+      const to = preferredText(entry.preferredTo);
+      const when = from ? `${formatDayShort(from.day, now)}${to ? ` – ${formatDayShort(to.day, now)}` : ""}` : "tarih fark etmez";
+      await clientMutation("/api/patient-follow-ups", {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "ARANDI", note: nextNote }),
-      }, "Bekleme kaydı güncellenemedi.");
-      waitlist.setItems((items) => items.map((item) => (item.id === entry.id ? { ...item, status: "ARANDI", note: nextNote } : item)));
-      showToastSafe({ message: `${entry.patient.fullName}: arandı (${outcome}).`, type: "success" });
+        body: JSON.stringify({
+          patientId: entry.patient.id,
+          ...(entry.doctor?.id ? { doctorId: entry.doctor.id } : {}),
+          type: "GERI_ARA",
+          note: `Bekleme listesi: uygun saat teklif edilecek (${when}${entry.doctor?.fullName ? `, ${entry.doctor.fullName}` : ""}).`,
+          nextActionAt: new Date().toISOString(),
+        }),
+      }, "Hasta aramalarına eklenemedi.");
+      showToastSafe({ message: `${entry.patient.fullName} hasta aramalarına eklendi.`, type: "success" });
     } catch (callError) {
-      showToastSafe({ message: callError instanceof Error ? callError.message : "Bekleme kaydı güncellenemedi.", type: "error" });
+      showToastSafe({ message: callError instanceof Error ? callError.message : "Hasta aramalarına eklenemedi.", type: "error" });
     } finally {
       setBusyId(null);
     }
@@ -342,24 +345,13 @@ export function PendingRequestsModal({
         <ActionMenu
           label={`${row.patient.fullName} için diğer işlemler`}
           items={[
-            { key: "ok", label: "Arandı: ulaşıldı", icon: PhoneCall, disabled: busyId === row.id, onSelect: () => void markCalled(row, "ulaşıldı") },
-            { key: "no", label: "Arandı: ulaşılamadı", icon: PhoneOff, disabled: busyId === row.id, onSelect: () => void markCalled(row, "ulaşılamadı") },
-            { key: "cikar", label: "Listeden çıkar", icon: X, danger: true, separatorBefore: true, disabled: busyId === row.id, onSelect: () => void removeEntry(row) },
+            ...(canTrackCalls ? [{ key: "ara", label: "Hasta aramalarına ekle", icon: PhoneCall, disabled: busyId === row.id, onSelect: () => void addToCalls(row) }] : []),
+            { key: "cikar", label: "Listeden çıkar", icon: X, danger: true, separatorBefore: canTrackCalls, disabled: busyId === row.id, onSelect: () => void removeEntry(row) },
           ]}
         />
       </div>
     );
   }
-
-  // Son arama kaydı "[10.10 14:02] Arandı: ulaşılamadı" biçiminde saklanır;
-  // rozet zaten "Arandı" dediği için satırda yalnız "10.10 14:02 · ulaşılamadı".
-  const lastCallLine = (note: string | null | undefined) => {
-    const lines = String(note || "").split("\n").filter((line) => line.startsWith("["));
-    if (lines.length === 0) return null;
-    const last = lines[lines.length - 1];
-    const match = /^\[([^\]]+)\]\s*(?:Arandı:\s*)?(.*)$/.exec(last);
-    return match ? [match[1], match[2]].filter(Boolean).join(" · ") : last;
-  };
 
   const waitlistColumns: ListTableColumn<WaitlistEntry>[] = [
     {
@@ -398,16 +390,6 @@ export function PendingRequestsModal({
         return text ? <span className="line-clamp-2 text-xs text-slate-600">{text}</span> : <EmptyValue />;
       },
     },
-    {
-      key: "durum",
-      header: "Durum",
-      render: (row) => (
-        <div>
-          <Badge tone={row.status === "ARANDI" ? "info" : "warning"}>{row.status === "ARANDI" ? "Arandı" : "Aranacak"}</Badge>
-          {row.status === "ARANDI" && lastCallLine(row.note) && <p className="mt-1 text-xs text-slate-500">{lastCallLine(row.note)}</p>}
-        </div>
-      ),
-    },
     { key: "actions", header: "", align: "right", render: (row) => waitlistActions(row) },
   ];
 
@@ -442,11 +424,9 @@ export function PendingRequestsModal({
             <p className="font-semibold text-slate-800">{row.patient.fullName}</p>
             {contact(row.patient.phone)}
           </div>
-          <Badge tone={row.status === "ARANDI" ? "info" : "warning"}>{row.status === "ARANDI" ? "Arandı" : "Aranacak"}</Badge>
         </div>
         <p className="text-xs text-slate-600">{from ? formatDayShort(from.day, now) : "Tarih fark etmez"} · {row.doctor?.fullName || "Doktor fark etmez"}</p>
         {text && <p className="text-xs text-slate-500">{text}</p>}
-        {row.status === "ARANDI" && lastCallLine(row.note) && <p className="text-xs text-slate-400">{lastCallLine(row.note)}</p>}
         {waitlistActions(row)}
       </div>
     );
@@ -503,31 +483,19 @@ export function PendingRequestsModal({
           ) : (
             <ListTable
               columns={waitlistColumns}
-              rows={waitlistRows}
+              rows={activeWaitlist}
               rowKey={(row) => row.id}
-              header={(
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-2.5">
-                  <ChoiceCards
-                    label="Arama durumu"
-                    labelHidden
-                    variant="pills"
-                    value={waitlistFilter}
-                    onChange={setWaitlistFilter}
-                    options={[
-                      { value: "TUMU", label: "Tümü" },
-                      { value: "BEKLIYOR", label: "Aranacak", count: waitlist.loaded ? toCall : undefined, countTone: "warning" },
-                      { value: "ARANDI", label: "Arandı", count: waitlist.loaded ? called : undefined },
-                    ]}
-                  />
-                  {permissions.canCreate && <Button size="sm" variant="secondary" icon={UserPlus} onClick={() => setAdding(true)}>Listeye hasta ekle</Button>}
+              header={permissions.canCreate ? (
+                <div className="flex items-center justify-end gap-2 border-b border-slate-100 px-4 py-2.5">
+                  <Button size="sm" variant="secondary" icon={UserPlus} onClick={() => setAdding(true)}>Listeye hasta ekle</Button>
                 </div>
-              )}
+              ) : undefined}
               loading={waitlist.loading && !waitlist.loaded}
               error={waitlist.loaded ? null : waitlist.error}
               staleError={waitlist.loaded ? waitlist.error : null}
               onRetry={() => void waitlist.reload()}
-              emptyText={waitlistFilter === "TUMU" ? "Bekleme listesi boş" : "Bu durumda hasta yok"}
-              emptyDescription={waitlistFilter === "TUMU" ? "Uygun saat bulunamayan hastayı ekleyin; bir randevu boşalınca buradan arayın." : undefined}
+              emptyText="Bekleme listesi boş"
+              emptyDescription="Uygun saat bulunamayan hastayı ekleyin; bir randevu boşalınca buradan randevu verin."
               mobileCard={waitlistCard}
             />
           )}

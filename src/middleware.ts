@@ -23,6 +23,9 @@ const PUBLIC_PREFIXES = [
   "/api/public/booking",
   "/sms-onay",
   "/api/public/sms-consent",
+  // Google AdSense yetkili satıcı dosyası (oturumsuz okunur). Noktalı adres
+  // aşağıdaki statik dosya kuralından da geçer; açıkça burada da durur.
+  "/ads.txt",
 ];
 
 // Rol bazlı modül erişimi (DOKTOR/ASİSTAN/BANKO/MUHASEBE gibi klinik rollerinin

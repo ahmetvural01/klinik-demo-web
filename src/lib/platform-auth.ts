@@ -3,7 +3,6 @@ import type { User } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { setAuthCookie, signPendingTwoFactorToken, signToken, verifyPassword } from "@/lib/auth";
 import { writeAudit } from "@/lib/api";
-import { DEFAULT_SUPERADMIN_MODULES } from "@/lib/superadmin-modules";
 import { getClientIpFromHeaders } from "@/lib/rate-limit";
 import { clearFailures, isFailureBlocked, recordFailure } from "@/lib/security-store";
 import { findInstitutionByLoginName, isPlatformLoginName, startSuperadminClinicSession } from "@/lib/superadmin-clinic-session";
@@ -53,18 +52,15 @@ export async function verifyPlatformCredentials(
 
 /** Platform oturumu (klinik_token çerezi): Platform Yönetimi ve kliniğe gizli girişten "panele dön" için. */
 export async function startPlatformSession(user: PlatformUser, how: string) {
-  const modules = DEFAULT_SUPERADMIN_MODULES;
   const token = signToken({
     userId: user.id,
     role: user.role,
     institutionId: null,
     fullName: user.fullName,
-    superadminModules: modules,
     tokenVersion: user.tokenVersion,
   });
   await setAuthCookie(token);
   await writeAudit(user.id, "LOGIN", how, { id: user.id, role: "SUPERADMIN" });
-  return modules;
 }
 
 export async function startPendingTwoFactor(user: PlatformUser) {
@@ -132,8 +128,8 @@ export async function superadminClinicLogin(
  */
 export async function completePlatformLogin(user: PlatformUser, institutionInput: string, how: string) {
   if (!institutionInput.trim()) {
-    const modules = await startPlatformSession(user, how);
-    return NextResponse.json({ id: user.id, fullName: user.fullName, role: user.role, institutionId: null, modules });
+    await startPlatformSession(user, how);
+    return NextResponse.json({ id: user.id, fullName: user.fullName, role: user.role, institutionId: null });
   }
   const clinic = isPlatformLoginName(institutionInput) ? null : await findInstitutionByLoginName(institutionInput);
   if (!clinic) return clinicNotFound(institutionInput);

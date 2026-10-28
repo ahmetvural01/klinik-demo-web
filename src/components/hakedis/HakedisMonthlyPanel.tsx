@@ -177,7 +177,7 @@ export function HakedisMonthlyPanel({ doctorId, canPay = false, onPay, refreshTo
       ...breakdownItems(d).map((item) => ({ Bölüm: "Hesap dökümü", Tarih: "", Açıklama: item.label, Yöntem: "", Tutar: csvAmount(item.amount, item.deduction) })),
       ...d.examinations.map((e) => ({ Bölüm: "Tedaviler", Tarih: shortDate(e.tarih), Açıklama: `${e.hasta} — ${e.tedavi}${e.dis ? ` (diş ${e.dis})` : ""}`, Yöntem: "", Tutar: csvAmount(e.tutar) })),
       ...d.patientPayments.map((p) => ({ Bölüm: "Hasta tahsilatları", Tarih: shortDate(p.tarih), Açıklama: p.hasta, Yöntem: methodLabel(p.yontem), Tutar: csvAmount(p.tutar) })),
-      ...d.labInvoices.map((i) => ({ Bölüm: "Laboratuvar faturaları", Tarih: shortDate(i.tarih), Açıklama: `${i.lab} — ${i.kalem}`, Yöntem: "", Tutar: csvAmount(i.tutar) })),
+      ...d.labInvoices.map((i) => ({ Bölüm: "Laboratuvar ücretleri", Tarih: shortDate(i.tarih), Açıklama: `${i.lab} — ${i.kalem}`, Yöntem: "", Tutar: csvAmount(i.tutar) })),
       ...d.payoutExpenses.map((p) => ({ Bölüm: "Doktora yapılan ödemeler", Tarih: shortDate(p.tarih), Açıklama: p.aciklama || "", Yöntem: methodLabel(p.yontem), Tutar: csvAmount(p.tutar) })),
     ];
     const { downloadCsv } = await import("@/lib/csv-export");
@@ -199,7 +199,7 @@ export function HakedisMonthlyPanel({ doctorId, canPay = false, onPay, refreshTo
       d.examinations.map((e) => [shortDate(e.tarih), e.hasta, e.tedavi, e.dis || "", money(e.tutar)]));
     y = addPdfSection(doc, y, "Hasta tahsilatları", ["Tarih", "Hasta", "Yöntem", "Tutar"],
       d.patientPayments.map((p) => [shortDate(p.tarih), p.hasta, methodLabel(p.yontem), money(p.tutar)]));
-    y = addPdfSection(doc, y, "Laboratuvar faturaları", ["Tarih", "Laboratuvar", "Kalem", "Tutar"],
+    y = addPdfSection(doc, y, "Laboratuvar ücretleri", ["Tarih", "Laboratuvar", "Kalem", "Tutar"],
       d.labInvoices.map((i) => [shortDate(i.tarih), i.lab, i.kalem, money(i.tutar)]));
     addPdfSection(doc, y, "Doktora yapılan ödemeler", ["Tarih", "Açıklama", "Yöntem", "Tutar"],
       d.payoutExpenses.map((p) => [shortDate(p.tarih), p.aciklama || "", methodLabel(p.yontem), money(p.tutar)]));
@@ -308,7 +308,7 @@ export function HakedisMonthlyPanel({ doctorId, canPay = false, onPay, refreshTo
       return detailList(detail.patientPayments.map((p) => ({ id: p.id, tarih: p.tarih, ad: p.hasta, aciklama: "", yontem: methodLabel(p.yontem), tutar: p.tutar })), "text-emerald-700", true, "Bu ay hasta tahsilatı yok");
     }
     if (detailTab === "lab") {
-      return detailList(detail.labInvoices.map((i) => ({ id: i.id, tarih: i.tarih, ad: i.lab, aciklama: i.kalem, yontem: "", tutar: i.tutar })), "text-red-700", false, "Bu ay laboratuvar faturası yok");
+      return detailList(detail.labInvoices.map((i) => ({ id: i.id, tarih: i.tarih, ad: i.lab, aciklama: i.kalem, yontem: "", tutar: i.tutar })), "text-red-700", false, "Bu ay laboratuvar ücreti yok");
     }
     return detailList(detail.payoutExpenses.map((p) => ({ id: p.id, tarih: p.tarih, ad: "", aciklama: p.aciklama || "Hakediş ödemesi", yontem: methodLabel(p.yontem), tutar: p.tutar })), "text-slate-900", true, "Bu ay için doktora ödeme yapılmadı");
   };

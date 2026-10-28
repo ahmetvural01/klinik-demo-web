@@ -13,7 +13,7 @@ import { buildItems, followBucket, isOverdueItem, type ApiAppointment, type ApiF
 import { DAY_MS, OPEN_PAST_LOOKBACK_DAYS, openPastWhere } from "./open-past";
 import type { HomeSummary, HomeSummarySection } from "./home-summary-types";
 
-// Ana sayfanın "Yapılacaklar" listesi ve başlıktaki sayıların TEK isteği.
+// Ana sayfanın "Bekleyen işler" listesi ve başlıktaki sayıların TEK isteği.
 // Önceden ana sayfa yalnız birkaç sayı için 300 lab işini, 100 taksit planını,
 // tüm stok kartlarını ve denetim günlüğünü indiriyor; yine de taksit sayısı
 // yanıt biçimi uyuşmadığı için hep boş kalıyordu. Burada her sayı yalnız
@@ -149,7 +149,7 @@ async function messagingSection(scope: Scope, canReadWhatsappPermission: boolean
   return { failed7d };
 }
 
-// ── Bugünkü tahsilat (GET /api/kasa ile aynı: hastadan alınan aktif ödemeler) ─
+// ── Bugünkü tahsilat (Muhasebe defteriyle aynı: hastadan alınan aktif ödemeler) ─
 async function collectionsSection(scope: Scope) {
   const { start, end } = turkeyDayRangeUtc(turkeyDateKey());
   const total = await prisma.payment.aggregate({
@@ -159,7 +159,7 @@ async function collectionsSection(scope: Scope) {
   return decimalText(total._sum.amount);
 }
 
-// ── Hasta aramaları (Yapılacaklar > Hasta aramaları ile aynı model) ────────
+// ── Hasta aramaları (Aramalar ve görevler > Hasta aramaları ile aynı model) ────────
 // Liste ekranıyla (GET /api/patient-follow-ups/worklist) aynı kaynaklar ve aynı
 // sınırlar okunur: açık aramalar + son 90 günün aramaya bağlanmamış "Gelmedi"
 // ya da notunda takip durumu olan randevuları + hastaların ziyaret bilgisi.
@@ -313,31 +313,6 @@ function cachedFollowUpsSection(scope: Scope, includeDerived: boolean, now: Date
   return value;
 }
 
-// ── Ekip mesajları / duyurular sürüm anahtarları ─────────────────────────────
-async function versionsSection(scope: Scope, canMessages: boolean, canAnnouncements: boolean, now: Date) {
-  const [messages, announcements] = await Promise.all([
-    canMessages
-      ? prisma.message.aggregate({ where: { ...scope, deletedAt: null }, _count: { _all: true }, _max: { createdAt: true } })
-      : Promise.resolve(null),
-    canAnnouncements
-      ? prisma.announcement.aggregate({
-          where: {
-            institutionId: scope.institutionId,
-            isActive: true,
-            OR: [{ startsAt: null }, { startsAt: { lte: now } }],
-            AND: [{ OR: [{ endsAt: null }, { endsAt: { gte: now } }] }],
-          },
-          _count: { _all: true },
-          _max: { createdAt: true },
-        })
-      : Promise.resolve(null),
-  ]);
-  return {
-    ...(messages ? { messages: `${messages._count._all}:${messages._max.createdAt?.toISOString() || ""}` } : {}),
-    ...(announcements ? { announcements: `${announcements._count._all}:${announcements._max.createdAt?.toISOString() || ""}` } : {}),
-  };
-}
-
 export async function buildHomeSummary(user: SummaryUser, branchId: string): Promise<HomeSummary> {
   const institutionId = user.institutionId as string;
   const scope: Scope = { institutionId, branchId };
@@ -359,9 +334,6 @@ export async function buildHomeSummary(user: SummaryUser, branchId: string): Pro
   if (canFinance && allow("installments:read")) jobs.push(["installments", () => installmentsSection(scope, todayStart)]);
   if (allow("sms:read")) jobs.push(["messaging", () => messagingSection(scope, allow("whatsapp:read"), now)]);
   if (canFinance && allow("payments:read")) jobs.push(["collections", () => collectionsSection(scope)]);
-  const canMessages = allow("messages:read");
-  const canAnnouncements = allow("announcements:read");
-  if (canMessages || canAnnouncements) jobs.push(["versions", () => versionsSection(scope, canMessages, canAnnouncements, now)]);
 
   const results = await Promise.allSettled(jobs.map(([, run]) => run()));
   const summary: HomeSummary = {
@@ -384,7 +356,6 @@ export async function buildHomeSummary(user: SummaryUser, branchId: string): Pro
     else if (section === "installments") summary.installments = value as HomeSummary["installments"];
     else if (section === "messaging") summary.messaging = value as HomeSummary["messaging"];
     else if (section === "collections") summary.collectionsToday = value as string;
-    else if (section === "versions") summary.versions = value as HomeSummary["versions"];
   });
   return summary;
 }

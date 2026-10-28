@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { EyeOff, Plus } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { Tabs, useTabParam } from "@/components/ui/Tabs";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { FormModal } from "@/components/ui/FormModal";
@@ -12,7 +11,7 @@ import { Input, Textarea } from "@/components/ui/Input";
 import { FormField } from "@/components/ui/FormField";
 import { ChoiceCards } from "@/components/ui/ChoiceCards";
 import { SearchableListbox } from "@/components/ui/SearchableListbox";
-import { EmptyValue, ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { createModuleEmptyIcon } from "@/components/ui/ModuleIcon";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
@@ -35,19 +34,7 @@ type Group = {
   activeCount: number;
 };
 
-type ClinicAnnouncement = {
-  id: string;
-  text: string;
-  isActive: boolean;
-  startsAt: string | null;
-  endsAt: string | null;
-  createdAt: string;
-  institution: { id: string; name: string } | null;
-};
-
 type Clinic = { id: string; name: string; isActive: boolean };
-
-const SCOPE_KEYS = ["platform", "klinik"] as const;
 
 function publishState(item: { isActiveCount: number; startsAt: string | null; endsAt: string | null }): { label: string; tone: BadgeTone } {
   const now = Date.now();
@@ -64,14 +51,13 @@ function rangeText(startsAt: string | null, endsAt: string | null): string {
 }
 
 /**
- * Duyurular — platformdan kliniklerin ana sayfasına gönderilen mesajlar. Tüm
- * kliniklere gönderilen tek duyuru tek satırdır ("Hedef: 7 klinik"), tek
- * tıkla hepsinden kaldırılır. Kliniklerin kendi iç duyuruları ayrı sekmede.
+ * Duyurular — sistem sahibinin kliniklere verdiği bildirimler (ör. bakım saati).
+ * Klinik panelinde yayın aralığında her sayfanın üstünde tek satır görünür.
+ * Tüm kliniklere gönderilen tek duyuru tek satırdır ("Hedef: 7 klinik"), tek
+ * tıkla hepsinden kaldırılır. Klinik içi duyuru ve ekip mesajı yoktur.
  */
 export default function AnnouncementsPage() {
-  const [scope, setScope] = useTabParam(SCOPE_KEYS, "platform", "kapsam");
   const [groups, setGroups] = useState<Group[]>([]);
-  const [clinicItems, setClinicItems] = useState<ClinicAnnouncement[]>([]);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
@@ -94,19 +80,15 @@ export default function AnnouncementsPage() {
 
   const reload = useCallback(() => setReloadKey((value) => value + 1), []);
 
-  useEffect(() => { setPage(1); }, [scope]);
-
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
     setLoadError(null);
-    const apiScope = scope === "klinik" ? "clinic" : "platform";
-    saGet<{ groups?: Group[]; announcements?: ClinicAnnouncement[]; total: number; totalPages: number; activeClinicCount?: number }>(
-      `/api/superadmin/announcements?scope=${apiScope}&page=${page}`, "Duyurular yüklenemedi.", controller.signal,
+    saGet<{ groups?: Group[]; total: number; totalPages: number; activeClinicCount?: number }>(
+      `/api/superadmin/announcements?page=${page}`, "Duyurular yüklenemedi.", controller.signal,
     )
       .then((data) => {
         setGroups(Array.isArray(data?.groups) ? data.groups : []);
-        setClinicItems(Array.isArray(data?.announcements) ? data.announcements : []);
         setTotal(data?.total ?? 0);
         setTotalPages(data?.totalPages ?? 1);
         if (typeof data?.activeClinicCount === "number") setActiveClinicCount(data.activeClinicCount);
@@ -118,7 +100,7 @@ export default function AnnouncementsPage() {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [scope, page, reloadKey]);
+  }, [page, reloadKey]);
 
   const loadClinics = () => {
     if (clinics.length > 0 || clinicsLoading) return;
@@ -171,7 +153,6 @@ export default function AnnouncementsPage() {
       showToastSafe({ type: "success", message: `Duyuru ${result.created} kliniğe gönderildi.${result.skipped ? ` ${result.skipped} kapalı klinik atlandı.` : ""}`, icon: "log" });
       resetForm();
       setOpen(false);
-      if (scope !== "platform") setScope("platform");
       setPage(1);
       reload();
     } catch (error) {
@@ -229,16 +210,9 @@ export default function AnnouncementsPage() {
       header: "",
       align: "right",
       render: (group) => group.activeCount > 0
-        ? <IconButton icon={EyeOff} title="Yayından kaldır" tone="danger" size="sm" disabled={busyKey === group.key} onClick={() => void unpublish(group.ids, group.key, `Duyuru ${group.activeCount} kliniğin ana sayfasından kaldırılacak.`)} />
+        ? <IconButton icon={EyeOff} title="Yayından kaldır" tone="danger" size="sm" disabled={busyKey === group.key} onClick={() => void unpublish(group.ids, group.key, `Duyuru ${group.activeCount} klinikte artık görünmeyecek.`)} />
         : <span />,
     },
-  ];
-
-  const clinicColumns: ListTableColumn<ClinicAnnouncement>[] = [
-    { key: "clinic", header: "Klinik", render: (item) => <span className="font-semibold text-slate-900">{item.institution?.name ?? "—"}</span> },
-    { key: "text", header: "Duyuru", render: (item) => <p className="line-clamp-2 max-w-xl text-sm text-slate-700">{item.text}</p> },
-    { key: "createdAt", header: "Tarih", render: (item) => shortDate(item.createdAt) || <EmptyValue /> },
-    { key: "status", header: "Durum", render: (item) => { const state = publishState({ isActiveCount: item.isActive ? 1 : 0, startsAt: item.startsAt, endsAt: item.endsAt }); return <Badge tone={state.tone}>{state.label}</Badge>; } },
   ];
 
   const clinicOptions = useMemo(() => clinics.map((item) => ({ id: item.id, label: item.name })), [clinics]);
@@ -249,81 +223,47 @@ export default function AnnouncementsPage() {
       <PageHeader
         icon="sa-announcements"
         title="Duyurular"
-        description="Kliniklerin ana sayfasında görünen platform duyuruları."
+        description="Klinik panelinde her sayfanın üstünde görünür (ör. bakım saati)."
         actions={<Button icon={Plus} onClick={openCreate}>Yeni duyuru</Button>}
       />
 
-      <Tabs
-        ariaLabel="Duyuru türü"
-        size="sm"
-        value={scope}
-        onChange={setScope}
-        items={[
-          { key: "platform", label: "Platform duyuruları" },
-          { key: "klinik", label: "Klinik içi (salt görüntüleme)" },
-        ]}
+      <ListTable<Group>
+        columns={groupColumns}
+        rows={groups}
+        rowKey={(group) => group.key}
+        loading={loading}
+        // Veri varken yenileme hatası listeyi silmez; üstte şerit olarak görünür.
+        error={groups.length > 0 ? null : loadError}
+        staleError={groups.length > 0 ? loadError : null}
+        onRetry={reload}
+        emptyText="Henüz duyuru yayınlanmadı"
+        emptyDescription="Tüm kliniklere veya seçtiğiniz kliniklere duyuru göndermek için “Yeni duyuru”yu kullanın."
+        emptyIcon={AnnouncementEmptyIcon}
+        emptyIllustrative
+        pager={pager}
+        mobileCard={(group) => {
+          const state = groupState(group);
+          return (
+            <div className="space-y-1.5">
+              <p className="line-clamp-3 text-sm text-slate-800">{group.text}</p>
+              <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
+                <span>{targetText(group)} · {rangeText(group.startsAt, group.endsAt)}</span>
+                <span className="flex items-center gap-1.5">
+                  <Badge tone={state.tone}>{state.label}</Badge>
+                  {group.activeCount > 0 && <IconButton icon={EyeOff} title="Yayından kaldır" tone="danger" size="sm" disabled={busyKey === group.key} onClick={() => void unpublish(group.ids, group.key, `Duyuru ${group.activeCount} klinikte artık görünmeyecek.`)} />}
+                </span>
+              </div>
+            </div>
+          );
+        }}
       />
-
-      {scope === "platform" ? (
-        <ListTable<Group>
-          columns={groupColumns}
-          rows={groups}
-          rowKey={(group) => group.key}
-          loading={loading}
-          // Veri varken yenileme hatası listeyi silmez; üstte şerit olarak görünür.
-          error={groups.length > 0 ? null : loadError}
-          staleError={groups.length > 0 ? loadError : null}
-          onRetry={reload}
-          emptyText="Henüz duyuru yayınlanmadı"
-          emptyDescription="Tüm kliniklere veya seçtiğiniz kliniklere duyuru göndermek için “Yeni duyuru”yu kullanın."
-          emptyIcon={AnnouncementEmptyIcon}
-          emptyIllustrative
-          pager={pager}
-          mobileCard={(group) => {
-            const state = groupState(group);
-            return (
-              <div className="space-y-1.5">
-                <p className="line-clamp-3 text-sm text-slate-800">{group.text}</p>
-                <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
-                  <span>{targetText(group)} · {rangeText(group.startsAt, group.endsAt)}</span>
-                  <span className="flex items-center gap-1.5">
-                    <Badge tone={state.tone}>{state.label}</Badge>
-                    {group.activeCount > 0 && <IconButton icon={EyeOff} title="Yayından kaldır" tone="danger" size="sm" disabled={busyKey === group.key} onClick={() => void unpublish(group.ids, group.key, `Duyuru ${group.activeCount} kliniğin ana sayfasından kaldırılacak.`)} />}
-                  </span>
-                </div>
-              </div>
-            );
-          }}
-        />
-      ) : (
-        <>
-          <ListTable<ClinicAnnouncement>
-            columns={clinicColumns}
-            rows={clinicItems}
-            rowKey={(item) => item.id}
-            loading={loading}
-            error={clinicItems.length > 0 ? null : loadError}
-            staleError={clinicItems.length > 0 ? loadError : null}
-            onRetry={reload}
-            emptyText="Kliniklerin iç duyurusu yok"
-            pager={pager}
-            mobileCard={(item) => (
-              <div className="space-y-1">
-                <p className="font-semibold text-slate-900">{item.institution?.name ?? "—"}</p>
-                <p className="line-clamp-2 text-sm text-slate-700">{item.text}</p>
-                <p className="text-xs text-slate-500">{shortDate(item.createdAt)}</p>
-              </div>
-            )}
-          />
-        </>
-      )}
 
       {/* Ortak form penceresi: Enter ile gönderim, hata şeridi, kirli formda kapatma onayı. */}
       <FormModal
         open={open}
         onClose={() => setOpen(false)}
         title="Yeni duyuru"
-        description="Duyuru seçilen kliniklerin ana sayfasında görünür."
+        description="Seçilen kliniklerde, yayın aralığında her sayfanın üstünde tek satır görünür."
         size="lg"
         onSubmit={() => publish()}
         submitLabel="Yayınla"
@@ -332,7 +272,7 @@ export default function AnnouncementsPage() {
         isDirty={Boolean(text.trim() || selectedIds.length > 0 || startDate || endDate)}
       >
         <FormField label="Duyuru metni" htmlFor="announcement-text" required hint={`${text.length} / ${MAX_TEXT} karakter`}>
-          <Textarea id="announcement-text" rows={4} maxLength={MAX_TEXT} value={text} onChange={(event) => setText(event.target.value)} placeholder="Ör. 12 Ekim gecesi 02:00-03:00 arası bakım çalışması yapılacaktır." />
+          <Textarea id="announcement-text" rows={4} maxLength={MAX_TEXT} value={text} onChange={(event) => setText(event.target.value)} placeholder="Ör. 28.08.2026 Çarşamba 13:00–15:00 arası sistem bakımı yapılacaktır." />
         </FormField>
         <ChoiceCards
           label="Kimlere gönderilsin?"

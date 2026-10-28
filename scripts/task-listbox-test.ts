@@ -166,13 +166,13 @@ async function main() {
 
     const page = await context.newPage();
     await page.goto(`${BASE}/yapilacaklar?tab=gorev`, { waitUntil: "load", timeout: 60_000 });
-    await page.getByRole("heading", { name: "Yapılacaklar", level: 1 }).waitFor({ state: "visible" });
+    await page.getByRole("heading", { name: "Aramalar ve görevler", level: 1 }).waitFor({ state: "visible" });
     await verifyListboxes(page);
     console.log("Masaüstü görev listbox senaryoları doğrulandı.");
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload({ waitUntil: "load" });
-    await page.getByRole("heading", { name: "Yapılacaklar", level: 1 }).waitFor({ state: "visible" });
+    await page.getByRole("heading", { name: "Aramalar ve görevler", level: 1 }).waitFor({ state: "visible" });
     await verifyListboxes(page, true);
     console.log("Mobil görev listbox ve taşma senaryoları doğrulandı.");
 

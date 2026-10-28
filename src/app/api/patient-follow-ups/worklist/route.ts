@@ -25,7 +25,7 @@ function parseStoredTypes(value?: string | null): string[] {
 }
 
 /**
- * Yapılacaklar > Hasta aramaları listesinin TEK isteği. Önceden ekran üç
+ * Aramalar ve görevler > Hasta aramaları listesinin TEK isteği. Önceden ekran üç
  * istek atıyordu: son 90 günün TÜM randevuları (en fazla 500, en eskiden
  * başlayarak — yoğun klinikte son haftaların "Gelmedi" satırları listeye hiç
  * gelmiyordu), aramalar ve ardından ayrı bir istekle hastaların randevu

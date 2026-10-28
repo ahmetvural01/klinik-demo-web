@@ -24,7 +24,7 @@ function messageOf(body: Record<string, unknown> | null, fallback: string): stri
 /**
  * Doktor çakışması sert bir engel değil — sunucu 409 + requiresConfirmation
  * döndürürse personele sorulur, onaylarsa overrideConflict:true ile aynı istek
- * tekrar gönderilir. Tedavi alanı/hasta çakışmaları kesin engel olarak kalır.
+ * tekrar gönderilir. Koltuk / oda/hasta çakışmaları kesin engel olarak kalır.
  */
 export async function saveAppointment(url: string, method: "POST" | "PUT", body: Record<string, unknown>): Promise<ApiResult<Appointment & { smsStatus?: Record<string, string> }>> {
   const send = (payload: Record<string, unknown>) =>

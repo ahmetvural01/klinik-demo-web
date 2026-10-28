@@ -54,6 +54,12 @@ type AppointmentDetailModalProps = {
   /** İptalden sonra boşalan saati doldurmak için bekleme listesi (sayı > 0 ise düğme görünür). */
   waitlistCount?: number;
   onOpenWaitlist?: () => void;
+  /**
+   * Pencere hasta dosyasının içinden açıldıysa: "Hasta dosyası" bağlantısı
+   * çizilmez (zaten oradayız); "Tedavi gir" ve "Tahsilat al" sayfadan
+   * çıkmadan dosyadaki işi açar. Verilmezse (takvim) bağlantılar aynen kalır.
+   */
+  inPatientFile?: { onEnterTreatment: () => void; onTakePayment: () => void };
 };
 
 type StatusAction = { status: string; label: string; doneTitle: string; icon: typeof Check };
@@ -87,6 +93,7 @@ export function AppointmentDetailModal({
   settings = null,
   waitlistCount = 0,
   onOpenWaitlist,
+  inPatientFile,
 }: AppointmentDetailModalProps) {
   const [current, setCurrent] = useState<Appointment>(appointment);
   const parsed = useMemo(() => parseNoteFull(current.note, treatments), [current.note, treatments]);
@@ -205,6 +212,10 @@ export function AppointmentDetailModal({
     setEditingNote(true);
   };
 
+  // "Sonraki adım" satırı: hasta geldiyse tedavi/tahsilat, kapanmış randevuda yeni randevu.
+  const showVisitSteps = current.status === "GELDI" && (canEnterTreatment || canTakePayment);
+  const showNextAppointment = permissions.canCreate && (current.status === "TAMAMLANDI" || current.status === "GELMEDI" || isCancelled);
+
   // Duruma göre tek birincil "sonraki adım" (gelecek günde yok: düğmeler pasif).
   const primaryStatus = isCancelled || futureDay ? null : current.status === "GELDI" ? "TAMAMLANDI" : current.status === "TAMAMLANDI" || current.status === "GELMEDI" ? null : "GELDI";
 
@@ -272,7 +283,7 @@ export function AppointmentDetailModal({
             },
             {
               key: "alan",
-              label: "Tedavi alanı",
+              label: "Koltuk / oda",
               hidden: !current.clinicUnit,
               value: current.clinicUnit ? `${current.clinicUnit.name}${current.clinicUnit.code ? ` · ${current.clinicUnit.code}` : ""}` : null,
             },
@@ -330,20 +341,24 @@ export function AppointmentDetailModal({
         )}
 
         {/* Sonraki adım: hasta dosyasındaki mevcut akışlara bağlanır. */}
-        {patientId && (
+        {patientId && (showVisitSteps || showNextAppointment || !inPatientFile) && (
           <section aria-label="Sonraki adım" className="flex flex-wrap gap-2 border-t border-slate-100 pt-3">
-            {current.status === "GELDI" && (
+            {showVisitSteps && (
               <>
-                {canEnterTreatment && <Button size="sm" variant="secondary" icon={ClipboardPlus} href={routes.patient(patientId, "tedavi")}>Tedavi gir</Button>}
-                {canTakePayment && <Button size="sm" variant="secondary" icon={Wallet} href={routes.patient(patientId, "odeme")}>Tahsilat al</Button>}
+                {canEnterTreatment && (inPatientFile
+                  ? <Button size="sm" variant="secondary" icon={ClipboardPlus} onClick={inPatientFile.onEnterTreatment}>Tedavi gir</Button>
+                  : <Button size="sm" variant="secondary" icon={ClipboardPlus} href={routes.patient(patientId, "tedavi")}>Tedavi gir</Button>)}
+                {canTakePayment && (inPatientFile
+                  ? <Button size="sm" variant="secondary" icon={Wallet} onClick={inPatientFile.onTakePayment}>Tahsilat al</Button>
+                  : <Button size="sm" variant="secondary" icon={Wallet} href={routes.patient(patientId, "odeme")}>Tahsilat al</Button>)}
               </>
             )}
-            {permissions.canCreate && (current.status === "TAMAMLANDI" || current.status === "GELMEDI" || isCancelled) && (
+            {showNextAppointment && (
               <Button size="sm" variant={current.status === "TAMAMLANDI" || current.status === "GELMEDI" ? "primary" : "secondary"} icon={CalendarPlus} onClick={() => onNextAppointment(current)}>
                 {current.status === "TAMAMLANDI" ? "Sonraki randevuyu ver" : "Yeni randevu ver"}
               </Button>
             )}
-            <Button size="sm" variant="ghost" icon={FileText} href={routes.patient(patientId)}>Hasta dosyası</Button>
+            {!inPatientFile && <Button size="sm" variant="ghost" icon={FileText} href={routes.patient(patientId)}>Hasta dosyası</Button>}
           </section>
         )}
 

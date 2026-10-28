@@ -182,7 +182,9 @@ function FirmaContent() {
   }, [refreshAll]);
 
   const activeMaterialFirmas = useMemo(
-    () => firmas.filter((firma) => firma.isActive && firma.kategori !== "LAB").map((firma) => ({ id: firma.id, name: firma.name, bakiye: firma.bakiye })),
+    () => firmas
+      .filter((firma) => firma.isActive && firma.kategori !== "LAB")
+      .map((firma) => ({ id: firma.id, name: firma.name, bakiye: firma.bakiye, bekleyenSiparis: firma.bekleyenSiparis })),
     [firmas],
   );
   const purchaseManager = usePurchaseModals({
@@ -223,11 +225,11 @@ function FirmaContent() {
   }, [firmas, durum, kategori, search, sort]);
 
   const filteredOrders = useMemo(
-    () => orders.filter((order) => matchesSearch(search, order.firma?.name, order.faturaNo, summarizeLines(order.lines, 10))),
+    () => orders.filter((order) => matchesSearch(search, order.firma?.name, summarizeLines(order.lines, 10))),
     [orders, search],
   );
   const filteredPurchases = useMemo(
-    () => (purchases || []).filter((row) => matchesSearch(search, row.firma?.name, row.faturaNo, summarizeLines(row.lines, 10))),
+    () => (purchases || []).filter((row) => matchesSearch(search, row.firma?.name, summarizeLines(row.lines, 10))),
     [purchases, search],
   );
 
@@ -376,11 +378,10 @@ function FirmaContent() {
   const purchaseColumns: ListTableColumn<Purchase>[] = [
     { key: "tarih", header: "Tarih", render: (row) => <DateText value={row.tarih} className="whitespace-nowrap" /> },
     { key: "firma", header: "Tedarikçi", render: (row) => <span className="font-semibold text-slate-900">{row.firma?.name || "—"}</span> },
-    { key: "fatura", header: "Fatura no", render: (row) => row.faturaNo ? <span className="text-slate-700">{row.faturaNo}</span> : null },
     {
       key: "urunler",
       header: "Ürünler",
-      cellClassName: "max-w-[280px]",
+      cellClassName: "max-w-[320px]",
       render: (row) => <span className="block truncate text-slate-700">{summarizeLines(row.lines) || `${row._count?.items ?? 0} kalem`}</span>,
     },
     { key: "tutar", header: "Tutar", align: "right", render: (row) => <Money value={row.total ?? null} className="font-semibold text-slate-900" /> },
@@ -434,7 +435,7 @@ function FirmaContent() {
         <SearchInput
           value={search}
           onChange={setSearch}
-          placeholder={view === "firmalar" ? "Tedarikçi, telefon, IBAN veya yetkili ara" : "Tedarikçi, ürün veya fatura no ara"}
+          placeholder={view === "firmalar" ? "Tedarikçi, telefon, IBAN veya yetkili ara" : "Tedarikçi ya da ürün ara"}
           slashShortcut
           wrapperClassName="flex-1 min-w-[220px]"
         />
@@ -476,8 +477,8 @@ function FirmaContent() {
           staleError={loaded ? loadError : null}
           onRetry={() => void loadFirmas()}
           emptyText={firmaFilters.length > 0 || searchActive ? "Bu filtreye uyan tedarikçi yok" : "Henüz tedarikçi eklenmemiş"}
-          emptyDescription={firmaFilters.length > 0 || searchActive ? undefined : "Faturayı “Yeni satın alma” ile girerken tedarikçiyi de ekleyebilirsiniz."}
-          emptyAction={firmaFilters.length === 0 && !searchActive && canWriteFinance ? <Button size="sm" icon={Plus} onClick={() => setShowAddFirma(true)}>Yeni tedarikçi</Button> : undefined}
+          // Boş listede ayrı "Yeni tedarikçi" düğmesi yok: araç çubuğundaki aynı düğme zaten görünür.
+          emptyDescription={firmaFilters.length > 0 || searchActive ? undefined : "Alımı “Yeni satın alma” ile girerken tedarikçiyi de ekleyebilirsiniz."}
           emptyIcon={FirmaEmptyIcon}
           emptyIllustrative
           onRowClick={(firma) => router.push(`/firma-detay?id=${firma.id}`)}
@@ -517,16 +518,16 @@ function FirmaContent() {
           staleError={purchases !== null ? purchasesError : null}
           onRetry={() => void loadPurchases()}
           emptyText={searchActive ? "Bu aramaya uyan satın alma yok" : `${period.value.preset === "ozel" ? "Seçilen dönemde" : DATE_PRESET_LABELS[period.value.preset]} satın alma yok`}
-          emptyDescription={searchActive ? undefined : "Faturayı “Yeni satın alma” ile girin; teslim alınan ve bekleyen kayıtlar burada listelenir."}
+          emptyDescription={searchActive ? undefined : "Alımı “Yeni satın alma” ile girin; teslim alınan ve bekleyen kayıtlar burada listelenir."}
           onRowClick={(row) => void purchaseManager.openPurchaseDetail(row.id)}
-          getRowAriaLabel={(row) => `${row.firma?.name || "Tedarikçi"} ${row.faturaNo ? `fatura ${row.faturaNo}` : "satın alması"} ayrıntısını aç`}
+          getRowAriaLabel={(row) => `${row.firma?.name || "Tedarikçi"} satın alması ayrıntısını aç`}
           mobileCard={(row) => (
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="truncate font-semibold text-slate-900">{row.firma?.name}</p>
                 <p className="flex min-w-0 items-center gap-1.5 text-xs text-slate-500">
                   {isAwaitingDelivery(row) && receiptBadge(row)}
-                  <span className="truncate"><DateText value={row.tarih} />{row.faturaNo ? ` · ${row.faturaNo}` : ""} · {summarizeLines(row.lines) || `${row._count?.items ?? 0} kalem`}</span>
+                  <span className="truncate"><DateText value={row.tarih} /> · {summarizeLines(row.lines) || `${row._count?.items ?? 0} kalem`}</span>
                 </p>
               </div>
               <Money value={row.total ?? null} className="shrink-0 font-semibold text-slate-900" />

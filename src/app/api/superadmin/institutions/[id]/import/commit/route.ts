@@ -3,8 +3,22 @@ import { createHash } from "node:crypto";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import { normalizeTrKey, parseImportWorkbook } from "@/lib/patient-import";
+import { EXAM_STATUS_CANCELLED, EXAM_STATUS_DIAGNOSIS, EXAM_STATUS_DONE } from "@/lib/examination-status";
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
+
+/**
+ * Şablondaki tedavi durumu → hasta dosyasındaki tedavi kaydı durumu (bkz.
+ * src/lib/examination-status.ts). Tamamlandı / Devam ediyor: yapılan tedavi
+ * (hastanın borcuna yansır); Planlandı: "Planlanan tedaviler" (borca
+ * yansımaz); İptal: iptal edilmiş kayıt (hiçbir toplamda sayılmaz).
+ */
+const IMPORT_TREATMENT_STATUS: Record<string, string> = {
+  TAMAMLANDI: EXAM_STATUS_DONE,
+  DEVAM_EDIYOR: "DEVAM",
+  PLANLANDI: EXAM_STATUS_DIAGNOSIS,
+  IPTAL: EXAM_STATUS_CANCELLED,
+};
 
 // POST /api/superadmin/institutions/[id]/import/commit
 // /preview ile aynı dosyayı tekrar ayrıştırır ve bu kez GERÇEKTEN YAZAR.
@@ -173,49 +187,44 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   let treatmentsSkipped = 0;
   let treatmentsDuplicate = 0;
 
+  // Tedavi geçmişi hasta dosyasının tedavi kayıtlarına yazılır (ayrı tedavi
+  // planı kaldırıldı; önceden her satır borca yansımayan bir "plan" oluyor,
+  // aktarılan ödemeler bu yüzden hastada avans görünüyordu).
   for (const row of parsed.treatments) {
     const data = row.data;
     if (!data) { treatmentsSkipped += 1; continue; }
     const patientId = tcToPatientId.get(data.patientTcNo);
     const doctorId = nameToDoctorId.get(normalizeTrKey(data.doctorName));
-    // TreatmentPlan.doctorId zorunlu (nullable değil) — eşleşmeyen doktoru
+    // Examination.doctorId zorunlu (nullable değil) — eşleşmeyen doktoru
     // boş bırakıp kaydetmek şemaya aykırı; bu satır atlanır (önizlemede zaten
     // "treatmentsUnresolvedDoctor" olarak işaretlenmişti).
     if (!patientId || !doctorId) { treatmentsSkipped += 1; continue; }
 
-    const requestKey = `import:${importFingerprint}:treatment:${row.rowNumber}`;
-    const createdAt = new Date(data.date);
-    const note = data.note ? `${data.note} [Toplu aktarım]` : "[Toplu aktarım]";
+    const diagnosedAt = new Date(data.date);
+    // Tedavi kaydında işlem anahtarı alanı yok: aynı dosyanın yeniden
+    // yüklenmesi, nottaki satır işareti ve kaydın kendisiyle tanınır.
+    const marker = `[Toplu aktarım · satır ${row.rowNumber}]`;
+    const note = data.note ? `${data.note} ${marker}` : marker;
+    const toothNo = data.toothNo || null;
 
-    const duplicate = await tx.treatmentPlan.findUnique({
-      where: { branchId_requestKey: { branchId, requestKey } },
+    const duplicate = await tx.examination.findFirst({
+      where: { institutionId: params.id, branchId, patientId, doctorId, treatmentName: data.treatmentName, toothNo, diagnosedAt, note: { contains: marker } },
       select: { id: true },
     });
     if (duplicate) { treatmentsDuplicate += 1; continue; }
 
-    await tx.treatmentPlan.create({
+    await tx.examination.create({
       data: {
         institutionId: params.id,
         branchId,
-        requestKey,
         patientId,
         doctorId,
-        title: data.treatmentName,
-        status: data.status as never,
-        totalCost: data.amount || null,
-        notes: note,
-        createdAt,
-        steps: {
-          create: [{
-            order: 1,
-            treatmentName: data.treatmentName,
-            toothNo: data.toothNo,
-            amount: data.amount,
-            status: data.status === "TAMAMLANDI" ? "TAMAMLANDI" : "BEKLIYOR",
-            doneAt: data.status === "TAMAMLANDI" ? createdAt : null,
-            note: data.note,
-          }],
-        },
+        treatmentName: data.treatmentName,
+        toothNo,
+        amount: data.amount,
+        status: IMPORT_TREATMENT_STATUS[data.status] || EXAM_STATUS_DONE,
+        diagnosedAt,
+        note,
       },
     });
     treatmentsCreated += 1;

@@ -124,6 +124,7 @@ export const GET = withApiTiming("muhasebe-defter", async function GET(request: 
             },
             select: {
               id: true, createdAt: true, amount: true, method: true, description: true, posId: true, doctorId: true, voidedAt: true,
+              pos: { select: { id: true, name: true } },
               patient: { select: { id: true, fullName: true } },
               doctor: { select: { id: true, fullName: true } },
             },
@@ -143,7 +144,7 @@ export const GET = withApiTiming("muhasebe-defter", async function GET(request: 
             },
             select: {
               id: true, tarih: true, createdAt: true, updatedAt: true, category: true, categoryId: true, description: true, tutar: true,
-              yontem: true, faturaNo: true, kdvOrani: true, doctorId: true, periodYear: true, periodMonth: true,
+              yontem: true, doctorId: true, periodYear: true, periodMonth: true,
               sourceType: true, sourceId: true,
               expenseCategory: { select: { id: true, name: true } },
               doctor: { select: { id: true, fullName: true } },
@@ -195,6 +196,7 @@ export const GET = withApiTiming("muhasebe-defter", async function GET(request: 
           method: payment.method,
           description: payment.description,
           posId: payment.posId,
+          posName: payment.pos?.name ?? null,
           doctorId: payment.doctorId,
           doctor: payment.doctor,
           patient: payment.patient,
@@ -249,13 +251,13 @@ export const GET = withApiTiming("muhasebe-defter", async function GET(request: 
           description: expense.description,
           tutar: Number(expense.tutar),
           yontem: expense.yontem,
-          faturaNo: expense.faturaNo,
-          kdvOrani: expense.kdvOrani,
           doctorId: expense.doctorId,
           doctor: expense.doctor,
           periodYear: expense.periodYear,
           periodMonth: expense.periodMonth,
           sourceType: expense.sourceType,
+          // Firma ödemesinin kaynak işlemi: Muhasebe'den de iptal edilebilsin.
+          sourceId: expense.sourceType === "FIRMA_ISLEM" ? expense.sourceId : null,
         },
       });
     }
@@ -263,8 +265,7 @@ export const GET = withApiTiming("muhasebe-defter", async function GET(request: 
     // Fatura no da aranır: girilen fatura/dekont numarasıyla gider bulunabilsin.
     const filtered = q
       ? rows.filter((row) => {
-          const faturaNo = typeof row.expense?.faturaNo === "string" ? row.expense.faturaNo : "";
-          return [row.who, row.item, row.note, row.doctor, paymentMethodLabel(row.method), faturaNo]
+          return [row.who, row.item, row.note, row.doctor, paymentMethodLabel(row.method)]
             .some((value) => (value || "").toLocaleLowerCase("tr").includes(q));
         })
       : rows;
@@ -283,6 +284,22 @@ export const GET = withApiTiming("muhasebe-defter", async function GET(request: 
     for (const key of Object.keys(byMethod)) {
       byMethod[key] = { in: round2(byMethod[key].in), out: round2(byMethod[key].out) };
     }
+    // POS'a göre kartlı tahsilat (gün sonu / ay sonu): hangi POS'tan ne kadar
+    // çekildi — patron paranın hangi bankaya geçeceğini buradan görür.
+    const posTotals = new Map<string, { name: string; in: number; count: number }>();
+    for (const row of filtered) {
+      if (row.kind !== "TAHSILAT" || (row.method !== "KREDI_KARTI" && row.method !== "MAIL_ORDER")) continue;
+      const posId = typeof row.payment?.posId === "string" ? row.payment.posId : "";
+      const posName = typeof row.payment?.posName === "string" ? row.payment.posName : "";
+      const key = posId || "-";
+      const bucket = posTotals.get(key) || { name: posName || "POS seçilmeden", in: 0, count: 0 };
+      bucket.in += row.amount;
+      bucket.count += 1;
+      posTotals.set(key, bucket);
+    }
+    const byPos = Array.from(posTotals.entries())
+      .map(([id, value]) => ({ id, name: value.name, in: round2(value.in), count: value.count }))
+      .sort((a, b) => b.in - a.in);
 
     const total = filtered.length;
     const pageCount = Math.max(1, Math.ceil(total / take));
@@ -305,6 +322,7 @@ export const GET = withApiTiming("muhasebe-defter", async function GET(request: 
         giderCount,
         net: round2(tahsilat - gider),
         byMethod,
+        byPos,
       },
     });
   } catch (error) {

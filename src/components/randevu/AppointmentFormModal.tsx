@@ -105,6 +105,8 @@ type AppointmentFormModalProps = {
   clinicUnits: ClinicUnit[];
   slotInterval: number;
   canSeePhone: boolean;
+  /** Hasta dosyasından açıldı: hasta sabit, değiştirilemez (yanlış hastaya randevu verilmesin). */
+  lockPatient?: boolean;
   onClose: () => void;
   onSaved: (result: AppointmentFormSaved) => void;
 };
@@ -115,7 +117,7 @@ type AppointmentFormModalProps = {
  * bekleme listesi aynı formu açar.
  *
  * Sıra işin sırasıdır: hasta → doktor → gün → saat → süre ve tedavi → not;
- * seyrek alan (tedavi alanı) "Diğer seçenekler" altında, hastaya mesaj tek
+ * seyrek alan (koltuk / oda) "Diğer seçenekler" altında, hastaya mesaj tek
  * satırda. Önceden saat 30-40 seçenekli bir açılır listeden diğer hastaların
  * adları okunarak seçiliyordu, SMS anahtarları kurum varsayılanını yok
  * sayıyordu ve beş ayrı elle yazılmış uyarı kutusu aynı anda görünebiliyordu.
@@ -131,6 +133,7 @@ export function AppointmentFormModal({
   clinicUnits,
   slotInterval,
   canSeePhone,
+  lockPatient = false,
   onClose,
   onSaved,
 }: AppointmentFormModalProps) {
@@ -163,6 +166,10 @@ export function AppointmentFormModal({
   // mesajlar); önceden her açılışta sabit "bilgi açık, hatırlatma kapalı" idi.
   const [smsInfo, setSmsInfo] = useState(() => settings?.sms.info ?? true);
   const [smsReminder, setSmsReminder] = useState(() => settings?.sms.reminder ?? false);
+  // Tedavi sonrası değerlendirme: randevu "Tamamlandı" olunca hastaya bağlantı
+  // gider (src/lib/review-requests.ts). Bağlantı tanımlı değilse seçilemez.
+  const surveyReady = Boolean(settings?.sms.surveyReady);
+  const [smsSurvey, setSmsSurvey] = useState(() => Boolean(settings?.sms.survey && settings?.sms.surveyReady));
   const smsTouchedRef = useRef(false);
 
   const [dayAppointments, setDayAppointments] = useState<Appointment[]>([]);
@@ -190,6 +197,7 @@ export function AppointmentFormModal({
     if (!settings || smsTouchedRef.current) return;
     setSmsInfo(settings.sms.info);
     setSmsReminder(settings.sms.reminder);
+    setSmsSurvey(Boolean(settings.sms.survey && settings.sms.surveyReady));
   }, [settings]);
 
   // Online talepte kayıtlı hasta sunucuda (TC ya da telefonla) aranır; bulunursa
@@ -433,9 +441,7 @@ export function AppointmentFormModal({
           note: buildNoteSafe("YOK", note, treatment),
           smsInfo,
           smsReminder,
-          // Değerlendirme mesajı randevu oluşturulurken otomatik gönderilmiyor
-          // (İletişim > Toplu gönderim'den gönderilir); formda vaat edilmez.
-          smsSurvey: false,
+          smsSurvey: surveyReady && smsSurvey,
         });
     setSaving(false);
 
@@ -545,15 +551,19 @@ export function AppointmentFormModal({
         <FormField label="Hasta" required as="div" htmlFor="appt-patient">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-start" onKeyDown={keepSearchEnter}>
             <div className="min-w-0 flex-1">
-              <PatientPicker
-                id="appt-patient"
-                required
-                value={patient}
-                onChange={(next) => { setPatient(next); setUserTouched(true); setError(null); }}
-                onCreateNew={(query) => openNewPatient(query)}
-              />
+              {lockPatient && patient ? (
+                <p id="appt-patient" className="flex min-h-10 items-center rounded-[var(--radius-control)] border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-800">{patient.fullName}</p>
+              ) : (
+                <PatientPicker
+                  id="appt-patient"
+                  required
+                  value={patient}
+                  onChange={(next) => { setPatient(next); setUserTouched(true); setError(null); }}
+                  onCreateNew={(query) => openNewPatient(query)}
+                />
+              )}
             </div>
-            {!patient && (
+            {!patient && !lockPatient && (
               <Button variant="secondary" icon={UserPlus} onClick={() => openNewPatient()} className="shrink-0">Yeni hasta</Button>
             )}
           </div>
@@ -625,10 +635,10 @@ export function AppointmentFormModal({
         {activeUnits.length > 0 && (
           <Disclosure
             title="Diğer seçenekler"
-            summary={clinicUnitId ? `Tedavi alanı: ${activeUnits.find((unit) => unit.id === clinicUnitId)?.name || ""}` : "Tedavi alanı"}
+            summary={clinicUnitId ? `Koltuk / oda: ${activeUnits.find((unit) => unit.id === clinicUnitId)?.name || ""}` : "Koltuk / oda"}
             defaultOpen={Boolean(clinicUnitId)}
           >
-            <FormField label="Tedavi alanı" htmlFor="appt-unit" hint="Koltuk/oda çakışması kayıtta denetlenir.">
+            <FormField label="Koltuk / oda" htmlFor="appt-unit" hint="Koltuk/oda çakışması kayıtta denetlenir.">
               <Select id="appt-unit" value={clinicUnitId} onChange={(event) => setClinicUnitId(event.target.value)}>
                 <option value="">Seçilmedi</option>
                 {activeUnits.map((unit) => (
@@ -654,6 +664,14 @@ export function AppointmentFormModal({
                 checked={smsReminder}
                 onChange={(checked) => { smsTouchedRef.current = true; setSmsReminder(checked); }}
               />
+              <span title={surveyReady ? "Randevu tamamlanınca hastaya değerlendirme bağlantısı gider" : "Önce Ayarlar › Klinik'te değerlendirme bağlantısını girin"}>
+                <Checkbox
+                  label="Değerlendirme"
+                  checked={surveyReady && smsSurvey}
+                  disabled={!surveyReady}
+                  onChange={(checked) => { smsTouchedRef.current = true; setSmsSurvey(checked); }}
+                />
+              </span>
             </div>
             {patientContext && !patientContext.notify.canNotify && (smsInfo || smsReminder) ? (
               <p className="mt-1.5 text-xs font-medium text-amber-700" role="status">{patientContext.notify.reason}</p>

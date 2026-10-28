@@ -14,7 +14,6 @@ import { formatDateText } from "@/components/ui/Money";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { PageSkeleton } from "@/components/ui/PageSkeleton";
 import { SearchInput } from "@/components/ui/SearchInput";
-import { Tabs, useTabParam } from "@/components/ui/Tabs";
 import { ActiveFilters, Toolbar, type ActiveFilter } from "@/components/ui/Toolbar";
 import { AUDIT_CATEGORIES, auditActionLabel, auditCategoryLabel, auditCategoryOf, type AuditCategoryKey } from "@/lib/audit-log-taxonomy";
 import { cachedGet } from "@/lib/client-cache";
@@ -23,7 +22,6 @@ import { roleLabel } from "@/lib/staff-roles";
 import { turkeyDateKey } from "@/lib/tz";
 import { useDateRangeParam } from "@/lib/use-date-range-param";
 import { isAbortError, useLatestRequest } from "@/lib/use-latest-request";
-import { RecordCheckTab } from "./_components/RecordCheckTab";
 
 type Log = {
   id: string;
@@ -35,8 +33,6 @@ type Log = {
 };
 
 type StaffOption = { id: string; fullName: string; role: string };
-type PageTab = "kayitlar" | "kontrol";
-const PAGE_TABS: readonly PageTab[] = ["kayitlar", "kontrol"];
 const PAGE_SIZES = [25, 50, 100];
 
 /**
@@ -417,49 +413,23 @@ function LogsTab() {
 }
 
 /**
- * İşlem kayıtları: "Kayıtlar" (kim, ne zaman, ne yaptı) ve "Kayıt kontrolü"
- * (eski /sistem-izleme — kayıtların birbiriyle uyumu) tek sayfada.
- * ?tab=kayitlar|kontrol; eski /sistem-izleme adresi buraya yönlenir. Kayıt
- * kontrolü ağır bir tarama olduğu için yalnız o sekme açılınca çalışır; açılan
- * sekme bağlı kalır (geri dönüşte süzgeçler ve liste yerinde durur).
+ * İşlem kayıtları: kim, ne zaman, ne yaptı. Önceki "Kayıt kontrolü" sekmesi
+ * (kayıtların birbiriyle teknik uyum taraması) kaldırıldı: klinik yöneticisinin
+ * düzeltemeyeceği teknik uyarılar gösteriyordu. Eski /sistem-izleme ve
+ * ?tab=kontrol adresleri bu listeyi açar.
  */
 function LogContent() {
-  const [tab, setTab] = useTabParam<PageTab>(PAGE_TABS, "kayitlar");
-  const [visited, setVisited] = useState<ReadonlySet<PageTab>>(() => new Set([tab]));
-  useEffect(() => {
-    setVisited((current) => (current.has(tab) ? current : new Set([...current, tab])));
-  }, [tab]);
-
   return (
     <section className="space-y-3">
       <PageHeader icon="log" title="İşlem kayıtları" />
-      <Tabs
-        ariaLabel="İşlem kayıtları bölümleri"
-        items={[
-          { key: "kayitlar", label: "Kayıtlar" },
-          { key: "kontrol", label: "Kayıt kontrolü" },
-        ]}
-        value={tab}
-        onChange={setTab}
-        panelIdPrefix="log-panel"
-      />
-      {visited.has("kayitlar") && (
-        <div id="log-panel-kayitlar" role="tabpanel" hidden={tab !== "kayitlar"}>
-          <LogsTab />
-        </div>
-      )}
-      {visited.has("kontrol") && (
-        <div id="log-panel-kontrol" role="tabpanel" hidden={tab !== "kontrol"}>
-          <RecordCheckTab />
-        </div>
-      )}
+      <LogsTab />
     </section>
   );
 }
 
 export default function LogPage() {
   return (
-    <Suspense fallback={<PageSkeleton headerAction={false} tabs={2} toolbar body="table" rows={8} columns={4} label="İşlem kayıtları yükleniyor" />}>
+    <Suspense fallback={<PageSkeleton headerAction={false} toolbar body="table" rows={8} columns={4} label="İşlem kayıtları yükleniyor" />}>
       <LogContent />
     </Suspense>
   );

@@ -22,12 +22,16 @@ import { SearchInput } from "@/components/ui/SearchInput";
 import { useTabParam } from "@/components/ui/Tabs";
 import { Toolbar } from "@/components/ui/Toolbar";
 import { matchesSearch } from "@/components/yonetim/search-text";
+import { refreshPanelSummary } from "@/components/layout/use-panel-alerts";
 
 type Ticket = {
   id: string;
   subject: string;
   message: string;
   answer: string | null;
+  /** Yanıt zamanı ve kliniğin yanıtı açtığı an (açılmamışsa "Yeni yanıt"). */
+  answeredAt?: string | null;
+  answerSeenAt?: string | null;
   status?: string | null;
   closedAt?: string | null;
   createdAt: string;
@@ -70,7 +74,10 @@ const STATE_BADGE: Record<TicketState, { tone: "warning" | "success" | "neutral"
   kapandi: { tone: "neutral", label: "Kapandı" },
 };
 
+const hasUnreadAnswer = (ticket: Ticket) => Boolean(ticket.answer && ticket.answeredAt && !ticket.answerSeenAt);
+
 function StatusBadge({ ticket }: { ticket: Ticket }) {
+  if (hasUnreadAnswer(ticket)) return <Badge tone="info">Yeni yanıt</Badge>;
   const state = STATE_BADGE[ticketState(ticket)];
   return <Badge tone={state.tone}>{state.label}</Badge>;
 }
@@ -112,6 +119,18 @@ function DestekContent() {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useTabParam<StatusFilter>(STATUS_FILTERS, "tum", "durum");
   const [selected, setSelected] = useState<Ticket | null>(null);
+  // Yanıtlanmış talep açılınca yanıt "görüldü" olur; zildeki satır kalkar.
+  const openTicket = useCallback((ticket: Ticket) => {
+    setSelected(ticket);
+    if (!hasUnreadAnswer(ticket)) return;
+    const seenAt = new Date().toISOString();
+    setTickets((current) => current.map((item) => (item.id === ticket.id ? { ...item, answerSeenAt: seenAt } : item)));
+    void fetch(`/api/support/${encodeURIComponent(ticket.id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ seen: true }),
+    }).then(() => refreshPanelSummary()).catch(() => undefined);
+  }, []);
 
   const [formOpen, setFormOpen] = useState(false);
   const [topic, setTopic] = useState<SupportTopic>(SUPPORT_TOPICS[0]);
@@ -299,7 +318,7 @@ function DestekContent() {
         emptyAction={tickets.length === 0 && canWrite
           ? <Button icon={Plus} onClick={() => openForm()}>Yeni talep</Button>
           : narrowed ? <Button variant="secondary" onClick={() => { setQuery(""); setStatusFilter("tum"); }}>Filtreleri temizle</Button> : undefined}
-        onRowClick={setSelected}
+        onRowClick={openTicket}
         getRowAriaLabel={(ticket) => `${ticket.subject} talebini aç`}
         mobileCard={(ticket) => (
           <div className="space-y-1">

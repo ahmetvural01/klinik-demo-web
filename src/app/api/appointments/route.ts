@@ -12,6 +12,7 @@ import { renderCommunicationTemplate, resolveSmsTemplate } from "@/lib/sms-templ
 import { requireActiveBranch } from "@/lib/branch-context";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
 import { formatAppointmentDateTime } from "@/lib/appointment-change-notify";
+import { closeFollowUpsResolvedByAppointment } from "@/lib/follow-up-auto-close";
 import { maskPatientName, maskPatientPhone } from "@/lib/audit-mask";
 
 const APPOINTMENT_LIST_LIMIT = 500;
@@ -230,7 +231,7 @@ export async function POST(request: NextRequest) {
 
   // Doktor çakışması artık sert bir engel değil, bilinçli bir onaydır — personel
   // aynı doktoru aynı saatte (ör. iki koltuk arasında geçiş yaparken) başka bir
-  // hastaya da atayabilmeli. Tedavi alanı/ünite ve hasta çakışmaları ise fiziksel
+  // hastaya da atayabilmeli. Koltuk / oda/ünite ve hasta çakışmaları ise fiziksel
   // olarak imkânsız olduğu için hâlâ kesin engellenir (bkz. kullanıcı kararı).
   const overrideDoctorConflict = body?.overrideConflict === true;
   const activeBranch = requireActiveBranch(auth.user.branchContext);
@@ -243,7 +244,7 @@ export async function POST(request: NextRequest) {
 
   const selectedUnit = await isEligibleClinicUnit(parsed.data.clinicUnitId, auth.user.institutionId, activeBranch.branchId);
   if (parsed.data.clinicUnitId && !selectedUnit) {
-    return NextResponse.json({ message: "Seçilen tedavi alanı bulunamadı veya pasif durumda." }, { status: 400 });
+    return NextResponse.json({ message: "Seçilen koltuk / oda bulunamadı veya pasif durumda." }, { status: 400 });
   }
 
   if (auth.user.institutionId) {
@@ -326,7 +327,7 @@ export async function POST(request: NextRequest) {
       const cs = unitConflict.startAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Istanbul" });
       const ce = unitConflict.endAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Istanbul" });
       return NextResponse.json({
-        message: `${selectedUnit.name} tedavi alanı ${cs}–${ce} saatleri arasında dolu (${unitConflict.patient?.fullName ?? "—"}).`,
+        message: `${selectedUnit.name} koltuk / oda ${cs}–${ce} saatleri arasında dolu (${unitConflict.patient?.fullName ?? "—"}).`,
         conflictId: unitConflict.id,
       }, { status: 409 });
     }
@@ -462,9 +463,20 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Randevu verilen hastanın açık "geri ara" araması kendiliğinden kapanır
+    // (Hasta aramaları'nda boşuna aranmasın; arama geçmişine not düşülür).
+    await closeFollowUpsResolvedByAppointment({
+      institutionId: appointment.institutionId,
+      branchId: appointment.branchId,
+      patientId: appointment.patientId,
+      actorUserId: auth.user.id,
+      appointmentStartAt: appointment.startAt,
+      doctorName: appointment.doctor.fullName,
+    });
+
     // Denetim kaydı platform paneline de düşer: hasta adı maskeli, tarih Türkiye
     // saatiyle okunur, hekim adıyla (H9/H11; sms ve online talep uçlarıyla aynı kural).
-    await writeAudit(auth.user.id, "APPOINTMENT_CREATE", `${maskPatientName(appointment.patient.fullName)} için randevu · ${formatAppointmentDateTime(appointment.startAt)} · ${appointment.doctor.fullName}${appointment.clinicUnit ? ` · Tedavi alanı: ${appointment.clinicUnit.name}` : ""}${conflict && overrideDoctorConflict ? " · Doktor çakışması onaylanarak oluşturuldu" : ""}`);
+    await writeAudit(auth.user.id, "APPOINTMENT_CREATE", `${maskPatientName(appointment.patient.fullName)} için randevu · ${formatAppointmentDateTime(appointment.startAt)} · ${appointment.doctor.fullName}${appointment.clinicUnit ? ` · Koltuk / oda: ${appointment.clinicUnit.name}` : ""}${conflict && overrideDoctorConflict ? " · Doktor çakışması onaylanarak oluşturuldu" : ""}`);
     // Liste ucuyla aynı kural: telefon görme yetkisi olmayan role telefon/TC gönderilmez.
     const hidePhone = await shouldHidePatientPhoneForUser(auth.user);
     return NextResponse.json({
@@ -489,7 +501,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: "Bu doktor için bu saat aralığı az önce başka bir kullanıcı tarafından dolduruldu. Lütfen tekrar deneyin." }, { status: 409 });
     }
     if (error instanceof Error && error.message === "CLINIC_UNIT_CONFLICT_RECHECK") {
-      return NextResponse.json({ message: "Bu tedavi alanı aynı saat aralığında başka bir randevuya ayrıldı. Lütfen tekrar deneyin." }, { status: 409 });
+      return NextResponse.json({ message: "Bu koltuk / oda aynı saat aralığında başka bir randevuya ayrıldı. Lütfen tekrar deneyin." }, { status: 409 });
     }
     if (error instanceof Error && error.message === "PATIENT_CONFLICT_RECHECK") {
       return NextResponse.json({ message: "Bu hastanın aynı saat aralığında başka bir randevusu az önce oluşturuldu. Lütfen tekrar deneyin." }, { status: 409 });

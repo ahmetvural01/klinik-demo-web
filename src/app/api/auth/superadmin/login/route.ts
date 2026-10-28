@@ -32,12 +32,11 @@ export async function POST(request: NextRequest) {
   // açıksa şifre doğrulaması yeterli değildir, kod da istenir.
   if (user.twoFactorEnabled) return startPendingTwoFactor(user);
 
-  const modules = await startPlatformSession(user, "Süperadmin sisteme giriş yaptı");
+  await startPlatformSession(user, "Süperadmin sisteme giriş yaptı");
   return NextResponse.json({
     id: user.id,
     fullName: user.fullName,
     role: user.role,
     institutionId: null,
-    modules,
   });
 }

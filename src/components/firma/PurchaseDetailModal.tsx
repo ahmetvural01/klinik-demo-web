@@ -57,17 +57,10 @@ export function PurchaseDetailModal({
       key: "urun",
       header: "Ürün",
       render: (item) => (
-        <div className="min-w-0">
-          <p className="font-semibold text-slate-800">
-            {item.productName}
-            {item.consumed && <Badge tone="neutral" className="ml-1.5 align-[1px]">Kullanıldı</Badge>}
-          </p>
-          {(item.lotNo || item.expiresAt) && (
-            <p className="text-xs text-slate-500">
-              {item.lotNo ? `Lot ${item.lotNo}` : "Lot yok"}{item.expiresAt ? ` · SKT ${formatDateText(item.expiresAt)}` : ""}
-            </p>
-          )}
-        </div>
+        <p className="min-w-0 font-semibold text-slate-800">
+          {item.productName}
+          {item.consumed && <Badge tone="neutral" className="ml-1.5 align-[1px]">Kullanıldı</Badge>}
+        </p>
       ),
     },
     { key: "miktar", header: "Miktar", align: "right", render: (item) => <span className="whitespace-nowrap tabular-nums">{item.quantity} {item.unit}</span> },
@@ -119,11 +112,7 @@ export function PurchaseDetailModal({
       module="firma"
       trackFormChanges={false}
       title={purchase ? `${kind} · ${purchase.firma?.name || ""}` : "Satın alma"}
-      description={purchase ? [
-        formatDateText(purchase.tarih),
-        purchase.faturaNo ? `Fatura ${purchase.faturaNo}` : "Fatura no yok",
-        purchase.kdvOrani > 0 ? `KDV %${purchase.kdvOrani}` : "",
-      ].filter(Boolean).join(" · ") : undefined}
+      description={purchase ? formatDateText(purchase.tarih) : undefined}
       size="lg"
       // Yenilenirken (ödeme/teslim sonrası) düğmeler yerinde kalır; pencere zıplamaz.
       footer={purchase ? footer : undefined}
@@ -160,7 +149,7 @@ export function PurchaseDetailModal({
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="font-semibold text-slate-800">{item.productName}{item.consumed ? " · Kullanıldı" : ""}</p>
-                  <p className="text-xs text-slate-500">{item.quantity} {item.unit} × {formatCurrency(Number(item.unitPrice))}{item.lotNo ? ` · Lot ${item.lotNo}` : ""}</p>
+                  <p className="text-xs text-slate-500">{item.quantity} {item.unit} × {formatCurrency(Number(item.unitPrice))}</p>
                 </div>
                 <Money value={Number(item.lineTotal)} className="shrink-0 font-semibold" />
               </div>
@@ -192,7 +181,7 @@ export function PurchaseDetailModal({
             </div>
           )}
           {active && delivered && remaining > 0 && (
-            <p className="text-xs text-slate-500">Buradan yapılan ödeme önce bu faturanın borcuna düşer.</p>
+            <p className="text-xs text-slate-500">Buradan yapılan ödeme önce bu satın almanın borcuna düşer.</p>
           )}
         </div>
       ) : null}

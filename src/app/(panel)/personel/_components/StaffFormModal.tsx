@@ -309,7 +309,7 @@ export function StaffFormModal({ open, staffId, onClose, onDone, currentUserId, 
     if (!(await confirmDialog({
       title: `${name} pasife alınsın mı?`,
       message: clinical
-        ? "Bu şubeye giriş yapamaz; randevu ve işlem ekranlarında seçilemez. Geçmiş kayıtları silinmez. Gelecek randevusu veya açık tedavi planı varsa önce başka doktora devredilmelidir."
+        ? "Bu şubeye giriş yapamaz; randevu ve işlem ekranlarında seçilemez. Geçmiş kayıtları silinmez. Gelecek randevusu varsa önce başka doktora devredilmelidir."
         : "Bu şubeye giriş yapamaz ve işlem ekranlarında seçilemez. Geçmiş kayıtları silinmez.",
       danger: true,
       confirmText: "Pasife al",

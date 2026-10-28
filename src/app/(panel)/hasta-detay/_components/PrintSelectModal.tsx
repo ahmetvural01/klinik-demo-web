@@ -10,8 +10,9 @@ import { Switch } from "@/components/ui/Switch";
 export type PrintRow = { id: string; date: ReactNode; label: ReactNode; meta?: ReactNode; amount?: ReactNode };
 
 /**
- * Yazdırılacak satırları seçme penceresi (tedavi raporu, tahsilat dökümü).
- * Varsayılan olarak hepsi seçili gelir; satıra tıklamak seçimi değiştirir.
+ * Yazdırılacak satırları seçme penceresi (tedavi raporu, tedavi teklifi,
+ * tahsilat dökümü). Varsayılan olarak hepsi seçili gelir (listede seçim
+ * yapılmışsa yalnız seçilenler); satıra tıklamak seçimi değiştirir.
  */
 export function PrintSelectModal({
   open,
@@ -21,6 +22,7 @@ export function PrintSelectModal({
   rows,
   itemLabel,
   priceToggle = false,
+  initialSelectedIds,
   onPrint,
 }: {
   open: boolean;
@@ -32,18 +34,24 @@ export function PrintSelectModal({
   itemLabel: string;
   /** "Fiyatları göster" anahtarı gösterilsin mi? */
   priceToggle?: boolean;
+  /** Açılışta seçili gelecek satırlar (listede işaretlenenler); boşsa hepsi. */
+  initialSelectedIds?: string[];
   onPrint: (selectedIds: string[], showPrices: boolean) => void;
 }) {
   const [selected, setSelected] = useState<string[]>([]);
   const [showPrices, setShowPrices] = useState(true);
-  // Pencere açılırken bir kez hepsi seçilir: satırlar arka planda yenilense de
+  // Pencere açılırken bir kez seçilir: satırlar arka planda yenilense de
   // kullanıcının seçimi korunur.
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
+  const initialRef = useRef(initialSelectedIds);
+  initialRef.current = initialSelectedIds;
 
   useEffect(() => {
     if (!open) return;
-    setSelected(rowsRef.current.map((row) => row.id));
+    const ids = rowsRef.current.map((row) => row.id);
+    const preferred = (initialRef.current || []).filter((id) => ids.includes(id));
+    setSelected(preferred.length > 0 ? preferred : ids);
     setShowPrices(true);
   }, [open]);
 

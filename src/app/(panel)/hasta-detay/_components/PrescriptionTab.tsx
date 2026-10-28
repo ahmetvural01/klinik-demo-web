@@ -51,7 +51,7 @@ const nextDrugKey = () => `ilac-${(drugKeySeed += 1)}`;
 
 /**
  * Reçete sekmesi: yazılan reçeteler ve "Yeni reçete" penceresi. Pencere
- * sekmeden ya da üstteki "İşlem ekle > Reçete yaz"dan açılır. Önceden form
+ * sekmeden ya da üstteki "İşlem ekle > Yeni reçete"den açılır. Önceden form
  * sekmenin en üstünde hep açıktı (geçmişe bakan kullanıcı formu geçiyordu),
  * yalnız 10 sabit ilaç seçilebiliyor, doz/kullanım/süre değiştirilemiyordu.
  */
@@ -64,7 +64,7 @@ export function PrescriptionTab() {
   const [formOpen, setFormOpen] = useState(false);
   const [busyId, setBusyId] = useState("");
 
-  // "İşlem ekle > Reçete yaz": yeni reçete penceresi açılır.
+  // "İşlem ekle > Yeni reçete": yeni reçete penceresi açılır.
   useEffect(() => {
     if (intent !== "rx") return;
     clearIntent();

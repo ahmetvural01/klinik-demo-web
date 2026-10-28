@@ -81,13 +81,9 @@ export function PaymentMethodPicker({ value, onChange, methods = PAYMENT_METHOD_
     onPosChange(singleId);
   }, [needsPos, posValue, singleId, onPosChange]);
 
-  const posHint = !needsPos
-    ? undefined
-    : loadError
-      ? loadError
-      : devices && usable.length === 0
-        ? "Kayıtlı POS cihazı yok."
-        : undefined;
+  const posHint = needsPos && loadError ? loadError : undefined;
+  // POS tanımlı değilse alan hiç çıkmaz (seçim zorunlu değil); yönetici için Ayarlar bağlantısı.
+  const showPosField = needsPos && (devices === null || usable.length > 0 || Boolean(loadError));
 
   return (
     <div className="space-y-3">
@@ -100,7 +96,7 @@ export function PaymentMethodPicker({ value, onChange, methods = PAYMENT_METHOD_
         error={error}
         hint={hint}
       />
-      {pos && needsPos && (
+      {pos && showPosField && (
         <FormField label="POS cihazı" htmlFor={`${idPrefix}-pos`} required error={pos.error} hint={pos.error ? undefined : posHint}>
           <Select id={`${idPrefix}-pos`} value={posValue} onChange={(event) => pos.onChange(event.target.value)} disabled={!devices}>
             <option value="">{devices ? "POS cihazı seçin" : "Yükleniyor…"}</option>
@@ -112,7 +108,7 @@ export function PaymentMethodPicker({ value, onChange, methods = PAYMENT_METHOD_
       )}
       {pos?.canManage && needsPos && devices && usable.length === 0 && !loadError && (
         <p className="-mt-1 text-xs text-slate-500">
-          POS cihazını <Link href="/ayar?tab=pos" className="font-semibold text-primary underline">Ayarlar › POS cihazları</Link> bölümünden ekleyin.
+          Kartı hangi POS&apos;tan çektiğinizi Muhasebe&apos;de görmek için <Link href="/ayar?tab=pos" className="font-semibold text-primary underline">Ayarlar › POS cihazları</Link> bölümünden cihaz ekleyin.
         </p>
       )}
     </div>

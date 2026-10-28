@@ -4,6 +4,8 @@ import { dispatchPatientMessage } from "@/lib/notification-dispatch";
 import { isoLocalDate } from "@/lib/celebration-days";
 import { operationalInstitutionWhere } from "@/lib/operational-state";
 import { isWithinPatientMessageWindow } from "@/lib/appointment-reminders";
+import { computePatientBalances, isDebtorBalance } from "@/lib/patient-balance";
+import { Prisma } from "@prisma/client";
 
 // Hastanın taksit/ödeme vadesi yaklaştığında veya geciktiğinde SMS hatırlatması
 // — süperadmin'in kurumlara gönderdiği fatura hatırlatmasından (billing-reminders.ts)
@@ -34,12 +36,14 @@ export async function runPatientPaymentReminderSweep(): Promise<{
   failed: number;
   skippedRecent: number;
   skippedNoBalance: number;
+  /** Taksiti açık görünse de hastanın genel borcu kalmamış (ör. ödeme başka doktor adına alınmış). */
+  skippedNoDebt: number;
 }> {
   const now = new Date();
   // Saatlik tarama gün değişince gece (sunucu UTC ise Türkiye saatiyle ~03:00)
   // gönderiyordu; hasta mesajı yalnız 09:00–20:00 arası gider.
   if (!isWithinPatientMessageWindow(now)) {
-    return { institutionsChecked: 0, checked: 0, sent: 0, failed: 0, skippedRecent: 0, skippedNoBalance: 0 };
+    return { institutionsChecked: 0, checked: 0, sent: 0, failed: 0, skippedRecent: 0, skippedNoBalance: 0, skippedNoDebt: 0 };
   }
   const cutoff = new Date(now.getTime() - MIN_HOURS_BETWEEN_REMINDERS * 60 * 60 * 1000);
 
@@ -61,6 +65,7 @@ export async function runPatientPaymentReminderSweep(): Promise<{
   let failed = 0;
   let skippedRecent = 0;
   let skippedNoBalance = 0;
+  let skippedNoDebt = 0;
   // Bir hastanın aynı sweep çalıştırmasında birden fazla geciken/yaklaşan
   // taksiti varsa, her biri için ayrı ayrı SMS gitmesin — spam algısı ve
   // gereksiz SMS kredisi tüketimi (bkz. denetim raporu).
@@ -98,9 +103,17 @@ export async function runPatientPaymentReminderSweep(): Promise<{
       orderBy: { vadeDate: "asc" },
     });
 
+    // Hastanın genel bakiyesi (tek kaynak): taksiti açık görünse de borcu kalmamış
+    // hastaya "ödemeniz gecikti" mesajı gitmez; tutar kalan borçtan büyük yazılmaz.
+    const balances = taksitler.length > 0
+      ? await computePatientBalances({ institutionId: institution.id, patientIds: Array.from(new Set(taksitler.map((row) => row.plan.patient.id))) })
+      : new Map();
+
     for (const taksit of taksitler) {
       const patient = taksit.plan.patient;
       if (!patient.phone) { failed += 1; continue; }
+      const balance = balances.get(patient.id);
+      if (balance && !isDebtorBalance(balance.bakiye)) { skippedNoDebt += 1; continue; }
 
       const daysUntilDue = Math.round(
         (startOfLocalDay(taksit.vadeDate).getTime() - startOfLocalDay(now).getTime()) / DAY_MS,
@@ -134,7 +147,8 @@ export async function runPatientPaymentReminderSweep(): Promise<{
       const institutionName = setting.institutionName || institution.name;
       const institutionPhone = setting.institutionPhone || institution.phone || "";
       const dueDateText = fmtDate(taksit.vadeDate);
-      const amountText = Number(taksit.kalan).toLocaleString("tr-TR");
+      const remaining = balance ? Prisma.Decimal.min(new Prisma.Decimal(taksit.kalan), balance.bakiye) : new Prisma.Decimal(taksit.kalan);
+      const amountText = remaining.toNumber().toLocaleString("tr-TR");
       const daysLeftText = String(Math.max(0, daysUntilDue));
       const daysLateText = String(Math.max(0, Math.abs(daysUntilDue)));
 
@@ -181,5 +195,5 @@ export async function runPatientPaymentReminderSweep(): Promise<{
     }
   }
 
-  return { institutionsChecked: settings.length, checked, sent, failed, skippedRecent, skippedNoBalance };
+  return { institutionsChecked: settings.length, checked, sent, failed, skippedRecent, skippedNoBalance, skippedNoDebt };
 }

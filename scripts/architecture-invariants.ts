@@ -127,8 +127,8 @@ function scanSourceContracts() {
   const historicalModels = [
     "appointment", "examination", "payment", "prescription", "taksitPlan",
     "taksit", "taksitOdeme", "stockMovement", "firmaIslem", "labOrder", "labOrderInvoice",
-    "treatmentPlan", "patientPackageUsage", "patientFollowUp", "patientFollowUpEvent",
-    "message", "supportTicket", "document", "treatmentStep", "purchaseItem", "reminder",
+    "patientPackageUsage", "patientFollowUp", "patientFollowUpEvent",
+    "message", "supportTicket", "document", "purchaseItem", "reminder",
   ];
   const destructivePattern = new RegExp(`\\.(?:${historicalModels.join("|")})\\.delete(?:Many)?\\s*\\(`);
   for (const file of sourceFiles.filter((item) => !relative(item).includes("/__tests__/"))) {
@@ -283,7 +283,6 @@ async function scanDatabaseContracts() {
     "Payment_patientId_institutionId_branchId_fkey",
     "LabOrder_patientId_institutionId_branchId_fkey",
     "LabOrder_firmaId_institutionId_branchId_fkey",
-    "TreatmentPlan_patientId_institutionId_branchId_fkey",
     "TaksitPlan_patientId_institutionId_branchId_fkey",
     "Purchase_firmaId_institutionId_branchId_fkey",
     "PatientFollowUp_patientId_institutionId_branchId_fkey",
@@ -297,9 +296,7 @@ async function scanDatabaseContracts() {
     "DoctorRateHistory_doctorId_institutionId_fkey",
     "PatientConsent_patientId_institutionId_fkey",
     "Document_patientId_institutionId_fkey",
-    "PatientPackage_definitionId_institutionId_fkey",
     "ClinicTaskAssignee_taskId_institutionId_branchId_fkey",
-    "PatientPackageUsage_appointmentId_institutionId_branchId_fkey",
     "LabTrip_labOrderId_institutionId_branchId_fkey",
     "LabOrderInvoice_labOrderId_institutionId_branchId_fkey",
     "PurchaseItem_stockItemId_institutionId_branchId_fkey",

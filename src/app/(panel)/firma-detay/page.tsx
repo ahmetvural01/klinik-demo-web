@@ -47,7 +47,7 @@ type Firma = {
 type Islem = {
   id: string; firmaId: string; tarih: string; islemTipi: "ALIM" | "HIZMET" | "ODEME";
   urunHizmet?: string | null; aciklama?: string | null; tutar: number | string;
-  faturaNo?: string | null; yontem?: string | null; kdvOrani: number;
+  yontem?: string | null;
   status: string; cumBakiye?: number;
   sourceType?: string | null; sourceId?: string | null;
   purchase?: { id: string; items: { productName: string; quantity: number; unit: string }[] } | null;
@@ -200,8 +200,8 @@ function FirmaDetayContent() {
   const kontaktler = useMemo(() => firma?.kontaktler || [], [firma]);
 
   const purchaseFirmas = useMemo(
-    () => (firma && !isLabFirma && firma.isActive ? [{ id: firma.id, name: firma.name, bakiye: firma.bakiye }] : []),
-    [firma, isLabFirma],
+    () => (firma && !isLabFirma && firma.isActive ? [{ id: firma.id, name: firma.name, bakiye: firma.bakiye, bekleyenSiparis: orders.length }] : []),
+    [firma, isLabFirma, orders.length],
   );
   const purchaseManager = usePurchaseModals({
     firmas: purchaseFirmas,
@@ -347,13 +347,13 @@ function FirmaDetayContent() {
   const pageCount = Math.max(1, Math.ceil(islemler.length / PAGE_SIZE));
   const pageRows = islemler.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  // Satırda tek tip çerçevesiz "…" menüsü; laboratuvar faturası da menüden açılır.
+  // Satırda tek tip çerçevesiz "…" menüsü; laboratuvar ücreti de menüden açılır.
   const islemActions = (islem: Islem) => {
     if (isLabIslem(islem)) {
       return (
         <ActionMenu
-          label={`${formatCurrency(Number(islem.tutar))} laboratuvar faturası işlemleri`}
-          items={[{ key: "lab", label: "Laboratuvar işlerine git", description: "Laboratuvar faturası oradan iptal edilir", icon: FlaskConical, href: "/lab" }]}
+          label={`${formatCurrency(Number(islem.tutar))} laboratuvar ücreti işlemleri`}
+          items={[{ key: "lab", label: "Laboratuvar işlerine git", description: "Laboratuvar ücreti oradan iptal edilir", icon: FlaskConical, href: "/lab" }]}
         />
       );
     }
@@ -380,8 +380,6 @@ function FirmaDetayContent() {
         return text ? <span className="block truncate text-slate-700" title={text}>{text}</span> : null;
       },
     },
-    // Boş hücreler boş kalır ("—" her satırda tekrar etmez).
-    { key: "fatura", header: "Fatura no", render: (islem) => islem.faturaNo ? <span className="text-slate-600">{islem.faturaNo}</span> : null },
     { key: "tutar", header: "Tutar", align: "right", render: (islem) => <IslemAmount islem={islem} /> },
     // Kalan bakiye tüm geçmiş üzerinden hesaplanır: tarih süzgecinde doğru kalır,
     // yalnız işlem türü süzülünce anlamını yitirir.
@@ -603,18 +601,18 @@ function FirmaDetayContent() {
           staleError={ekstre ? ekstreError : null}
           onRetry={() => void loadEkstre()}
           emptyText={filtersActive ? "Bu filtreye uyan işlem yok" : "Henüz alım, hizmet veya ödeme yok"}
-          emptyDescription={filtersActive ? undefined : isLabFirma ? "Laboratuvar işleri ve faturaları Laboratuvar ekranından girilir; tutarları burada görünür." : "Faturayı “Yeni satın alma” ile girin; ödemeleri “Ödeme yap” ile kaydedin."}
+          emptyDescription={filtersActive ? undefined : isLabFirma ? "Laboratuvar işleri ve faturaları Laboratuvar ekranından girilir; tutarları burada görünür." : "Alımı “Yeni satın alma” ile girin; ödemeleri “Ödeme yap” ile kaydedin."}
           onRowClick={(islem) => {
             const purchaseId = linkedPurchaseId(islem);
             if (purchaseId) void purchaseManager.openPurchaseDetail(purchaseId);
           }}
           // Yalnız satın almaya bağlı alım satırı bir şey açar; diğer satırlar düğme gibi davranmaz.
           isRowClickable={(islem) => Boolean(linkedPurchaseId(islem))}
-          getRowAriaLabel={(islem) => `${islem.faturaNo ? `Fatura ${islem.faturaNo}` : "Alım"} ${formatCurrency(Number(islem.tutar))} ayrıntısını aç`}
+          getRowAriaLabel={(islem) => `Alım ${formatCurrency(Number(islem.tutar))} ayrıntısını aç`}
           pager={islemler.length > PAGE_SIZE ? { page, pageCount, pageSize: PAGE_SIZE, total: islemler.length, onPageChange: setPage } : undefined}
           // Telefon kartı iki satır: tür · tarih + tutar; açıklama. "…" sağ üst köşede.
           mobileCard={(islem) => {
-            const text = islemDescription(islem) || (islem.faturaNo ? `Fatura ${islem.faturaNo}` : "");
+            const text = islemDescription(islem);
             return (
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
@@ -662,7 +660,7 @@ function FirmaDetayContent() {
           rowKey={(kontakt) => kontakt.id}
           actions={canWriteFinance && kontaktler.length > 0 ? <Button size="sm" variant="secondary" icon={Plus} onClick={() => openKontakt()}>Yetkili kişi ekle</Button> : undefined}
           emptyText="Henüz yetkili kişi yok"
-          emptyDescription="Sipariş verdiğiniz ya da fatura sorduğunuz kişiyi ekleyin."
+          emptyDescription="Sipariş verdiğiniz ya da ödemeyi konuştuğunuz kişiyi ekleyin."
           emptyAction={canWriteFinance ? <Button size="sm" icon={Plus} onClick={() => openKontakt()}>Yetkili kişi ekle</Button> : undefined}
           // Telefon kartı: ad (+ görev) ve aranabilir telefon; düzenle/sil sağ üstte "…".
           mobileCard={(kontakt) => {

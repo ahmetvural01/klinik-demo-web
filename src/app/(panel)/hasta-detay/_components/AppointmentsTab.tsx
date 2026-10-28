@@ -1,59 +1,63 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useMemo, useState } from "react";
-import { CalendarDays, CalendarPlus, ExternalLink } from "lucide-react";
-import { Badge } from "@/components/ui/Badge";
+import { CalendarDays, CalendarPlus } from "lucide-react";
 import { Button } from "@/components/ui/Button";
-import { DescriptionList } from "@/components/ui/DescriptionList";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
-import { Modal } from "@/components/ui/Modal";
-import { ChoiceCards } from "@/components/ui/ChoiceCards";
 import { formatDateText } from "@/components/ui/Money";
-import { patchAppointment } from "@/components/randevu/appointment-api";
-import { confirmDialog } from "@/lib/confirm-client";
-import { showToastSafe } from "@/lib/toast-client";
-import { canMarkNoShow, isStaleWaitingAppointment } from "@/lib/appointment-status";
-import { parseAppointmentNote } from "@/lib/appointment-follow-up";
-import { turkeyDateKey } from "@/lib/tz";
+import { AppointmentStatusBadge } from "@/components/randevu/AgendaList";
+import type { Appointment } from "@/components/randevu/appointment-utils";
 import { usePatientFile } from "./PatientFileContext";
-import { appointmentStatusView, appointmentTypeLabel, sharedName, type Appt } from "./patient-file-shared";
+import { appointmentTypeLabel, sharedName, type Appt, type PatientDetailData } from "./patient-file-shared";
 
-// Ham durum → ekrandaki ad. Ham BEKLIYOR "Planlandı", ham GELDI "Bekliyor"
-// (hasta geldi, bekleme salonunda) yazar — kullanıcı geri bildirimiyle
-// konmuş kural (bkz. src/lib/appointment-status.ts).
-const STATUS_OPTIONS = [
-  { value: "BEKLIYOR", label: "Planlandı" },
-  { value: "GELDI", label: "Bekliyor" },
-  { value: "TAMAMLANDI", label: "Tamamlandı" },
-  { value: "GELMEDI", label: "Gelmedi" },
-  { value: "IPTAL", label: "İptal" },
-] as const;
+// Randevu penceresi (takvimle aynı pencere ve form) yalnız satıra tıklanınca yüklenir.
+const AppointmentWindows = dynamic(() => import("./AppointmentWindows").then((module) => module.AppointmentWindows), { ssr: false });
 
 const PAST_PREVIEW = 10;
 
 const timeRange = (appointment: Appt) => `${formatDateText(appointment.startAt, "time")}–${formatDateText(appointment.endAt, "time")}`;
 
-// Tek rozet: günü geçmiş ama işaretlenmemiş randevuda durum adı ve uyarı aynı
-// rozette ("Planlandı · işaretlenmedi"); önceden yan yana iki rozet vardı.
-function StatusCell({ appointment }: { appointment: Appt }) {
-  const view = appointmentStatusView(appointment.status);
-  if (isStaleWaitingAppointment(appointment.status, appointment.startAt)) {
-    return <Badge tone="warning" title="Randevu günü geçti ama geldi/gelmedi işaretlenmedi">{view.label} · işaretlenmedi</Badge>;
-  }
-  return <Badge tone={view.tone}>{view.label}</Badge>;
+/**
+ * Dosyadaki randevu kaydı → takvimin randevu kaydı. Hasta bilgisi dosyanın
+ * kendisinden gelir (ek istek ve ek KVKK erişim kaydı yok); telefonu ve TC'yi
+ * göremeyen rolde bu alanlar boş kalır.
+ */
+function toCalendarAppointment(appointment: Appt, patient: PatientDetailData, hidePhone: boolean): Appointment {
+  return {
+    id: appointment.id,
+    startAt: appointment.startAt,
+    endAt: appointment.endAt,
+    type: appointment.type,
+    status: appointment.status,
+    note: appointment.note ?? null,
+    smsInfo: appointment.smsInfo,
+    patient: {
+      id: patient.id,
+      fullName: patient.fullName,
+      phone: hidePhone || patient.phone === "***" ? null : patient.phone,
+      tcNo: patient.tcNo && patient.tcNo !== "***" ? patient.tcNo : null,
+      hasContagiousDisease: patient.hasContagiousDisease,
+      contagiousDiseaseNote: patient.contagiousDiseaseNote ?? null,
+    },
+    doctor: appointment.doctor?.id ? { id: appointment.doctor.id, fullName: appointment.doctor.fullName } : null,
+    clinicUnit: appointment.clinicUnit?.id ? { id: appointment.clinicUnit.id, name: appointment.clinicUnit.name, code: appointment.clinicUnit.code ?? null } : null,
+  };
 }
 
 /**
- * Hastanın randevuları. Yeni randevu Randevular sayfasında bu hasta seçili
- * açılır; durum (geldi/gelmedi) satıra tıklayınca açılan pencereden değişir.
+ * Hastanın randevuları. Satıra tıklayınca takvimdekiyle aynı randevu penceresi
+ * açılır (durum, not, düzenle / taşı, iptal, sonraki randevu); durum rozeti de
+ * takvim listesindekiyle aynıdır. Yeni randevu Randevular sayfasında bu hasta
+ * seçili açılır (takvimde boş saat görülerek verilir).
  */
 export function AppointmentsTab() {
-  const { data, reload, can, appointmentHref } = usePatientFile();
-  const [selected, setSelected] = useState<Appt | null>(null);
-  const [saving, setSaving] = useState(false);
+  const { data, reload, can, appointmentHref, hidePatientPhone, startIntent, openPayment } = usePatientFile();
+  // Pencere açılırken kayıt bir kez kurulur: dosya arkada yenilense de açık
+  // pencere baştan kurulmaz (değişikliği pencere kendisi gösterir).
+  const [selected, setSelected] = useState<Appointment | null>(null);
   const [showAllPast, setShowAllPast] = useState(false);
   const canWrite = can("appointments:write");
-  const canCancel = can("appointments:approve");
 
   const { upcoming, past, noShowCount } = useMemo(() => {
     const now = Date.now();
@@ -65,6 +69,10 @@ export function AppointmentsTab() {
       noShowCount: pastList.filter((appointment) => appointment.status === "GELMEDI").length,
     };
   }, [data.appointments]);
+
+  const statusBadge = (appointment: Appt) => (
+    <AppointmentStatusBadge appointment={{ id: appointment.id, startAt: appointment.startAt, endAt: appointment.endAt, status: appointment.status }} />
+  );
 
   // Bütün satırlar aynı hekimdeyse ad başlık altında bir kez (sütun kalkar).
   const columns = (sameDoctor: string | null): ListTableColumn<Appt>[] => [
@@ -80,7 +88,7 @@ export function AppointmentsTab() {
     },
     ...(sameDoctor ? [] : [{ key: "doctor", header: "Hekim", render: (appointment: Appt) => appointment.doctor?.fullName || null }]),
     { key: "type", header: "Tür", render: (appointment) => appointmentTypeLabel(appointment.type) },
-    { key: "status", header: "Durum", render: (appointment) => <StatusCell appointment={appointment} /> },
+    { key: "status", header: "Durum", render: statusBadge },
   ];
 
   const renderMobileCard = (appointment: Appt, sameDoctor: string | null) => (
@@ -89,63 +97,14 @@ export function AppointmentsTab() {
         <p className="text-sm font-semibold text-slate-800">{formatDateText(appointment.startAt, "long")} · <span className="tabular-nums">{timeRange(appointment)}</span></p>
         <p className="mt-0.5 text-xs text-slate-500">{[sameDoctor ? "" : appointment.doctor?.fullName, appointmentTypeLabel(appointment.type)].filter(Boolean).join(" · ")}</p>
       </div>
-      <StatusCell appointment={appointment} />
+      {statusBadge(appointment)}
     </div>
   );
 
-  const changeStatus = async (status: string) => {
-    if (!selected || saving || status === selected.status) return;
-    if (status === "IPTAL" && !(await confirmDialog({ title: "Randevu iptal edilsin mi?", message: "Kayıt geçmişte görünmeye devam eder.", danger: true, confirmText: "Randevuyu iptal et" }))) return;
-    setSaving(true);
-    try {
-      // Takvimle aynı uç: iptal/Gelmedi randevu yeniden açılırken hekimin aynı
-      // saatte başka randevusu varsa sunucu onay ister (409); ileti hata gibi
-      // görünüyordu, artık "Yine de yeniden aç" diye sorulur.
-      const result = await patchAppointment(selected.id, { status });
-      if (!result.ok) {
-        // Boş ileti: kullanıcı çakışma onayını reddetti.
-        if (result.message) showToastSafe({ type: "error", message: result.message });
-        return;
-      }
-      setSelected((current) => (current ? { ...current, status } : current));
-      showToastSafe({ type: "success", icon: "calendar", message: `Randevu durumu: ${appointmentStatusView(status).label}.` });
-      void reload(true);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const detailNote = selected ? (parseAppointmentNote(selected.note).detail || selected.note || "") : "";
-  // Randevu ileri bir günde mi (bugün değil)? Erken gelen hasta aynı gün
-  // "Bekliyor" yapılabilir; ileri günde "geldi" ya da "tamamlandı" denemez.
-  const futureDay = selected ? turkeyDateKey(new Date(selected.startAt)) > turkeyDateKey(new Date()) : false;
-  const statusOptions = selected
-    ? STATUS_OPTIONS.map((option) => {
-        const futureNoShow = option.value === "GELMEDI" && !canMarkNoShow(selected.startAt);
-        const futureVisit = futureDay && (option.value === "GELDI" || option.value === "TAMAMLANDI");
-        const fromCancelled = selected.status === "IPTAL" && option.value !== "IPTAL" && option.value !== "BEKLIYOR";
-        // İptal ayrı yetkidir (sunucu appointments:approve ister); seçenek
-        // yetkisiz kişide gerekçesiyle pasif görünür, onaydan sonra 403 almaz.
-        const cancelForbidden = option.value === "IPTAL" && selected.status !== "IPTAL" && !canCancel;
-        return {
-          value: option.value as string,
-          label: option.label,
-          disabled: !canWrite || saving || futureNoShow || futureVisit || fromCancelled || cancelForbidden,
-          disabledReason: futureNoShow
-            ? "Randevu saati henüz gelmedi"
-            : futureVisit
-              ? "Randevu günü henüz gelmedi"
-              : fromCancelled
-                ? "İptal edilen randevu önce Planlandı yapılmalı"
-                : cancelForbidden
-                  ? "Randevu iptali için yetkiniz yok"
-                  : undefined,
-        };
-      })
-    : [];
   const shownPast = showAllPast ? past : past.slice(0, PAST_PREVIEW);
   const upcomingDoctor = sharedName(upcoming, (appointment) => appointment.doctor?.fullName);
   const pastDoctor = sharedName(shownPast, (appointment) => appointment.doctor?.fullName);
+  const open = (appointment: Appt) => setSelected(toCalendarAppointment(appointment, data, hidePatientPhone));
 
   return (
     <div className="space-y-4">
@@ -156,8 +115,8 @@ export function AppointmentsTab() {
         columns={columns(upcomingDoctor)}
         rows={upcoming}
         rowKey={(appointment) => appointment.id}
-        onRowClick={setSelected}
-        getRowAriaLabel={(appointment) => `${formatDateText(appointment.startAt, "datetime")} randevusunun ayrıntısı`}
+        onRowClick={open}
+        getRowAriaLabel={(appointment) => `${formatDateText(appointment.startAt, "datetime")} randevusunu aç`}
         mobileCard={(appointment) => renderMobileCard(appointment, upcomingDoctor)}
         emptyIcon={CalendarDays}
         emptyText="Yaklaşan randevu yok"
@@ -171,8 +130,8 @@ export function AppointmentsTab() {
             columns={columns(pastDoctor)}
             rows={shownPast}
             rowKey={(appointment) => appointment.id}
-            onRowClick={setSelected}
-            getRowAriaLabel={(appointment) => `${formatDateText(appointment.startAt, "datetime")} randevusunun ayrıntısı`}
+            onRowClick={open}
+            getRowAriaLabel={(appointment) => `${formatDateText(appointment.startAt, "datetime")} randevusunu aç`}
             mobileCard={(appointment) => renderMobileCard(appointment, pastDoctor)}
           />
           {past.length > PAST_PREVIEW && (
@@ -183,40 +142,16 @@ export function AppointmentsTab() {
         </div>
       )}
 
-      <Modal
-        open={Boolean(selected)}
-        onClose={() => setSelected(null)}
-        module="calendar"
-        title="Randevu"
-        description={selected ? `${data.fullName} · ${formatDateText(selected.startAt, "long")} ${timeRange(selected)}` : undefined}
-        size="md"
-        trackFormChanges={false}
-        footer={selected ? (
-          <Button variant="secondary" icon={ExternalLink} href={`/randevu?date=${turkeyDateKey(new Date(selected.startAt))}&focusAppointmentId=${selected.id}`}>Takvimde aç</Button>
-        ) : undefined}
-      >
-        {selected && (
-          <div className="space-y-4">
-            <DescriptionList
-              layout="rows"
-              items={[
-                { key: "doctor", label: "Hekim", value: selected.doctor?.fullName },
-                { key: "type", label: "Tür", value: appointmentTypeLabel(selected.type) },
-                { key: "unit", label: "Ünite", value: selected.clinicUnit ? `${selected.clinicUnit.name}${selected.clinicUnit.code ? ` · ${selected.clinicUnit.code}` : ""}` : null, hidden: !selected.clinicUnit },
-                { key: "note", label: "Not", value: detailNote ? <span className="whitespace-pre-wrap">{detailNote}</span> : null, hidden: !detailNote },
-              ]}
-            />
-            <ChoiceCards
-              label={canWrite ? "Durumu değiştir" : "Durum"}
-              variant="pills"
-              options={statusOptions}
-              value={selected.status}
-              onChange={(value) => void changeStatus(value)}
-              hint="Bekliyor: hasta geldi, bekleme salonunda. Saat ya da hekim değişikliği takvimden yapılır."
-            />
-          </div>
-        )}
-      </Modal>
+      {selected && (
+        <AppointmentWindows
+          key={selected.id}
+          appointment={selected}
+          onClose={() => setSelected(null)}
+          onChanged={() => void reload(true)}
+          onEnterTreatment={() => { setSelected(null); startIntent("tedavi", "treatment"); }}
+          onTakePayment={() => { setSelected(null); openPayment(); }}
+        />
+      )}
     </div>
   );
 }

@@ -54,7 +54,6 @@ export type AuthPayload = {
   role: string;
   institutionId: string | null;
   fullName?: string;
-  superadminModules?: string[];
   /** Superadmin gizli giriş — log kaydı atılmaz */
   ghost?: boolean;
   /**
@@ -73,7 +72,6 @@ export type TokenUser = {
   role: string;
   institutionId: string | null;
   fullName: string;
-  superadminModules?: string[];
   ghost?: boolean;
   tokenVersion?: number;
   ghostOwnerId?: string;
@@ -205,7 +203,6 @@ export function decodeTokenUserFromToken(token: string): TokenUser | null {
       role: payload.role,
       institutionId: payload.institutionId,
       fullName: payload.fullName || "",
-      superadminModules: payload.superadminModules,
       ghost: payload.ghost ?? false,
       tokenVersion: payload.tokenVersion,
       ghostOwnerId: payload.ghostOwnerId,

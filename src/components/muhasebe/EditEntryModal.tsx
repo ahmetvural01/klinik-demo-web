@@ -15,10 +15,12 @@ export type LedgerPayment = {
 };
 export type LedgerExpense = {
   id: string; tarih: string; category: string; categoryId?: string | null; description?: string | null;
-  tutar: number | string; yontem?: string | null; faturaNo?: string | null; kdvOrani?: number | null;
+  tutar: number | string; yontem?: string | null;
   doctorId?: string | null; doctor?: { id: string; fullName: string } | null;
   periodYear?: number | null; periodMonth?: number | null;
   sourceType?: string | null;
+  /** Firma ödemesinde kaynak tedarikçi işlemi (FirmaIslem). */
+  sourceId?: string | null;
 };
 
 export type EditTarget = { kind: "TAHSILAT"; payment: LedgerPayment } | { kind: "GIDER"; expense: LedgerExpense };

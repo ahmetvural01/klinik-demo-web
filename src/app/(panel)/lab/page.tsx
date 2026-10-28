@@ -503,24 +503,17 @@ export default function LabPage() {
       />
 
       {labsError && <LoadErrorState compact message={labsError} onRetry={() => setLabsReloadKey((value) => value + 1)} />}
-      {canWriteLab && !labsLoading && !labsError && labNames.length === 0 && (
+      {/* Laboratuvar "Yeni lab işi" penceresinde eklenebildiği için uyarı yalnız
+          ekleyemeyen kişiye çıkar (yöneticiden istemesi için). */}
+      {canWriteLab && !canAddLab && !labsLoading && !labsError && labNames.length === 0 && (
         <Callout
           tone="warning"
           compact
+          inline
           title="Tanımlı laboratuvar yok"
-          // Ekleyemeyen kişi (Satın alma'yı yalnız görebilse de) yöneticiye iletir;
-          // Satın alma bağlantısı yalnız ekleyebilen ve o ekranı açabilen kişiye.
-          action={canAddLab
-            ? can("finance:read") ? <Button href="/firma" variant="secondary" size="sm">Satın alma</Button> : undefined
-            : <ManagerRequestButton label="Yöneticiden laboratuvar tanımlamasını iste" taskTitle="Laboratuvar firması tanımlanmalı" taskDetails="Yeni lab işi açılamıyor: Satın alma ekranında Laboratuvar türünde firma tanımlı değil." taskType="LAB" />}
+          action={<ManagerRequestButton label="Yöneticiden iste" taskTitle="Laboratuvar tanımlanmalı" taskDetails="Yeni lab işi açılamıyor: tanımlı laboratuvar yok." taskType="LAB" />}
         >
-          {canAddLab
-            ? can("finance:read")
-              ? "Laboratuvarı “Yeni lab işi” penceresinde ya da Satın alma ekranında ekleyebilirsiniz."
-              : "“Yeni lab işi” penceresinde laboratuvarı ekleyebilirsiniz."
-            : "Yöneticiniz “Satın alma” ekranında Laboratuvar türünde firma tanımlamalı."}
-          {/* Süzgeçte eski işlerin laboratuvar adları görünür; bunlar firma kartı değildir. */}
-          {labOptions.length > 0 && " Yeni lab işi için Laboratuvar türünde firma kartı gerekli; eski işlerdeki adlar firma kartına bağlı değil."}
+          Yöneticiniz ilk lab işini girerken laboratuvarı ekleyebilir.
         </Callout>
       )}
       {/* Tek satırlık şerit (K7): eylem telefonda da metnin yanında kalır. */}

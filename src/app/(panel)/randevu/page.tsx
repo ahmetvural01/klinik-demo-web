@@ -69,7 +69,7 @@ const PendingRequestsModal = dynamic(() => import("@/components/randevu/PendingR
 
 type ViewKey = "GUN" | "HAFTA" | "AY" | "AJANDA";
 const VIEW_KEYS: readonly ViewKey[] = ["GUN", "HAFTA", "AY", "AJANDA"];
-// `talepler` (online | bekleme): zil, Anasayfa "Yapılacaklar" ve routes.bookingRequests()
+// `talepler` (online | bekleme): zil, Ana sayfa "Bekleyen işler" ve routes.bookingRequests()
 // bu adresle gelir; Talepler penceresi ilgili sekmede açılır.
 const ONE_SHOT_PARAMS = ["yeni", "patientId", "patientName", "newPatientId", "newPatientName", "focusAppointmentId", "talepler"];
 const UNLINKED_STORAGE_KEY = "randevu:unlinked-online-requests";

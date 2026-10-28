@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import type { Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/api";
@@ -33,8 +33,6 @@ export const dynamic = "force-dynamic";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WAITING_LIMIT = 50;
-const UNREAD_LIMIT = 99;
-const UNREAD_DEFAULT_LOOKBACK_DAYS = 7;
 
 type Scope = { institutionId: string; branchId: string };
 
@@ -57,7 +55,8 @@ type PanelSummaryCounts = {
   lab: { open: number; notSent: number; atLab: number; late: number; clinic: number } | null;
   stockCritical: number | null;
   installmentsOverdue: number | null;
-  unreadMessages: number | null;
+  /** Destek ekibinin yanıtladığı, klinikte henüz açılmamış talepler. */
+  supportAnswered: number | null;
 };
 
 const EMPTY_COUNTS: PanelSummaryCounts = {
@@ -67,7 +66,7 @@ const EMPTY_COUNTS: PanelSummaryCounts = {
   lab: null,
   stockCritical: null,
   installmentsOverdue: null,
-  unreadMessages: null,
+  supportAnswered: null,
 };
 
 // Tek bir sayının hatası tüm özeti düşürmesin: o sayı "bilinmiyor" (null) olur.
@@ -163,14 +162,7 @@ async function countCriticalStock(scope: Scope): Promise<number> {
   })).length;
 }
 
-function parseSince(value: string | null, now: Date) {
-  if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime()) || date.getTime() > now.getTime()) return null;
-  return date;
-}
-
-export async function GET(request: NextRequest) {
+export async function GET() {
   const auth = await requireAuth();
   if (auth.error) return auth.error;
   const user = auth.user;
@@ -207,10 +199,8 @@ export async function GET(request: NextRequest) {
   }
   const scope: Scope = { institutionId, branchId: branch.branchId };
   const todayStart = turkeyTodayStartUtc();
-  const messagesSince = parseSince(request.nextUrl.searchParams.get("messagesSince"), now)
-    || new Date(now.getTime() - UNREAD_DEFAULT_LOOKBACK_DAYS * DAY_MS);
 
-  const [waiting, onlineRequests, tasksDue, lab, stockCritical, installmentsOverdue, unreadMessages] = await Promise.all([
+  const [waiting, onlineRequests, tasksDue, lab, stockCritical, installmentsOverdue, supportAnswered] = await Promise.all([
     // Bekleme salonu klinik akışıdır: hasta kaydını açamayan rol (ör. muhasebe) görmez.
     can("appointments:read") && can("patients:read")
       ? safe("waiting", () => loadWaiting(scope, todayStart))
@@ -244,14 +234,14 @@ export async function GET(request: NextRequest) {
           where: { ...scope, kalan: { gt: 0 }, status: { notIn: ["ODENDI", "IPTAL"] }, vadeDate: { lt: todayStart } },
         }))
       : Promise.resolve(null),
-    can("messages:read")
-      ? safe("unreadMessages", () => prisma.message.count({
-          where: { ...scope, deletedAt: null, userId: { not: user.id }, createdAt: { gt: messagesSince } },
-          take: UNREAD_LIMIT,
+    // Destek yanıtı: talebi açıp okuyana kadar zilde (gizli girişte sayılmaz).
+    can("support:read") && !user.ghostSession
+      ? safe("supportAnswered", () => prisma.supportTicket.count({
+          where: { institutionId, answer: { not: null }, answeredAt: { not: null }, answerSeenAt: null },
         }))
       : Promise.resolve(null),
   ]);
 
-  const counts: PanelSummaryCounts = { waiting, onlineRequests, tasksDue, lab, stockCritical, installmentsOverdue, unreadMessages };
+  const counts: PanelSummaryCounts = { waiting, onlineRequests, tasksDue, lab, stockCritical, installmentsOverdue, supportAnswered };
   return NextResponse.json({ generatedAt: now.toISOString(), scopeKey, permissions, features, counts }, { headers });
 }

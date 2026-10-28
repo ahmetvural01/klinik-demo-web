@@ -9,24 +9,6 @@ import type { HomeSummary } from "@/app/api/dashboard/today/home-summary-types";
 // tek kez; sekme arka plandayken istek atılmaz, sekmeye dönülünce bir kez.
 // Yenileme başarısız olursa eldeki veri ekranda kalır (yanında uyarı).
 
-export type TeamMessage = {
-  id: string;
-  userId: string;
-  text: string;
-  createdAt: string;
-  user: { fullName: string; role: string };
-  /** Sunucu kuralı: kendi mesajı ya da yönetici. Yoksa düzenle/sil gösterilmez. */
-  canEdit?: boolean;
-};
-
-export type Announcement = {
-  id: string;
-  text: string;
-  createdAt: string;
-  endsAt?: string | null;
-  createdByName?: string | null;
-};
-
 type LoadState<T> = { data: T | null; loading: boolean; error: string | null };
 
 export const CONNECTION_ERROR = "Bağlantı kurulamadı. Tekrar deneyin.";
@@ -86,19 +68,9 @@ function useApiResource<T>(url: string | null, fallbackError: string, parse: (bo
 }
 
 const parseSummary = (body: unknown) => body as HomeSummary;
-const parseMessages = (body: unknown) => (Array.isArray(body) ? (body as TeamMessage[]) : []);
-const parseAnnouncements = (body: unknown) => (Array.isArray(body) ? (body as Announcement[]) : []);
 
 export function useHomeSummary() {
   return useApiResource("/api/dashboard/today?ozet=1", "Günlük özet yüklenemedi.", parseSummary);
-}
-
-export function useTeamMessages(enabled: boolean) {
-  return useApiResource(enabled ? "/api/messages" : null, "Ekip mesajları yüklenemedi.", parseMessages);
-}
-
-export function useAnnouncements(enabled: boolean) {
-  return useApiResource(enabled ? "/api/announcements" : null, "Duyurular yüklenemedi.", parseAnnouncements);
 }
 
 /**

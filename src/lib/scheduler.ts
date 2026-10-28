@@ -4,6 +4,7 @@ import { runPatientPaymentReminderSweep } from "@/lib/patient-payment-reminders"
 import { runBirthdaySmsSweep } from "@/lib/birthday-reminders";
 import { runCelebrationDaySmsSweep } from "@/lib/celebration-sms";
 import { runAppointmentReminderSweep } from "@/lib/appointment-reminders";
+import { runReviewRequestSweep } from "@/lib/review-requests";
 import { withDistributedLease } from "@/lib/security-store";
 
 // Render'da tek, sürekli çalışan bir Node süreci olarak barındırıyoruz
@@ -93,6 +94,19 @@ async function runAppointmentSweepSafely() {
   }
 }
 
+async function runReviewRequestSweepSafely() {
+  try {
+    const lease = await withDistributedLease("scheduler:review-request", 55_000, () => runReviewRequestSweep());
+    if (!lease.acquired || !lease.value) return;
+    const result = lease.value;
+    if (result.checked > 0) {
+      console.log(`[scheduler] Değerlendirme mesajları: ${result.checked} randevu, ${result.sent} gönderildi, ${result.skipped} atlandı, ${result.failed} başarısız.`);
+    }
+  } catch (error) {
+    console.error("[scheduler] Değerlendirme mesajı taraması başarısız:", error);
+  }
+}
+
 export function startBillingReminderScheduler() {
   const g = globalThis as GlobalWithFlag;
   if (g[FLAG]) return;
@@ -112,9 +126,10 @@ export function startBillingReminderScheduler() {
     }, SWEEP_INTERVAL_MS);
     setInterval(() => {
       void runAppointmentSweepSafely();
+      void runReviewRequestSweepSafely();
     }, APPOINTMENT_SWEEP_INTERVAL_MS);
   }, FIRST_RUN_DELAY_MS);
 
-  console.log("[scheduler] Randevu, fatura, taksit, doğum günü ve kutlama günü zamanlayıcıları başlatıldı.");
+  console.log("[scheduler] Randevu, değerlendirme, fatura, taksit, doğum günü ve kutlama günü zamanlayıcıları başlatıldı.");
 }
 /* eslint-disable no-console -- Scheduler lifecycle logs are intentional server diagnostics. */

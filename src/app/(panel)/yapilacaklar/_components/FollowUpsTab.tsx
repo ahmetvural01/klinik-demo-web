@@ -105,7 +105,7 @@ type Props = {
 };
 
 /**
- * Yapılacaklar > Hasta aramaları: aranacak ve dönüşü beklenen hastalar.
+ * Aramalar ve görevler > Hasta aramaları: aranacak ve dönüşü beklenen hastalar.
  * Banko günün listesini ilk ekranda görür ("Bugün aranacak": günü geçmiş,
  * bugünkü ve tarihsiz aramalar; gecikenler en üstte) ve en sık sonucu satırdan
  * tek tıkla işler ("Ulaşılamadı" → 2 gün sonra tekrar aranır; randevusu

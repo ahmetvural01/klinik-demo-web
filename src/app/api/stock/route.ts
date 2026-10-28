@@ -16,16 +16,17 @@ type LastPurchaseLine = {
   unitPrice: Prisma.Decimal | number | string | null;
   quantity: number;
   createdAt: Date;
-  purchase: { tarih: Date; faturaNo: string | null; firma: { id: string; name: string } | null } | null;
+  purchase: { tarih: Date; firma: { id: string; name: string } | null } | null;
 };
 
 type StockEnrichment = {
   /** Teslim alınmış son alış satırı ("Son alış"). */
   lastLine?: LastPurchaseLine | null;
-  /** Teslim alınmış alışların toplam miktarı ve tutarı (partisi kalmamış kartta ortalama maliyet). */
+  /** Teslim alınmış alışların toplam miktarı ve tutarı (maliyet katmanı kalmamış kartta ortalama maliyet). */
   receivedQuantity?: number;
   receivedCost?: number;
-  activeLots?: Array<{ quantityRemaining: number; unitCost: Prisma.Decimal | number | string | null; expiresAt: Date | null }>;
+  /** Kalan maliyet katmanları (FIFO; ekranda gösterilmez, yalnız ortalama maliyet için). */
+  activeLots?: Array<{ quantityRemaining: number; unitCost: Prisma.Decimal | number | string | null }>;
   /** Teslim alınmamış siparişlerdeki miktar ("Siparişte"). */
   onOrderQuantity?: number;
 };
@@ -38,27 +39,18 @@ function enrichStockItem(item: any, { lastLine = null, receivedQuantity = 0, rec
     : receivedQuantity > 0
       ? round2(receivedCost / receivedQuantity)
       : null;
-  const expiringLot = [...activeLots]
-    .filter((lot) => lot.expiresAt)
-    .sort((a, b) => new Date(a.expiresAt as Date).getTime() - new Date(b.expiresAt as Date).getTime())[0];
 
   return {
     ...item,
     category: normalizeCategory(item.category),
     averageUnitPrice,
-    activeLotCount: activeLots.length,
-    // Çıkış yalnız partilerden yapılabildiği için ekranda "en fazla" sınırı
-    // ve partisi eksik kartların uyarısı bu sayıdan hesaplanır.
-    lotQuantity,
     onOrderQuantity,
-    nearestExpiry: expiringLot?.expiresAt || null,
     lastPurchase: lastLine ? {
       date: lastLine.purchase?.tarih || lastLine.createdAt,
       supplier: lastLine.purchase?.firma?.name || null,
       supplierId: lastLine.purchase?.firma?.id || null,
       unitPrice: Number(lastLine.unitPrice || 0),
       quantity: Number(lastLine.quantity || 0),
-      invoiceNo: lastLine.purchase?.faturaNo || null,
     } : null,
   };
 }
@@ -68,12 +60,12 @@ function hideStockCost(item: any) {
     ...item,
     unitPrice: null,
     averageUnitPrice: null,
-    lastPurchase: item.lastPurchase ? { ...item.lastPurchase, unitPrice: null, invoiceNo: null } : null,
+    lastPurchase: item.lastPurchase ? { ...item.lastPurchase, unitPrice: null } : null,
   };
 }
 
 /**
- * GET /api/stock — stok kartları + özet (son alış, ortalama maliyet, partiler, siparişte).
+ * GET /api/stock — stok kartları + özet (son alış, ortalama maliyet, siparişte).
  * Önceden her çağrıda kartların TÜM alış satırları (fatura/firma ilişkisiyle,
  * sınırsız) Node'a çekilip bellekte toplanıyordu; Stok, menü rozeti ve ana
  * sayfa bunu çağırdığı için zamanla en ağır uç olmuştu. Toplamlar artık
@@ -81,7 +73,7 @@ function hideStockCost(item: any) {
  * biçimi aynıdır (başka ekranlar kullanıyor).
  *
  * ?lite=1: satın alma formundaki ürün önerileri için yalnız ad/birim/barkod/
- * miktar ve son alış (lot, ortalama, siparişte hesaplanmaz).
+ * miktar ve son alış (ortalama ve siparişte hesaplanmaz).
  */
 export const GET = withApiTiming("stock", async function GET(req: NextRequest) {
   const auth = await requireAuth("stock:read");
@@ -133,7 +125,7 @@ export const GET = withApiTiming("stock", async function GET(req: NextRequest) {
         unitPrice: true,
         quantity: true,
         createdAt: true,
-        purchase: { select: { tarih: true, faturaNo: true, firma: { select: { id: true, name: true } } } },
+        purchase: { select: { tarih: true, firma: { select: { id: true, name: true } } } },
       },
     }),
     lite ? null : prisma.purchaseItem.groupBy({
@@ -153,7 +145,7 @@ export const GET = withApiTiming("stock", async function GET(req: NextRequest) {
         quantityRemaining: { gt: 0 },
         ...scope,
       },
-      select: { stockItemId: true, quantityRemaining: true, unitCost: true, expiresAt: true },
+      select: { stockItemId: true, quantityRemaining: true, unitCost: true },
     }),
     // Alış fiyatı ve maliyet finans bilgisidir: finance:read olmayan roller
     // (asistan, banko, doktor) stok miktarını görür ama maliyeti görmez.
@@ -194,7 +186,7 @@ export async function POST(req: NextRequest) {
 
   const parsed = stockItemCreateSchema.safeParse(await req.json());
   if (!parsed.success) {
-    return NextResponse.json({ error: "Stok kartı bilgileri geçersiz", errors: formatZodError(parsed.error) }, { status: 400 });
+    return NextResponse.json({ error: "Ürün bilgileri geçersiz", errors: formatZodError(parsed.error) }, { status: 400 });
   }
   const { name, category, unit, quantity, minQuantity, unitPrice, barcode, expiresAt, storageLocation } = parsed.data;
 
@@ -215,8 +207,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         error: existingByName.isActive
-          ? `"${existingByName.name}" isimli bir stok kartı zaten var. Mevcut kartı kullanın veya farklı bir isim seçin.`
-          : `"${existingByName.name}" isimli kart arşivde. Stok listesinde "Arşiv" filtresinden geri alabilirsiniz.`,
+          ? `"${existingByName.name}" adlı ürün zaten var. Mevcut ürünü kullanın ya da başka bir ad yazın.`
+          : `"${existingByName.name}" isimli ürün arşivde. Stok'ta "Arşiv" sekmesinden geri alabilirsiniz.`,
       },
       { status: 409 }
     );
@@ -239,8 +231,7 @@ export async function POST(req: NextRequest) {
           unitPrice: null,
           supplier: null,
           barcode,
-          // Açılış stoku varsa SKT o partiye yazılır (aşağıda); kartta kalırsa
-          // parti bitip yenileri gelince ürün kalıcı olarak "SKT geçti" görünüyordu.
+          // Eski istemci uyumluluğu: ekran artık son kullanma tarihi göndermez.
           expiresAt: initialQuantity > 0 ? null : expiryDate,
           storageLocation,
         },
@@ -257,8 +248,8 @@ export async function POST(req: NextRequest) {
           quantity: initialQuantity,
           note: "Açılış stoku (sayım)",
           expiresAt: expiryDate,
-          // Açılış partisi birim maliyetiyle açılır; önceden ₺0 maliyetle
-          // açıldığı için ortalama maliyet ve stok değeri düşük görünüyordu.
+          // Açılış stoku birim maliyetiyle girer; önceden ₺0 maliyetle
+          // girdiği için ortalama maliyet ve stok değeri düşük görünüyordu.
           ...(unitPrice !== null && unitPrice !== undefined ? { unitPrice: Number(unitPrice) } : {}),
         });
         return movement.item;
@@ -268,7 +259,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2002") {
-      return NextResponse.json({ error: `"${name}" isimli bir stok kartı zaten var.` }, { status: 409 });
+      return NextResponse.json({ error: `"${name}" adlı ürün zaten var.` }, { status: 409 });
     }
     console.error("[stock POST] fallback:", error);
     return NextResponse.json({ error: "Stok kaydı oluşturulamadı" }, { status: 503 });

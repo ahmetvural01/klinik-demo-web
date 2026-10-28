@@ -270,9 +270,18 @@ export const purchaseCreateSchema = z.object({
   }
 });
 
+// Düzeltmede gönderilmeyen fatura no / lot no / son kullanma (ekranlar artık
+// göndermez) "değişmedi" demektir (undefined kalır); boş metin ya da null "temizle"dir.
+const keepOrNullTrimmed = (max = 500) =>
+  z.preprocess((value) => (value === "" ? null : value), z.string().trim().max(max).nullable().optional());
+const keepOrNullDateString = z.preprocess(
+  (value) => (value === "" ? null : value),
+  z.string().refine((value) => !Number.isNaN(new Date(value).getTime()), "Geçerli bir tarih girin").nullable().optional(),
+);
+
 export const purchaseUpdateSchema = z.object({
   tarih: optionalDateString,
-  faturaNo: optionalNullableTrimmed(80),
+  faturaNo: keepOrNullTrimmed(80),
   aciklama: optionalNullableTrimmed(1000),
   kdvOrani: z.coerce.number().int().min(0).max(100).optional(),
   items: z.array(z.object({
@@ -283,8 +292,8 @@ export const purchaseUpdateSchema = z.object({
     unit: z.string().trim().max(20).default("adet"),
     quantity: z.coerce.number().int().positive("Miktar 0'dan büyük olmalı").max(1_000_000),
     unitPrice: z.coerce.number().finite().min(0).max(100_000_000),
-    lotNo: optionalNullableTrimmed(80),
-    expiresAt: optionalNullableDateString,
+    lotNo: keepOrNullTrimmed(80),
+    expiresAt: keepOrNullDateString,
   })).min(1, "En az bir satır olmalı").max(100),
 });
 

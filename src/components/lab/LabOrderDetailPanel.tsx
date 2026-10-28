@@ -334,15 +334,15 @@ export function LabOrderDetailPanel({
         )}
       </section>
 
-      {/* Lab faturası */}
-      <section aria-label="Lab faturası">
+      {/* Lab ücreti */}
+      <section aria-label="Lab ücreti">
         <div className="mb-1.5 flex items-center justify-between gap-2">
-          <h3 className="text-sm font-bold text-slate-900">Lab faturası</h3>
+          <h3 className="text-sm font-bold text-slate-900">Lab ücreti</h3>
           {canAddInvoice && <Button size="sm" variant="secondary" onClick={() => onAddInvoice?.(order)}>{LAB_LABELS.addInvoice}</Button>}
         </div>
         {order.invoices.length === 0 ? (
           <p className="text-sm text-slate-500">
-            {summary.rework ? "Yeniden yapım ücretsizdir; fatura girilmez." : "Fatura girilmedi."}
+            {summary.rework ? "Yeniden yapım ücretsizdir; ücret girilmez." : "Ücret girilmedi."}
           </p>
         ) : (
           <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200">
@@ -351,7 +351,7 @@ export function LabOrderDetailPanel({
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-semibold text-slate-800">{invoice.item}</p>
                   <p className="text-xs text-slate-500">
-                    {formatLabDate(invoice.issuedAt)}{invoice.invoiceNo ? ` · Fatura no ${invoice.invoiceNo}` : ""}{invoice.note ? ` · ${invoice.note}` : ""}
+                    {formatLabDate(invoice.issuedAt)}{invoice.note ? ` · ${invoice.note}` : ""}
                   </p>
                 </div>
                 <Money value={invoice.amount} className="shrink-0 font-bold text-slate-900" />

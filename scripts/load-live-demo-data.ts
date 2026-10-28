@@ -468,29 +468,8 @@ async function upsertClinicalFlow(
   await createPayment(institutionId, patients["Elif Demir"].id, drMert.id, 2350, "MAIL_ORDER", pos["Mail Order Sanal POS"], "Dolgu tedavisi mail order tahsilatı", 8);
   await createPayment(institutionId, patients["Mehmet Kaya"].id, drMert.id, 1500, "KREDI_KARTI", pos["Garanti POS"], "Kanal tedavisi kapora", 0);
 
-  const plan = await prisma.treatmentPlan.upsert({
-    where: { id: `plan-${patients["Akif Balcı"].id}` },
-    update: { status: "DEVAM_EDIYOR", totalCost: dec(28900), notes: "İmplant sonrası zirkonyum üst yapı planı" },
-    create: {
-      id: `plan-${patients["Akif Balcı"].id}`,
-      institutionId,
-      branchId: demoBranchId,
-      patientId: patients["Akif Balcı"].id,
-      doctorId: drElif.id,
-      title: "İmplant ve zirkonyum üst yapı planı",
-      status: "DEVAM_EDIYOR",
-      totalCost: dec(28900),
-      notes: "İmplant sonrası zirkonyum üst yapı planı",
-    },
-  });
-  await prisma.treatmentStep.deleteMany({ where: { planId: plan.id } });
-  await prisma.treatmentStep.createMany({
-    data: [
-      { institutionId, branchId: demoBranchId, planId: plan.id, order: 1, treatmentName: "İmplant cerrahisi", toothNo: "36", amount: dec(22400), status: "TAMAMLANDI", doneAt: at(-7, 13) },
-      { institutionId, branchId: demoBranchId, planId: plan.id, order: 2, treatmentName: "Ölçü ve prova", toothNo: "36", amount: dec(0), status: "BEKLIYOR" },
-      { institutionId, branchId: demoBranchId, planId: plan.id, order: 3, treatmentName: "Zirkonyum kaplama", toothNo: "36", amount: dec(6500), status: "BEKLIYOR" },
-    ],
-  });
+  // Akif Balcı'nın implant + zirkonyum planı yukarıdaki tedavi kayıtlarıdır
+  // (ayrı tedavi planı tablosu kaldırıldı).
 
   const taksitPlan = await prisma.taksitPlan.upsert({
     where: { id: `taksit-${patients["Zeynep Arslan"].id}` },
@@ -1006,14 +985,6 @@ async function upsertOtherModules(institutionId: string, users: Record<string, A
     },
   });
 
-  await prisma.message.create({
-    data: {
-      userId: users["10000000013"].id,
-      institutionId,
-      branchId: demoBranchId,
-      text: "Bugün laboratuvardan gelen prova işleri için hasta takip listesini kontrol edin.",
-    },
-  });
   await prisma.announcement.create({
     data: {
       institutionId,

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
 import { cachedGet, invalidateCachedGet } from "@/lib/client-cache";
@@ -16,7 +17,7 @@ import {
   type StockItem,
 } from "@/components/firma/purchase-model";
 
-/** Satın alma formundaki ürün önerileri için hafif liste (lotsuz, ortalamasız). */
+/** Satın alma formundaki ürün önerileri için hafif liste (ortalamasız, siparişsiz). */
 const STOCK_SUGGEST_URL = "/api/stock?lite=1";
 /** Aktif firmalar (satın almada laboratuvarlar listelenmez). */
 const FIRMA_LIST_URL = "/api/firma";
@@ -75,6 +76,7 @@ async function fetchPurchase(id: string): Promise<Purchase> {
 export function usePurchaseModals({
   stockItems, firmas, onFirmasChanged, onChanged, currentFirmaId, canWrite = true,
 }: UsePurchaseModalsOptions) {
+  const router = useRouter();
   const [form, setForm] = useState<FormState>(CLOSED_FORM);
   const [detail, setDetail] = useState<DetailState>(CLOSED_DETAIL);
   const [receiving, setReceiving] = useState<Purchase | null>(null);
@@ -108,10 +110,10 @@ export function usePurchaseModals({
     setLazyFirmasLoading(true);
     setLazyFirmasError(null);
     try {
-      const rows = await cachedGet<Array<{ id: string; name: string; bakiye?: number; kategori?: string }>>(FIRMA_LIST_URL, LIST_TTL_MS, { throwOnError: true });
+      const rows = await cachedGet<Array<{ id: string; name: string; bakiye?: number; kategori?: string; bekleyenSiparis?: number }>>(FIRMA_LIST_URL, LIST_TTL_MS, { throwOnError: true });
       setLazyFirmas((Array.isArray(rows) ? rows : [])
         .filter((firma) => firma.kategori !== "LAB")
-        .map((firma) => ({ id: firma.id, name: firma.name, bakiye: firma.bakiye })));
+        .map((firma) => ({ id: firma.id, name: firma.name, bakiye: firma.bakiye, bekleyenSiparis: firma.bekleyenSiparis })));
     } catch (error) {
       setLazyFirmasError(error instanceof Error ? error.message : "Tedarikçi listesi yüklenemedi.");
     } finally {
@@ -192,6 +194,30 @@ export function usePurchaseModals({
     setReceiving(purchase);
   }, [canWrite]);
 
+  /**
+   * Yeni alım formunda "bu tedarikçide bekleyen sipariş var" uyarısından:
+   * tek sipariş varsa doğrudan teslim alma açılır, birden çoksa tedarikçinin
+   * "Bekleyen siparişler" listesine gidilir. Böylece siparişle gelen ürün
+   * ikinci kez (yeni alım olarak) girilip stok ve borç iki kat olmaz.
+   */
+  const openPendingOrders = useCallback(async (firmaId: string, count: number) => {
+    setForm((current) => ({ ...current, open: false }));
+    if (count === 1) {
+      try {
+        const response = await fetch(`/api/purchases?firmaId=${encodeURIComponent(firmaId)}&receiptStatus=SIPARIS_VERILDI`, { cache: "no-store" });
+        const rows: Purchase[] | null = await response.json().catch(() => null);
+        const order = response.ok && Array.isArray(rows) ? rows.find((row) => row.receiptStatus === "SIPARIS_VERILDI") : null;
+        if (order) {
+          await openReceivePurchase(order.id);
+          return;
+        }
+      } catch {
+        // Liste açılır (aşağıda).
+      }
+    }
+    router.push(`/firma-detay?id=${encodeURIComponent(firmaId)}&tab=siparisler`);
+  }, [openReceivePurchase, router]);
+
   // ── İptal ──────────────────────────────────────────────────────────────
   const cancelPurchase = useCallback(async (purchase: Purchase) => {
     if (!canWrite) return;
@@ -224,6 +250,7 @@ export function usePurchaseModals({
       setDetail(CLOSED_DETAIL);
       detailIdRef.current = "";
       invalidateCachedGet(STOCK_SUGGEST_URL);
+      invalidateCachedGet(FIRMA_LIST_URL);
       await onChanged(purchase.firmaId);
     } catch (error) {
       setDetail((current) => ({ ...current, cancelling: false, actionError: error instanceof Error ? error.message : "Bağlantı kurulamadı." }));
@@ -257,6 +284,7 @@ export function usePurchaseModals({
 
   const handleFormSaved = useCallback(async (result: PurchaseFormSaved) => {
     invalidateCachedGet(STOCK_SUGGEST_URL);
+    invalidateCachedGet(FIRMA_LIST_URL);
     await onChanged(result.firmaId || currentFirmaId || "");
     await refreshDetailIfOpen(result.purchaseId);
   }, [currentFirmaId, onChanged, refreshDetailIfOpen]);
@@ -279,6 +307,7 @@ export function usePurchaseModals({
           invalidateCachedGet(FIRMA_LIST_URL);
           onFirmasChanged?.();
         }}
+        onOpenPendingOrders={canWrite ? (firmaId, count) => void openPendingOrders(firmaId, count) : undefined}
         stockItems={stockItems || lazyStock || []}
         stockLoading={!stockItems && lazyStockLoading}
         onClose={closeForm}
@@ -299,7 +328,7 @@ export function usePurchaseModals({
         onReceive={(purchase) => void openReceivePurchase(purchase)}
         onPay={(purchase) => void openFirmaPayment(purchase.firmaId, {
           suggestedAmount: purchase.paymentSummary?.remaining,
-          reference: purchase.faturaNo ? `Fatura ${purchase.faturaNo} ödemesi` : "Satın alma ödemesi",
+          reference: "Satın alma ödemesi",
           purchaseId: purchase.id,
         })}
         onCancel={(purchase) => void cancelPurchase(purchase)}
@@ -312,6 +341,7 @@ export function usePurchaseModals({
         onEditOrder={(purchase) => { setReceiving(null); openPurchaseEditWith(purchase); }}
         onSaved={async (purchase) => {
           invalidateCachedGet(STOCK_SUGGEST_URL);
+          invalidateCachedGet(FIRMA_LIST_URL);
           await onChanged(purchase.firmaId);
           await refreshDetailIfOpen(purchase.id);
         }}
@@ -322,12 +352,13 @@ export function usePurchaseModals({
         firma={paymentTarget?.firma || null}
         suggestedAmount={paymentTarget?.suggestedAmount}
         reference={paymentTarget?.reference}
-        // Faturadan açılan ödeme önce o faturanın borcuna düşer (sunucu purchaseId'yi
-        // tercih eder); önceden en eski borca düşüyor, fatura "Ödenmedi" kalıyordu.
+        // Satın almadan açılan ödeme önce o alımın borcuna düşer (sunucu purchaseId'yi
+        // tercih eder); önceden en eski borca düşüyor, alım "Ödenmedi" kalıyordu.
         purchaseId={paymentTarget?.purchaseId}
         onClose={() => setPaymentTarget(null)}
         onSaved={async () => {
           const target = paymentTarget;
+          invalidateCachedGet(FIRMA_LIST_URL);
           await onChanged(target?.firma.id || "");
           if (target?.purchaseId) await refreshDetailIfOpen(target.purchaseId);
         }}

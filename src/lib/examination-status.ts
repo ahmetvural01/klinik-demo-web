@@ -39,7 +39,7 @@ export function isDiagnosisExamStatus(status: string | null | undefined) {
 
 /**
  * Kaydın ekranda hangi listede durduğu:
- * - pending: muayene listesi / planlanan (ücrete yansımaz)
+ * - pending: planlanan tedaviler (hasta dosyasındaki tedavi planı; ücrete yansımaz)
  * - in_progress: tedavi başladı (ücrete yansır)
  * - done: yapıldı (ücrete yansır)
  * - cancelled: iptal edildi (hiçbir toplamda sayılmaz, listede gösterilmez)
@@ -58,8 +58,10 @@ export function isChargeableExamStatus(status: string | null | undefined) {
   return kind === "done" || kind === "in_progress";
 }
 
+// İşlem kayıtlarındaki "Durum: Planlandı → Yapıldı" metni; hasta dosyasındaki
+// "Planlanan tedaviler" adıyla aynı.
 export const EXAM_STATUS_KIND_LABELS: Record<ExamStatusKind, string> = {
-  pending: "Bekliyor",
+  pending: "Planlandı",
   in_progress: "Devam ediyor",
   done: "Yapıldı",
   cancelled: "İptal",

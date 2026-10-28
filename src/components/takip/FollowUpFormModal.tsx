@@ -84,7 +84,7 @@ function initialState(item: FollowItem | null | undefined, initialPatient: Picke
 }
 
 /**
- * Yeni hasta araması ve kayıtlı aramayı düzenleme için TEK form (Yapılacaklar
+ * Yeni hasta araması ve kayıtlı aramayı düzenleme için TEK form (Bekleyen işler
  * > Hasta aramaları; hasta dosyası da kullanabilir). Zorunlu yalnız hasta;
  * gün "Yarın 10:00" önerilir, doktor ve öncelik "Doktor ve öncelik" altında.
  * Düzenlemede yanlış girilen neden/gün/not sahte bir görüşme kaydı yazmadan

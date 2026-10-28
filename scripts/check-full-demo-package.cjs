@@ -11,7 +11,6 @@ const M = "[DEMO_PAKET_20260506]";
     followUpEvents: await prisma.patientFollowUpEvent.count({ where: { detail: { contains: M } } }),
     examinations: await prisma.examination.count({ where: { note: { contains: M } } }),
     payments: await prisma.payment.count({ where: { description: { contains: M } } }),
-    treatmentPlans: await prisma.treatmentPlan.count({ where: { title: { contains: M } } }),
     labOrders: await prisma.labOrder.count({ where: { notes: { contains: M } } }),
     stockItems: await prisma.stockItem.count({ where: { name: { contains: M } } }),
     reminders: await prisma.reminder.count({ where: { note: { contains: M } } }),
@@ -20,7 +19,6 @@ const M = "[DEMO_PAKET_20260506]";
     supportTickets: await prisma.supportTicket.count({ where: { subject: { contains: M } } }),
     messages: await prisma.message.count({ where: { text: { contains: M } } }),
     announcements: await prisma.announcement.count({ where: { text: { contains: M } } }),
-    advertisements: await prisma.advertisement.count({ where: { title: { contains: M } } }),
     smsTransactions: await prisma.smsTransaction.count({ where: { status: M + "-SMSTRX-1" } }),
     invoices: await prisma.invoice.count({ where: { description: { contains: M } } }),
   };

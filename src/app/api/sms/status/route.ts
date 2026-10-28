@@ -66,6 +66,7 @@ export async function GET() {
         appointmentCancelNotifyEnabled: true,
         smsDefaultInfo: true,
         smsDefaultReminder: true,
+        smsDefaultSurvey: true,
         reviewLink: true,
       },
     }),
@@ -118,6 +119,7 @@ export async function GET() {
       // Randevu formunda bilgilendirme/hatırlatma kutusunun varsayılanı.
       smsDefaultInfo: setting?.smsDefaultInfo ?? true,
       smsDefaultReminder: setting?.smsDefaultReminder ?? false,
+      smsDefaultSurvey: setting?.smsDefaultSurvey ?? false,
     },
     defaultChannel: setting?.defaultNotificationChannel === "WHATSAPP" ? "WHATSAPP" : "SMS",
     whatsappSmsFallback: setting?.whatsappSmsFallback ?? true,

@@ -72,11 +72,11 @@ type Props = {
 };
 
 /**
- * Yapılacaklar > Ekip görevleri: kişiye atanan iç işler (sipariş, evrak,
+ * Aramalar ve görevler > Ekip görevleri: kişiye atanan iç işler (sipariş, evrak,
  * laboratuvar…). Doktor ve asistan kendi işlerini (bana atanan ya da benim
  * açtığım), yönetici ekibin tamamını görür ve tek seçimle kişiye süzer
  * (önceden kapsam sekmesi + ayrı sorumlu listesi vardı). Durum Hasta
- * aramaları'yla aynı kalıpta: Yapılacak · Tamamlanan · İptal edilen.
+ * aramaları'yla aynı kalıpta: Açık · Tamamlanan · İptal edilen.
  * Açık görevler tek istekte gelir; kapanmış görevler sayfalı ve yalnız
  * seçilince yüklenir (önceden her açılışta kapanmışlar dahil 500 görev).
  */
@@ -315,7 +315,7 @@ export const TasksTab = forwardRef<TasksTabHandle, Props>(function TasksTab({ ac
   }, [filteredOpen, now]);
   const overdueCount = useMemo(() => filteredOpen.filter((task) => dueState(task.dueAt, true, now) === "overdue").length, [filteredOpen, now]);
   const dueRows = useMemo(() => (userId ? openRows.filter((task) => isDueForUser(task, userId, now)) : []), [now, openRows, userId]);
-  // Açık görev listesini kullanan görünümler (Yapılacak ve Zamanı gelen).
+  // Açık görev listesini kullanan görünümler (Açık ve Zamanı gelen).
   const isOpenView = status === "yapilacak" || status === "zamani-gelen";
 
   // "Kimin işleri" seçimindeki kişiler eldeki görevlerden (ayrı personel isteği yok).
@@ -454,7 +454,7 @@ export const TasksTab = forwardRef<TasksTabHandle, Props>(function TasksTab({ ac
 
   const emptyText = isFiltered
     ? "Aramanıza uyan görev yok"
-    : status === "yapilacak" ? "Yapılacak görev yok"
+    : status === "yapilacak" ? "Açık görev yok"
       : status === "zamani-gelen" ? "Zamanı gelen göreviniz yok"
         : status === "tamamlanan" ? "Tamamlanan görev yok" : "İptal edilen görev yok";
 
@@ -470,7 +470,7 @@ export const TasksTab = forwardRef<TasksTabHandle, Props>(function TasksTab({ ac
         value={status}
         onChange={onStatusChange}
         options={[
-          { value: "yapilacak", label: "Yapılacak", count: openLoaded ? filteredOpen.length : undefined, countTone: overdueCount > 0 ? "critical" : "neutral" },
+          { value: "yapilacak", label: "Açık", count: openLoaded ? filteredOpen.length : undefined, countTone: overdueCount > 0 ? "critical" : "neutral" },
           // Yalnız size atanmış ve zamanı gelmiş görev varken (ya da bağlantıyla açılınca) görünür.
           ...(dueRows.length > 0 || status === "zamani-gelen"
             ? [{ value: "zamani-gelen" as const, label: "Zamanı gelen", count: openLoaded ? dueRows.length : undefined, countTone: "warning" as const }]

@@ -40,7 +40,7 @@ const STATUS_STYLE: Record<ToothStatus, { ring: string; dot: string; overlay: st
 export type ToothMarker = "pending" | "done";
 
 const MARKER_STYLE: Record<ToothMarker, { dot: string; label: string }> = {
-  pending: { dot: "bg-amber-500", label: "Yapılacak tedavi var" },
+  pending: { dot: "bg-amber-500", label: "Planlanan tedavi var" },
   done: { dot: "bg-emerald-600", label: "Tedavi yapıldı" },
 };
 
@@ -50,7 +50,7 @@ type OdontogramSelectorProps = {
   selected?: string[];
   onToggle?: (num: string) => void;
   toothMap?: Record<string, ToothStatus>;
-  /** Diş başına tedavi işareti (yapılacak / yapıldı). */
+  /** Diş başına tedavi işareti (planlanan / yapıldı). */
   markers?: Record<string, ToothMarker>;
   dentition?: Dentition;
   editable?: boolean;
@@ -287,7 +287,7 @@ export function OdontogramSelector({
           {showLegend && (
             <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600" aria-label="Şema açıklaması">
               <li className="inline-flex items-center gap-1.5"><span aria-hidden="true" className="h-3 w-3 rounded border-2 border-primary bg-primary/[0.06]" />Seçili</li>
-              <li className="inline-flex items-center gap-1.5"><span aria-hidden="true" className={`h-2 w-2 rounded-full ${MARKER_STYLE.pending.dot}`} />Yapılacak tedavi</li>
+              <li className="inline-flex items-center gap-1.5"><span aria-hidden="true" className={`h-2 w-2 rounded-full ${MARKER_STYLE.pending.dot}`} />Planlanan tedavi</li>
               <li className="inline-flex items-center gap-1.5"><span aria-hidden="true" className={`h-2 w-2 rounded-full ${MARKER_STYLE.done.dot}`} />Yapılan tedavi</li>
             </ul>
           )}

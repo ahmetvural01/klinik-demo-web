@@ -4,7 +4,6 @@ import { useEffect, useSyncExternalStore } from "react";
 import type { CountBadgeTone } from "@/components/ui/CountBadge";
 import type { NavBadgeKey } from "@/lib/nav";
 import { safeLoginNextPath } from "@/lib/routes";
-import { scopedStorageKey } from "@/lib/scoped-client-storage";
 import { showToastSafe } from "@/lib/toast-client";
 
 // Panel kabuğunun TEK veri kaynağı: /api/panel-summary. Sol menü rozetleri,
@@ -42,7 +41,7 @@ export type PanelSummaryCounts = {
   lab: LabSummaryCounts | null;
   stockCritical: number | null;
   installmentsOverdue: number | null;
-  unreadMessages: number | null;
+  supportAnswered: number | null;
 };
 
 export type PanelSummary = {
@@ -159,7 +158,7 @@ function parseSummary(json: unknown): PanelSummary | null {
       lab: parseLab(counts.lab),
       stockCritical: asCount(counts.stockCritical),
       installmentsOverdue: asCount(counts.installmentsOverdue),
-      unreadMessages: asCount(counts.unreadMessages),
+      supportAnswered: asCount(counts.supportAnswered),
     },
   };
 }
@@ -182,15 +181,6 @@ let unauthorizedStrikes = 0;
 
 function isHidden() {
   return typeof document !== "undefined" && document.visibilityState === "hidden";
-}
-
-function readMessagesSince() {
-  if (!activeScopeKey) return "";
-  try {
-    return localStorage.getItem(scopedStorageKey("clinic-messages-last-seen", activeScopeKey)) || "";
-  } catch {
-    return "";
-  }
 }
 
 function schedule(delayMs: number) {
@@ -269,8 +259,7 @@ export function loadPanelSummary(): Promise<void> {
   rerunRequested = false;
   inFlight = (async () => {
     try {
-      const since = readMessagesSince();
-      const response = await fetch(`/api/panel-summary${since ? `?messagesSince=${encodeURIComponent(since)}` : ""}`, { cache: "no-store" });
+      const response = await fetch("/api/panel-summary", { cache: "no-store" });
       if (response.status === 401) {
         handleUnauthorized();
         return;
@@ -322,25 +311,6 @@ function onBecameVisible() {
   if (pendingWhileHidden || Date.now() - lastAttemptAt >= VISIBLE_MIN_GAP_MS) schedule(300);
 }
 
-function onUnreadChanged() {
-  // Ana sayfa mesajları okundu işaretledi: sayı hemen düşsün, ardından tazelensin.
-  // Sayı zaten 0 ise değişecek bir şey yok: ikinci bir /api/panel-summary
-  // isteği atılmaz. Özet henüz gelmediyse ya da bir istek yoldaysa yine
-  // tazelenir (yoldaki istek eski okundu işaretini taşıyor olabilir).
-  const current = state.data;
-  if (current && !current.counts.unreadMessages && !inFlight) return;
-  if (current && activeScopeKey) {
-    let value = 0;
-    try {
-      value = Number(localStorage.getItem(scopedStorageKey("clinic-unread-messages", activeScopeKey)) || 0) || 0;
-    } catch {
-      value = 0;
-    }
-    if (value === 0) setState({ data: { ...current, counts: { ...current.counts, unreadMessages: 0 } } });
-  }
-  schedule(1_500);
-}
-
 function startDriver() {
   schedule(INITIAL_DELAY_MS);
   const onVisibility = () => onBecameVisible();
@@ -355,7 +325,6 @@ function startDriver() {
   window.addEventListener("focus", onFocus);
   window.addEventListener("online", onOnline);
   window.addEventListener("institution-features-change", onFeatures);
-  window.addEventListener("clinic-unread-messages-change", onUnreadChanged);
   document.addEventListener("visibilitychange", onVisibility);
   return () => {
     window.clearInterval(interval);
@@ -366,7 +335,6 @@ function startDriver() {
     window.removeEventListener("focus", onFocus);
     window.removeEventListener("online", onOnline);
     window.removeEventListener("institution-features-change", onFeatures);
-    window.removeEventListener("clinic-unread-messages-change", onUnreadChanged);
     document.removeEventListener("visibilitychange", onVisibility);
   };
 }

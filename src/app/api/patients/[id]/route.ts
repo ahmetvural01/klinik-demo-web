@@ -242,10 +242,13 @@ export const GET = withApiTiming("patients-detail", async function GET(request: 
           endAt: true,
           type: true,
           status: true,
-          // Randevu detayı penceresi not ve tedavi alanını gösteriyordu ama bu
+          // Randevu detayı penceresi not ve koltuk / odanı gösteriyordu ama bu
           // alanlar hiç dönmediği için pencere hep boş kalıyordu.
           note: true,
-          clinicUnit: { select: { name: true, code: true } },
+          // Hasta dosyası takvimle aynı randevu penceresini açar: iptal onayı
+          // "hastaya mesaj gider mi"yi, düzenleme formu koltuk / odanı bilmeli.
+          smsInfo: true,
+          clinicUnit: { select: { id: true, name: true, code: true } },
           doctor: { select: { id: true, fullName: true } },
         },
         orderBy: { startAt: "desc" },

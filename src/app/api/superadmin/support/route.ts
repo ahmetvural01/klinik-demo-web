@@ -101,7 +101,8 @@ export async function PATCH(request: NextRequest) {
 
   const ticket = await prisma.supportTicket.update({
     where: { id },
-    data: { answer },
+    // Yanıt kliniğin zilinde "Destek yanıtladı" olarak görünür; klinik talebi açınca görüldü sayılır.
+    data: { answer, answeredAt: new Date(), answerSeenAt: null },
   });
 
   await writeAudit(auth.user.id, "SUPERADMIN_SUPPORT_ANSWER", `Destek talebi yanıtlandı: ${label}`);

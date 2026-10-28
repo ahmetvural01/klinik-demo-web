@@ -7,6 +7,7 @@ import { Topbar } from "@/components/layout/topbar";
 import { PanelRealtimeSync } from "@/components/realtime/panel-realtime-sync";
 import { PanelCacheReset } from "@/components/layout/panel-cache-reset";
 import { BillingStatusBanner } from "@/components/layout/billing-status-banner";
+import { PlatformNotices } from "@/components/layout/PlatformNotices";
 import { GhostModeBanner } from "@/components/layout/ghost-mode-banner";
 import ToastWrapper from "@/components/ui/ToastWrapper";
 import ConfirmProvider from "@/components/ui/ConfirmProvider";
@@ -18,6 +19,8 @@ import { MENU_COLLAPSED_COOKIE } from "@/lib/nav";
 import { safeLoginNextPath } from "@/lib/routes";
 import type { Role } from "@prisma/client";
 import { getBranchScopedPermissions, resolveBranchContext } from "@/lib/branch-context";
+import { getPanelAdSettings } from "@/lib/panel-ads-server";
+import { PanelAdSlot, PanelAdsProvider } from "@/components/layout/AdSlot";
 
 /**
  * Logo adresi: https logosu olduğu gibi; yüklenmiş (data URL) logo HTML'e
@@ -60,6 +63,8 @@ export default async function PanelLayout({ children }: { children: React.ReactN
   // ikinci bir sıralı turda okunuyor; logo, şubeler ve ödeme durumu ise sayfa
   // açıldıktan sonra üç ayrı istekle geliyor ve içeriği kaydırıyordu.
   // Fotoğraf JWT'ye gömülmez (data-URL büyük olabilir) — ayrı hafif sorgu.
+  // Reklam alanı ayarı (60 sn önbellekli) aynı turda paralel okunur.
+  const panelAdsPromise = getPanelAdSettings({ institutionId: user.institution, ghost: user.ghost });
   const [profile, institution, branchContext, permissionMap, billingStatus, cookieStore] = await Promise.all([
     prisma.profile.findUnique({ where: { userId: user.id }, select: { photoUrl: true } }).catch(() => null),
     user.institution
@@ -78,6 +83,7 @@ export default async function PanelLayout({ children }: { children: React.ReactN
     showBilling ? getBillingStatus(user.institution).catch(() => null) : Promise.resolve(null),
     cookies(),
   ]);
+  const panelAds = await panelAdsPromise;
   // Süperadmin klinik yöneticisinin fotoğrafıyla değil kendi baş harfleriyle görünür.
   const photoUrl = user.ghost ? null : profile?.photoUrl || null;
   const permissions = getBranchScopedPermissions(
@@ -111,6 +117,7 @@ export default async function PanelLayout({ children }: { children: React.ReactN
       userId={user.id}
       ghost={user.ghost}
     >
+    <PanelAdsProvider settings={panelAds}>
     <div className="panel-body flex h-dvh overflow-hidden bg-[rgb(var(--app-bg))]">
       <PanelRealtimeSync />
       <PanelCacheReset scopeKey={scopeKey} rolePreviewSession={user.ghost} />
@@ -130,12 +137,17 @@ export default async function PanelLayout({ children }: { children: React.ReactN
           {/* Bantlar içerikle birlikte kayar: telefonda ekranın dörtte birini kalıcı kaplamasın. */}
           {user.ghost && <GhostModeBanner institutionName={institutionName} previewRole={user.previewRole} />}
           {showBilling && <BillingStatusBanner initialStatus={billingStatus} />}
+          {/* Sistem sahibinin duyurusu (bakım vb.) — yalnız yayındayken, tek satır. */}
+          <PlatformNotices scopeKey={scopeKey} />
           <ToastWrapper>
             <ConfirmProvider><PanelRouteGuard>{children}</PanelRouteGuard></ConfirmProvider>
           </ToastWrapper>
+          {/* Reklam alanı: içeriğin en altında; kuralı src/lib/panel-ads.ts. */}
+          <PanelAdSlot placement="content" />
         </main>
       </div>
     </div>
+    </PanelAdsProvider>
     </PermissionProvider>
   );
 }

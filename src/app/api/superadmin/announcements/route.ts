@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import type { Prisma } from "@prisma/client";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 
@@ -26,23 +25,7 @@ export async function GET(request: NextRequest) {
 
   const { searchParams } = new URL(request.url);
   const page = Math.max(1, Number(searchParams.get("page") || "1") || 1);
-  const scope = searchParams.get("scope") === "clinic" ? "clinic" : "platform";
   const { ids: adminIds, names } = await platformAuthorIds();
-
-  if (scope === "clinic") {
-    const where: Prisma.AnnouncementWhereInput = { OR: [{ createdById: null }, { createdById: { notIn: adminIds } }] };
-    const [total, announcements] = await Promise.all([
-      prisma.announcement.count({ where }),
-      prisma.announcement.findMany({
-        where,
-        orderBy: { createdAt: "desc" },
-        skip: (page - 1) * PAGE_SIZE,
-        take: PAGE_SIZE,
-        include: { institution: { select: { id: true, name: true } } },
-      }),
-    ]);
-    return NextResponse.json({ announcements, total, page, totalPages: Math.max(1, Math.ceil(total / PAGE_SIZE)) });
-  }
 
   const rows = await prisma.announcement.findMany({
     where: { createdById: { in: adminIds } },

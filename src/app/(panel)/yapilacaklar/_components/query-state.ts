@@ -1,4 +1,4 @@
-// Yapılacaklar sayfasının adres parametreleri (sekme, durum, kapsam). Yerel
+// Aramalar ve görevler sayfasının adres parametreleri (sekme, durum, kapsam). Yerel
 // geçmiş API'si kullanılır: Next (14.1+) bunu useSearchParams ile eşitler,
 // sunucuya tur atılmaz ve seçim anında değişir (bkz. ui/Tabs useTabParam).
 

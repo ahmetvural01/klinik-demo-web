@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { writeAudit } from "@/lib/api";
 import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rate-limit";
 import { applyStockMovement } from "@/lib/stock-ledger";
+import { EXAM_STATUS_DIAGNOSIS, EXAM_STATUS_DONE } from "@/lib/examination-status";
 import { DEMO_DAYS } from "@/components/marketing/demo-constants";
 
 function digits(input: string) {
@@ -259,24 +260,13 @@ export async function POST(request: NextRequest) {
         },
       });
 
-      const treatmentPlan = await tx.treatmentPlan.create({
-        data: {
-          institutionId: institution.id,
-          branchId: branch.id,
-          patientId: patients[0].id,
-          doctorId: users[1].id,
-          title: "Tedavi Planı",
-          status: "DEVAM_EDIYOR",
-          totalCost: 8750,
-          notes: "Plan: muayene, dolgu ve kontrol adımları.",
-        },
-      });
-
-      await tx.treatmentStep.createMany({
+      // Örnek tedavi: biri yapılmış (borca yansır), ikisi planlanan (hasta
+      // dosyasındaki "Planlanan tedaviler" ve "Teklif yazdır" görünsün).
+      await tx.examination.createMany({
         data: [
-          { institutionId: institution.id, branchId: branch.id, planId: treatmentPlan.id, order: 1, treatmentName: "İlk Muayene", amount: 750, status: "TAMAMLANDI", doneAt: now },
-          { institutionId: institution.id, branchId: branch.id, planId: treatmentPlan.id, order: 2, treatmentName: "Kompozit Dolgu", toothNo: "16", amount: 2500, status: "BEKLIYOR" },
-          { institutionId: institution.id, branchId: branch.id, planId: treatmentPlan.id, order: 3, treatmentName: "Kanal Tedavisi", toothNo: "26", amount: 4500, status: "BEKLIYOR" },
+          { institutionId: institution.id, branchId: branch.id, patientId: patients[0].id, doctorId: users[1].id, treatmentName: "İlk Muayene", amount: 750, status: EXAM_STATUS_DONE, diagnosedAt: now },
+          { institutionId: institution.id, branchId: branch.id, patientId: patients[0].id, doctorId: users[1].id, treatmentName: "Kompozit Dolgu", toothNo: "16", amount: 2500, status: EXAM_STATUS_DIAGNOSIS, diagnosedAt: now },
+          { institutionId: institution.id, branchId: branch.id, patientId: patients[0].id, doctorId: users[1].id, treatmentName: "Kanal Tedavisi", toothNo: "26", amount: 4500, status: EXAM_STATUS_DIAGNOSIS, diagnosedAt: now },
         ],
       });
 
@@ -392,7 +382,7 @@ export async function POST(request: NextRequest) {
           branchId: branch.id,
           patientId: patients[3].id,
           title: "Hasta geri arama",
-          details: "Tedavi planı onayı için hastayı arayın.",
+          details: "Tedavi teklifi onayı için hastayı arayın.",
           type: "ARAMA",
           priority: 1,
           dueAt: new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000),

@@ -4,7 +4,7 @@ import type { AppointmentStatus, Prisma } from "@prisma/client";
 // kayıtlar. Ham ONAYLANDI eski istemcilerden kalan değerdir ve ekranda
 // "Planlandı" görünür; ham GELDI ekranda "Bekliyor"dur (hasta gelmiş, randevu
 // kapatılmamış). Durum otomatik değiştirilmez — yalnız personelin önüne konur.
-// Randevular sayfasının sayacı (?lite=1), ana sayfanın "Yapılacaklar" satırı
+// Randevular sayfasının sayacı (?lite=1), ana sayfanın "Bekleyen işler" satırı
 // (?ozet=1) ve "Açık kalan randevular" penceresi aynı tanımı kullanır.
 export const OPEN_PAST_STATUSES: AppointmentStatus[] = ["BEKLIYOR", "ONAYLANDI", "GELDI"];
 export const OPEN_PAST_LOOKBACK_DAYS = 60;

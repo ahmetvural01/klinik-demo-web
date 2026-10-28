@@ -1,173 +1,114 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
+import { normalizeAdSlotId, normalizePublisherId } from "@/lib/panel-ads";
+import { invalidateClinicAdCache, invalidatePlatformAdConfigCache } from "@/lib/panel-ads-server";
 
-type AdPayload = {
-  id?: string;
-  title?: string;
-  content?: string;
-  imageUrl?: string;
-  ctaText?: string;
-  ctaUrl?: string;
-  sponsorName?: string;
-  priority?: number;
-  isActive?: boolean;
-  startAt?: string | null;
-  endAt?: string | null;
-  maxImpressions?: number | null;
-  dailyCap?: number | null;
-};
+/**
+ * Süperadmin › Reklamlar. Klinik panelindeki reklam alanlarını tek sağlayıcı
+ * (Google AdSense) doldurur:
+ * - GET: platform ayarı + kliniklerin "reklam gösterilsin" anahtarı (tek istek)
+ * - PUT: platform ayarı (anahtar, yayıncı kimliği, reklam birimi kimliği)
+ * - PATCH: tek kliniğin anahtarı ({ institutionId, adsEnabled })
+ */
 
-const ensureHttpUrl = (value: string | null) => {
-  if (!value) return null;
-  try {
-    const parsed = new URL(value);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
-    return parsed.toString();
-  } catch {
-    return null;
-  }
-};
-
-const parseOptionalDate = (value: string | null | undefined) => {
-  if (!value) return null;
-  const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? null : d;
-};
-
-const parseOptionalPositiveInt = (value: number | null | undefined) => {
-  if (value === null || value === undefined || value === 0) return null;
-  const n = Number(value);
-  if (!Number.isFinite(n) || n < 1) return null;
-  return Math.floor(n);
-};
-
-const normalizeBody = (body: AdPayload) => {
-  const title = body.title?.trim();
-  const content = body.content?.trim();
-
-  const hasImageUrl = body.imageUrl !== undefined;
-  const rawImageUrl = hasImageUrl ? body.imageUrl?.trim() || null : null;
-  const safeImageUrl = hasImageUrl ? ensureHttpUrl(rawImageUrl) : null;
-  if (rawImageUrl && !safeImageUrl) return { error: "Görsel adresi http:// veya https:// ile başlamalı" };
-
-  const hasCtaUrl = body.ctaUrl !== undefined;
-  const rawCtaUrl = hasCtaUrl ? body.ctaUrl?.trim() || null : null;
-  const safeCtaUrl = hasCtaUrl ? ensureHttpUrl(rawCtaUrl) : null;
-  if (rawCtaUrl && !safeCtaUrl) return { error: "Bağlantı adresi http:// veya https:// ile başlamalı" };
-
-  const hasStartAt = body.startAt !== undefined;
-  const hasEndAt = body.endAt !== undefined;
-  const startAt = parseOptionalDate(body.startAt);
-  const endAt = parseOptionalDate(body.endAt);
-  if (body.startAt && !startAt) return { error: "Başlangıç tarihi geçersiz" };
-  if (body.endAt && !endAt) return { error: "Bitiş tarihi geçersiz" };
-  if (startAt && endAt && endAt <= startAt) return { error: "Bitiş tarihi başlangıçtan sonra olmalı" };
-
-  const priority = Number.isFinite(Number(body.priority)) ? Math.max(1, Math.min(10000, Number(body.priority))) : 100;
-  const maxImpressions = parseOptionalPositiveInt(body.maxImpressions);
-  const dailyCap = parseOptionalPositiveInt(body.dailyCap);
-
-  if (maxImpressions && dailyCap && dailyCap > maxImpressions) {
-    return { error: "Günlük sınır toplam gösterim sınırından büyük olamaz" };
-  }
-
-  return {
-    data: {
-      ...(title !== undefined && { title }),
-      ...(content !== undefined && { content }),
-      ...(hasImageUrl && { imageUrl: safeImageUrl }),
-      ...(body.ctaText !== undefined && { ctaText: body.ctaText?.trim() || null }),
-      ...(hasCtaUrl && { ctaUrl: safeCtaUrl }),
-      ...(body.sponsorName !== undefined && { sponsorName: body.sponsorName?.trim() || null }),
-      ...(body.priority !== undefined && { priority }),
-      ...(body.isActive !== undefined && { isActive: body.isActive }),
-      ...(hasStartAt && { startAt }),
-      ...(hasEndAt && { endAt }),
-      ...(body.maxImpressions !== undefined && { maxImpressions }),
-      ...(body.dailyCap !== undefined && { dailyCap }),
-    },
-  };
-};
-
-export async function GET() {
+async function requirePlatformOwner() {
   const auth = await requireAuth("superadmin");
-  if (auth.error) return auth.error;
-  if (auth.user.role !== "SUPERADMIN") return NextResponse.json({ message: "Yetki yok" }, { status: 403 });
-
-  const ads = await prisma.advertisement.findMany({
-    orderBy: [{ priority: "asc" }, { createdAt: "desc" }],
-    include: {
-      _count: { select: { assignments: true } },
-    },
-  });
-
-  return NextResponse.json(ads);
+  if (auth.error) return { error: auth.error };
+  if (auth.user.role !== "SUPERADMIN") return { error: NextResponse.json({ message: "Yetki yok" }, { status: 403 }) };
+  return { user: auth.user };
 }
 
-export async function POST(request: NextRequest) {
-  const auth = await requireAuth("superadmin");
+const configSelect = { enabled: true, publisherId: true, slotId: true, updatedAt: true } as const;
+
+export async function GET() {
+  const auth = await requirePlatformOwner();
   if (auth.error) return auth.error;
-  if (auth.user.role !== "SUPERADMIN") return NextResponse.json({ message: "Yetki yok" }, { status: 403 });
 
-  const body = await request.json() as AdPayload;
+  const [config, institutions] = await Promise.all([
+    prisma.platformAdConfig.findUnique({ where: { id: 1 }, select: configSelect }),
+    prisma.institution.findMany({
+      select: { id: true, name: true, isActive: true, isDemo: true, adsEnabled: true },
+      orderBy: { name: "asc" },
+    }),
+  ]);
 
-  if (!body.title?.trim() || !body.content?.trim()) {
-    return NextResponse.json({ message: "Başlık ve metin zorunlu" }, { status: 400 });
-  }
-
-  const normalized = normalizeBody(body);
-  if ("error" in normalized) {
-    return NextResponse.json({ message: normalized.error }, { status: 400 });
-  }
-
-  const ad = await prisma.advertisement.create({ data: normalized.data as any });
-  await writeAudit(auth.user.id, "SUPERADMIN_AD_CREATE", `Reklam oluşturuldu: ${ad.title}`);
-  return NextResponse.json(ad);
+  return NextResponse.json({
+    config: config ?? { enabled: false, publisherId: "", slotId: "", updatedAt: null },
+    institutions,
+  });
 }
 
 export async function PUT(request: NextRequest) {
-  const auth = await requireAuth("superadmin");
+  const auth = await requirePlatformOwner();
   if (auth.error) return auth.error;
-  if (auth.user.role !== "SUPERADMIN") return NextResponse.json({ message: "Yetki yok" }, { status: 403 });
 
-  const body = await request.json() as AdPayload;
-
-  if (!body.id) return NextResponse.json({ message: "id zorunlu" }, { status: 400 });
-  if (body.title !== undefined && !body.title.trim()) return NextResponse.json({ message: "Başlık boş olamaz" }, { status: 400 });
-  if (body.content !== undefined && !body.content.trim()) return NextResponse.json({ message: "Metin boş olamaz" }, { status: 400 });
-
-  const normalized = normalizeBody(body);
-  if ("error" in normalized) {
-    return NextResponse.json({ message: normalized.error }, { status: 400 });
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body) || typeof body.enabled !== "boolean") {
+    return NextResponse.json({ message: "Geçersiz istek" }, { status: 400 });
+  }
+  const rawPublisherId = typeof body.publisherId === "string" ? body.publisherId : "";
+  const rawSlotId = typeof body.slotId === "string" ? body.slotId : "";
+  const publisherId = rawPublisherId.trim() ? normalizePublisherId(rawPublisherId) : "";
+  if (publisherId === null) {
+    return NextResponse.json({ message: "Yayıncı kimliği ca-pub- ve 16 rakamdan oluşur." }, { status: 400 });
+  }
+  const slotId = rawSlotId.trim() ? normalizeAdSlotId(rawSlotId) : "";
+  if (slotId === null) {
+    return NextResponse.json({ message: "Reklam birimi kimliği yalnız rakamdan oluşur (ör. 1234567890)." }, { status: 400 });
+  }
+  if (body.enabled && (!publisherId || !slotId)) {
+    return NextResponse.json({ message: "Reklamları açmak için iki kimliği de girin." }, { status: 400 });
   }
 
-  const updated = await prisma.advertisement.update({
-    where: { id: body.id },
-    data: normalized.data,
+  const existing = await prisma.platformAdConfig.findUnique({ where: { id: 1 }, select: configSelect });
+  const data = { enabled: body.enabled as boolean, publisherId, slotId };
+  const saved = await prisma.platformAdConfig.upsert({
+    where: { id: 1 },
+    update: data,
+    create: { id: 1, ...data },
+    select: configSelect,
   });
+  invalidatePlatformAdConfigCache();
 
-  await writeAudit(auth.user.id, "SUPERADMIN_AD_UPDATE", `Reklam güncellendi: ${updated.title} (${updated.id})`);
-  return NextResponse.json(updated);
+  const changes: string[] = [];
+  if ((existing?.enabled ?? false) !== saved.enabled) changes.push(saved.enabled ? "reklamlar açıldı" : "reklamlar kapatıldı");
+  if ((existing?.publisherId ?? "") !== saved.publisherId) changes.push(`yayıncı kimliği: ${saved.publisherId || "silindi"}`);
+  if ((existing?.slotId ?? "") !== saved.slotId) changes.push(`reklam birimi: ${saved.slotId || "silindi"}`);
+  if (changes.length > 0) {
+    await writeAudit(auth.user.id, "SUPERADMIN_AD_CONFIG_UPDATE", `Google AdSense: ${changes.join(", ")}`);
+  }
+
+  return NextResponse.json({ config: saved });
 }
 
-export async function DELETE(request: NextRequest) {
-  const auth = await requireAuth("superadmin");
+export async function PATCH(request: NextRequest) {
+  const auth = await requirePlatformOwner();
   if (auth.error) return auth.error;
-  if (auth.user.role !== "SUPERADMIN") return NextResponse.json({ message: "Yetki yok" }, { status: 403 });
 
-  const body = await request.json() as { id?: string };
-  if (!body.id) return NextResponse.json({ message: "id zorunlu" }, { status: 400 });
+  const body = await request.json().catch(() => null);
+  const institutionId = body && typeof body.institutionId === "string" ? body.institutionId.trim() : "";
+  if (!institutionId || typeof body?.adsEnabled !== "boolean") {
+    return NextResponse.json({ message: "Geçersiz istek" }, { status: 400 });
+  }
 
-  const existing = await prisma.advertisement.findUnique({ where: { id: body.id }, select: { title: true } });
-  // İki ayrı silme çağrısı arada hata alırsa (ör. DB kesintisi) atamalar
-  // silinmiş ama reklam kaydı kalmış "yarım" bir durum oluşabilirdi — tek
-  // transaction içinde atomik yapılır (bkz. denetim raporu).
-  await prisma.$transaction([
-    prisma.institutionAdAssignment.deleteMany({ where: { advertisementId: body.id } }),
-    prisma.advertisement.delete({ where: { id: body.id } }),
-  ]);
+  const existing = await prisma.institution.findUnique({ where: { id: institutionId }, select: { name: true, adsEnabled: true } });
+  if (!existing) return NextResponse.json({ message: "Klinik bulunamadı." }, { status: 404 });
 
-  await writeAudit(auth.user.id, "SUPERADMIN_AD_DELETE", `Reklam silindi: ${existing?.title || body.id}`);
-  return NextResponse.json({ ok: true });
+  const updated = await prisma.institution.update({
+    where: { id: institutionId },
+    data: { adsEnabled: body.adsEnabled },
+    select: { id: true, adsEnabled: true },
+  });
+  invalidateClinicAdCache(institutionId);
+
+  if (existing.adsEnabled !== updated.adsEnabled) {
+    await writeAudit(
+      auth.user.id,
+      "SUPERADMIN_INSTITUTION_ADS_UPDATE",
+      `${existing.name}: klinik panelinde reklam ${updated.adsEnabled ? "açıldı" : "kapatıldı"}`,
+    );
+  }
+
+  return NextResponse.json(updated);
 }

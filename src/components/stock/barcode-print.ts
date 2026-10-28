@@ -1,4 +1,4 @@
-import { shortDate, stockLabelCode } from "@/components/stock/stock-shared";
+import { stockLabelCode } from "@/components/stock/stock-shared";
 
 const escapeHtml = (value: string) =>
   value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
@@ -8,8 +8,6 @@ export type BarcodeLabelItem = {
   name: string;
   barcode?: string | null;
   storageLocation?: string | null;
-  /** Etikette yazılacak son kullanma tarihi (parti SKT'si öncelikli). */
-  expiry?: string | null;
 };
 
 export type BarcodePrintResult = "ok" | "popup-blocked" | "invalid-code" | "load-failed";
@@ -38,10 +36,7 @@ export async function printBarcodeLabel(item: BarcodeLabelItem): Promise<Barcode
     return error instanceof Error && /chunk|import|fetch|load/i.test(error.message) ? "load-failed" : "invalid-code";
   }
 
-  const meta = [
-    item.storageLocation ? `Raf: ${escapeHtml(item.storageLocation)}` : "",
-    item.expiry ? `SKT: ${escapeHtml(shortDate(item.expiry))}` : "",
-  ].filter(Boolean).join(" · ");
+  const meta = item.storageLocation ? `Raf: ${escapeHtml(item.storageLocation)}` : "";
   printWindow.document.write(`<!doctype html><html lang="tr"><head><meta charset="utf-8" /><title>${escapeHtml(item.name)}</title>
 <style>body{font-family:Arial,sans-serif;margin:24px;color:#111827}.label{border:1px solid #111827;padding:14px;width:320px}.name{font-weight:700;font-size:14px}.meta{font-size:12px;color:#475569;margin-top:4px}svg{width:100%;height:auto;margin-top:8px}@media print{body{margin:8mm}.label{break-inside:avoid}}</style>
 </head><body><div class="label"><div class="name">${escapeHtml(item.name)}</div>${meta ? `<div class="meta">${meta}</div>` : ""}${svg.outerHTML}</div>

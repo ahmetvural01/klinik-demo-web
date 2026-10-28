@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type ComponentType, type FormEvent, type KeyboardEvent } from "react";
 import {
+  AlertCircle,
   Bell,
   CalendarPlus,
   ChevronRight,
@@ -12,8 +13,8 @@ import {
   ClipboardPlus,
   FlaskConical,
   Inbox,
+  LifeBuoy,
   Menu,
-  MessagesSquare,
   PackageSearch,
   PhoneCall,
   Plus,
@@ -21,7 +22,6 @@ import {
   UserCheck,
   UserPlus,
   Wallet,
-  AlertCircle,
 } from "lucide-react";
 import { ActionMenu, type ActionMenuItem } from "@/components/ui/ActionMenu";
 import { Avatar } from "@/components/ui/Avatar";
@@ -135,8 +135,8 @@ function pendingRows(counts: PanelSummaryCounts): PendingRow[] {
   if (counts.installmentsOverdue) {
     rows.push({ key: "taksit", href: routes.overdueInstallments(), icon: AlertCircle, tone: "critical", count: counts.installmentsOverdue, title: `${counts.installmentsOverdue} taksidin vadesi geçti`, detail: "Muhasebe > Alacaklar" });
   }
-  if (counts.unreadMessages) {
-    rows.push({ key: "mesaj", href: routes.teamMessages(), icon: MessagesSquare, tone: "info", count: counts.unreadMessages, title: `${counts.unreadMessages} yeni ekip mesajı`, detail: "Ana sayfada" });
+  if (counts.supportAnswered) {
+    rows.push({ key: "destek", href: "/destek", icon: LifeBuoy, tone: "info", count: counts.supportAnswered, title: counts.supportAnswered === 1 ? "Destek talebiniz yanıtlandı" : `${counts.supportAnswered} destek talebiniz yanıtlandı`, detail: "Yanıtı okumak için açın" });
   }
   return rows;
 }
@@ -361,18 +361,17 @@ export function Topbar({ user, branchContext }: Props) {
   const rows = useMemo(() => (counts ? pendingRows(counts) : []), [counts]);
   const rowsTotal = rows.reduce((sum, row) => sum + row.count, 0);
   const hasCritical = rows.some((row) => row.tone === "critical");
-  const unreadMessages = counts?.unreadMessages ?? 0;
   const showWaitingInBell = canSeeWaiting && sortedWaiting.length > 0;
 
-  // Tarayıcı sekmesinde sayfa adı + okunmamış mesaj (ör. "(2) Randevular · CepKlinik").
+  // Tarayıcı sekmesinde sayfa adı (ör. "Randevular · CepKlinik").
   const baseTitleRef = useRef("");
   useEffect(() => {
     if (!baseTitleRef.current) baseTitleRef.current = document.title || "CepKlinik";
     const base = baseTitleRef.current;
     const page = pageTitleFor(pathname);
     const title = page ? `${page} · ${base}` : base;
-    document.title = unreadMessages > 0 ? `(${unreadMessages}) ${title}` : title;
-  }, [pathname, unreadMessages]);
+    document.title = title;
+  }, [pathname]);
 
   const handleLogout = async () => {
     if (loggingOut) return;

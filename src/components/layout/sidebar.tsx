@@ -9,6 +9,7 @@ import { CountBadge } from "@/components/ui/CountBadge";
 import { Drawer } from "@/components/ui/Drawer";
 import { usePermissions } from "@/components/auth/PermissionProvider";
 import { BranchSwitcher, type BranchSwitcherData } from "@/components/layout/BranchSwitcher";
+import { PanelAdSlot } from "@/components/layout/AdSlot";
 import { navBadgeFor, usePanelSummary, usePanelSummarySync, type PanelSummaryCounts } from "@/components/layout/use-panel-alerts";
 import { buildNavGroups, isNavItemActive, MENU_COLLAPSED_COOKIE, type NavGroup } from "@/lib/nav";
 import { scopedStorageKey } from "@/lib/scoped-client-storage";
@@ -281,6 +282,9 @@ export function Sidebar({ initialBrandName = "", brandLogoSrc = null, initialCol
           <nav ref={desktopNavRef} aria-label="Ana menü" className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2 py-2">
             <NavList groups={groups} pathname={pathname} counts={counts} compact={!expanded} onIntent={onIntent} />
           </nav>
+
+          {/* Reklam alanı yalnız açık (daraltılmamış) menüde; üzerine gelince açılan dar menüde yok. */}
+          {!collapsed && <PanelAdSlot placement="sidebar" />}
 
           <div className="shrink-0 border-t border-slate-100 p-2">
             <button

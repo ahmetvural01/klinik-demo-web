@@ -6,6 +6,7 @@ import { deleteIntegratedPayment, toPublicPayment, updateIntegratedPayment } fro
 import { effectiveDoctorWhere, isDoctorPeriodSettled } from "@/lib/hakedis";
 import { turkeyYearMonth } from "@/lib/tz";
 import { requireActiveBranch } from "@/lib/branch-context";
+import { posSelectionRequired } from "@/lib/pos-requirement";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -221,7 +222,7 @@ export async function PATCH(request: NextRequest, props: Params) {
       periodLockOverridden = true;
     }
   }
-  if (posRequiredMethods.has(finalMethod) && !finalPosId) {
+  if (!finalPosId && await posSelectionRequired(finalMethod, auth.user.institutionId, branch.branchId)) {
     return NextResponse.json({ message: "Kart / mail order tahsilatı için POS seçimi zorunlu" }, { status: 400 });
   }
   if (!posRequiredMethods.has(finalMethod) && finalPosId) {

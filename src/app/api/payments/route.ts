@@ -6,6 +6,7 @@ import { formatZodError, paymentSchema } from "@/lib/validators";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
 import { turkeyDateKey, turkeyDayRangeUtc } from "@/lib/tz";
 import { requireActiveBranch } from "@/lib/branch-context";
+import { posSelectionRequired } from "@/lib/pos-requirement";
 
 const METHOD_LABELS: Record<string, string> = {
   NAKIT: "Nakit",
@@ -62,7 +63,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: "İşlem anahtarı geçersiz" }, { status: 400 });
     }
 
-    if (posRequiredMethods.has(method) && !posId) {
+    if (!posId && await posSelectionRequired(method, auth.user.institutionId, branch.branchId)) {
       return NextResponse.json({ message: "Kart / mail order tahsilatı için POS seçimi zorunlu" }, { status: 400 });
     }
     if (!posRequiredMethods.has(method) && posId) {

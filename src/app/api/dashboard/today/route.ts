@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 
 /**
  * Günlük özet. Üç biçim:
- * - `?ozet=1`: ana sayfanın "Yapılacaklar" listesi ve başlık sayıları (her
+ * - `?ozet=1`: ana sayfanın "Bekleyen işler" listesi ve başlık sayıları (her
  *   bölüm kendi izniyle; bkz. home-summary.ts). Ana sayfayı açabilen herkes.
  * - `?lite=1`: Randevular sayfasının sayaçları (online talep, bekleme listesi,
  *   açık kalan randevu sayısı).

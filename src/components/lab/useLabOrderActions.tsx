@@ -124,12 +124,12 @@ function emptyInvoice(item = ""): InvoiceForm {
 
 function validateInvoice(form: InvoiceForm) {
   const errors: Record<string, string> = {};
-  if (form.item.trim().length < 2) errors.item = "Faturadaki iş/kalem adını yazın.";
+  if (form.item.trim().length < 2) errors.item = "Yapılan işi yazın.";
   // Türkçe tutar: "3.500" = 3.500 TL, "1.250,50" = 1.250,50 TL (lib/money-input).
   // Önceden "3.500" 3,50 TL olarak firma borcuna ve hakedişe yazılıyordu.
   const amountError = moneyInputError(form.amount, { required: true });
   if (amountError) errors.amount = amountError;
-  if (!form.issuedAt) errors.issuedAt = "Fatura tarihini seçin.";
+  if (!form.issuedAt) errors.issuedAt = "Tarihi seçin.";
   return errors;
 }
 
@@ -388,19 +388,19 @@ export function useLabOrderActions({
   const cancelInvoice = async (order: LabOrderView, invoice: LabInvoiceView) => {
     const approved = await confirmDialog({
       title: LAB_LABELS.cancelInvoice,
-      message: `${invoice.item} (${formatCurrency(invoice.amount)}) faturası iptal edilsin mi? Tutar ${order.labName} firmasının borcundan ve hekim hakedişinden düşülür.`,
+      message: `${invoice.item} (${formatCurrency(invoice.amount)}) ücreti iptal edilsin mi? Tutar ${order.labName} laboratuvarına olan borçtan ve hekim hakedişinden düşülür.`,
       danger: true,
-      confirmText: "Faturayı iptal et",
+      confirmText: "Ücreti iptal et",
       cancelText: "Vazgeç",
     });
     if (!approved) return;
     try {
-      const payload = await fetchJson(`/api/lab-orders/${order.id}/invoices/${invoice.id}`, { method: "DELETE" }, "Fatura iptal edilemedi.");
+      const payload = await fetchJson(`/api/lab-orders/${order.id}/invoices/${invoice.id}`, { method: "DELETE" }, "Ücret iptal edilemedi.");
       await refresh(order.id, payload);
-      showToastSafe({ title: "Lab faturası iptal edildi", message: "Firma borcu ve iş toplamı düzeltildi.", type: "success" });
+      showToastSafe({ title: "Lab ücreti iptal edildi", message: "Laboratuvara olan borç ve iş toplamı düzeltildi.", type: "success" });
     } catch (cancelError) {
       showToastSafe({
-        title: "Fatura iptal edilemedi",
+        title: "Ücret iptal edilemedi",
         message: cancelError instanceof Error ? cancelError.message : "Lütfen tekrar deneyin.",
         type: "error",
         duration: 8000,
@@ -484,10 +484,10 @@ export function useLabOrderActions({
             headers: editing ? JSON_HEADERS : { ...JSON_HEADERS, "Idempotency-Key": invoiceKeyRef.current },
             body: JSON.stringify(invoicePayload(invoiceForm)),
           },
-          editing ? "Fatura güncellenemedi." : "Fatura eklenemedi.",
+          editing ? "Ücret güncellenemedi." : "Ücret eklenemedi.",
         );
       }, {
-        title: editing ? "Lab faturası güncellendi" : "Lab faturası eklendi",
+        title: editing ? "Lab ücreti güncellendi" : "Lab ücreti eklendi",
         message: `${formatCurrency(Number(parseTurkishMoney(invoiceForm.amount) || 0))} ${order.labName} hesabına işlendi.`,
       });
       return;
@@ -535,7 +535,7 @@ export function useLabOrderActions({
             method: "POST",
             headers: { ...JSON_HEADERS, "Idempotency-Key": invoiceKeyRef.current },
             body: JSON.stringify(invoicePayload(invoiceForm)),
-          }, "Lab faturası kaydedilemedi; iş kapatılmadı.");
+          }, "Lab ücreti kaydedilemedi; iş kapatılmadı.");
         }
         try {
           return await fetchJson(`/api/lab-orders/${order.id}`, {
@@ -545,7 +545,7 @@ export function useLabOrderActions({
           }, "İş kapatılamadı.");
         } catch (closeError) {
           const reason = closeError instanceof Error ? closeError.message : "İş kapatılamadı.";
-          throw new Error(needsInvoice ? `Lab faturası kaydedildi ama iş kapatılamadı: ${reason}` : reason);
+          throw new Error(needsInvoice ? `Lab ücreti kaydedildi ama iş kapatılamadı: ${reason}` : reason);
         }
       }, {
         title: "Hastaya takıldı",
@@ -608,7 +608,7 @@ export function useLabOrderActions({
           headers: JSON_HEADERS,
           body: JSON.stringify({ status: "IPTAL", reason: cancelReason.trim() }),
         }, "İş iptal edilemedi.");
-      }, { title: "Lab işi iptal edildi", message: "Faturaları ve açık aramaları kapatıldı." });
+      }, { title: "Lab işi iptal edildi", message: "Ücretleri ve açık aramaları kapatıldı." });
     }
   };
 
@@ -637,7 +637,7 @@ export function useLabOrderActions({
 
   const invoiceFields = (form: InvoiceForm, setForm: (updater: (current: InvoiceForm) => InvoiceForm) => void, orderLabName: string) => (
     <div className="space-y-3">
-      <FormField label="Faturadaki iş" htmlFor="lab-invoice-item" required error={fieldErrors.item}>
+      <FormField label="Yapılan iş" htmlFor="lab-invoice-item" required error={fieldErrors.item}>
         <Input id="lab-invoice-item" value={form.item} maxLength={180} onChange={(event) => setForm((current) => ({ ...current, item: event.target.value }))} placeholder="Zirkonyum kron, prova…" />
       </FormField>
       <div className="grid gap-3 sm:grid-cols-2">
@@ -650,20 +650,13 @@ export function useLabOrderActions({
         >
           <MoneyInput id="lab-invoice-amount" value={form.amount} onChange={(amount) => setForm((current) => ({ ...current, amount }))} />
         </FormField>
-        <FormField label="Fatura tarihi" htmlFor="lab-invoice-date" required error={fieldErrors.issuedAt}>
+        <FormField label="Tarih" htmlFor="lab-invoice-date" required error={fieldErrors.issuedAt}>
           <Input id="lab-invoice-date" type="date" value={form.issuedAt} max={turkeyDateKey()} onChange={(event) => setForm((current) => ({ ...current, issuedAt: event.target.value }))} />
         </FormField>
       </div>
-      <Disclosure title="Diğer bilgiler" summary="Fatura no, not" defaultOpen={Boolean(form.invoiceNo || form.note)}>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <FormField label="Fatura no" htmlFor="lab-invoice-no">
-            <Input id="lab-invoice-no" value={form.invoiceNo} maxLength={80} onChange={(event) => setForm((current) => ({ ...current, invoiceNo: event.target.value }))} />
-          </FormField>
-          <FormField label="Not" htmlFor="lab-invoice-note">
-            <Input id="lab-invoice-note" value={form.note} maxLength={500} onChange={(event) => setForm((current) => ({ ...current, note: event.target.value }))} />
-          </FormField>
-        </div>
-      </Disclosure>
+      <FormField label="Not" htmlFor="lab-invoice-note">
+        <Input id="lab-invoice-note" value={form.note} maxLength={500} onChange={(event) => setForm((current) => ({ ...current, note: event.target.value }))} />
+      </FormField>
     </div>
   );
 
@@ -768,7 +761,7 @@ export function useLabOrderActions({
             checked={receiveForm.needsAppointment}
             onChange={(needsAppointment) => setReceiveForm((current) => ({ ...current, needsAppointment }))}
             label="Hasta prova/takma randevusu için aransın"
-            description="Yapılacaklar > Hasta aramaları listesine düşer; iş kapanınca kendiliğinden kapanır."
+            description="Aramalar ve görevler > Hasta aramaları listesine düşer; iş kapanınca kendiliğinden kapanır."
           />
           <FormField label="Not" htmlFor="lab-receive-note">
             <Input id="lab-receive-note" value={receiveForm.note} maxLength={500} onChange={(event) => setReceiveForm((current) => ({ ...current, note: event.target.value }))} placeholder="Prova hazır, renk düzeltmesi gerekli…" />
@@ -854,13 +847,13 @@ export function useLabOrderActions({
           <p className="text-sm text-slate-600">İş hastaya takıldı olarak kapanır; bu işin açık prova aramaları listeden kalkar.</p>
           {summary.needsInvoiceToComplete ? (
             <>
-              <Callout tone="warning" compact>Lab faturası girilmeden iş kapatılamaz (lab gideri hekim hakedişine faturayla yansır).</Callout>
+              <Callout tone="warning" compact>Lab ücreti girilmeden iş kapatılamaz (ücret hekim hakedişinden düşülür).</Callout>
               {invoiceFields(invoiceForm, (updater) => setInvoiceForm(updater), order.labName)}
             </>
           ) : summary.rework && order.invoices.length === 0 ? (
-            <p className="text-sm text-slate-600">Yeniden yapım ücretsiz olduğu için fatura gerekmez.</p>
+            <p className="text-sm text-slate-600">Yeniden yapım ücretsiz olduğu için ücret girilmez.</p>
           ) : (
-            <p className="text-sm text-slate-600">Girilmiş lab faturası: <span className="font-semibold tabular-nums text-slate-900">{formatCurrency(summary.totalAmount)}</span></p>
+            <p className="text-sm text-slate-600">Girilmiş lab ücreti: <span className="font-semibold tabular-nums text-slate-900">{formatCurrency(summary.totalAmount)}</span></p>
           )}
         </>
       );
@@ -881,12 +874,12 @@ export function useLabOrderActions({
           </FormField>
           {order.invoices.length > 0 && (
             <ChoiceCards
-              label={`Mevcut lab faturası (${formatCurrency(invoiceTotal)}) ne olsun?`}
+              label={`Mevcut lab ücreti (${formatCurrency(invoiceTotal)}) ne olsun?`}
               value={keepInvoices ? "keep" : "void"}
               onChange={(value) => setKeepInvoices(value === "keep")}
               columns={1}
               options={[
-                { value: "keep", label: "Kalsın", description: "Laboratuvar ilk işi faturaladı; firma borcu ve hakediş gideri değişmez." },
+                { value: "keep", label: "Kalsın", description: "Laboratuvar ilk işin ücretini aldı; laboratuvara olan borç ve hakediş gideri değişmez." },
                 { value: "void", label: "İptal edilsin", description: "Laboratuvar ücreti geri aldı; tutar firma borcundan ve hakediş giderinden düşülür." },
               ]}
             />
@@ -898,7 +891,7 @@ export function useLabOrderActions({
     if (action.kind === "editOrder") {
       title = LAB_LABELS.editOrder;
       const hasInvoices = order.invoices.length > 0;
-      const lockedHint = "Faturası girilmiş işte değiştirilemez; önce faturayı iptal edin.";
+      const lockedHint = "Ücreti girilmiş işte değiştirilemez; önce ücreti iptal edin.";
       const labOptions = Array.from(new Set([order.labName, ...labNames])).filter(Boolean);
       const typeKnown = LAB_CATEGORIES.some((category) => category.items.includes(orderForm.labType));
       body = (
@@ -941,7 +934,7 @@ export function useLabOrderActions({
       body = (
         <>
           <Callout tone="warning" compact>
-            Geri alınamaz. {order.invoices.length > 0 ? `Lab faturaları (${formatCurrency(invoiceTotal)}) iptal edilip firma borcundan düşülür; ` : ""}açık aramalar kapanır.
+            Geri alınamaz. {order.invoices.length > 0 ? `Lab ücretleri (${formatCurrency(invoiceTotal)}) iptal edilip laboratuvara olan borçtan düşülür; ` : ""}açık aramalar kapanır.
           </Callout>
           <FormField label="İptal nedeni" htmlFor="lab-cancel-reason" required error={fieldErrors.reason}>
             <Textarea id="lab-cancel-reason" rows={2} maxLength={500} value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} placeholder="Örn. hasta tedaviden vazgeçti, yanlış hastaya açıldı" />

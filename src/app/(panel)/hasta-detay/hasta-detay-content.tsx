@@ -68,7 +68,6 @@ import {
   type PatientBalance,
   type PatientDetailData,
   type TabKey,
-  type TreatmentPlanLite,
 } from "./_components/patient-file-shared";
 import { SummaryTab } from "./_components/SummaryTab";
 import { PrintArea } from "./_components/print";
@@ -178,8 +177,6 @@ export default function HastaDetayContent() {
   const [tasksLoaded, setTasksLoaded] = useState(false);
   const [tasksError, setTasksError] = useState(false);
   const [serverBalance, setServerBalance] = useState<ServerBalance | null>(null);
-  const [treatmentPlans, setTreatmentPlans] = useState<TreatmentPlanLite[]>([]);
-  const [treatmentPlansLoaded, setTreatmentPlansLoaded] = useState(false);
   const [doctors, setDoctors] = useState<StaffLike[]>([]);
   const [doctorsLoaded, setDoctorsLoaded] = useState(false);
   const [me, setMe] = useState<{ id: string; fullName: string }>({ id: userId || "", fullName: "" });
@@ -204,7 +201,6 @@ export default function HastaDetayContent() {
   const beginLoad = useLatestRequest();
   const accessRecordedRef = useRef(false);
   const lastRefreshRef = useRef(0);
-  const plansWantedRef = useRef(false);
   const tasksWantedRef = useRef(false);
   const labsRequestedRef = useRef(false);
   const headerRef = useRef<HTMLDivElement>(null);
@@ -247,10 +243,9 @@ export default function HastaDetayContent() {
       accessRecordedRef.current = true;
       // Görevler yalnız Özet açıldıysa istenir (bkz. loadTasks).
       const wantTasks = canReadTasks && tasksWantedRef.current;
-      const [patientResult, taskResponse, planResponse, balanceResponse] = await Promise.all([
+      const [patientResult, taskResponse, balanceResponse] = await Promise.all([
         prefetched ?? fetchPatientFile(id, { signal: request.signal, silent: !firstOpen || alreadyRecorded }),
         wantTasks ? fetch(`/api/clinic-tasks?patientId=${encodeURIComponent(id)}&take=200`, { cache: "no-store", signal: request.signal }).catch(() => null) : Promise.resolve(null),
-        plansWantedRef.current && can("treatment:read") ? fetch(`/api/treatment-plans?patientId=${encodeURIComponent(id)}&take=50`, { cache: "no-store", signal: request.signal }).catch(() => null) : Promise.resolve(null),
         serverBalanceNeeded ? fetch(`/api/patients/${encodeURIComponent(id)}/balance`, { cache: "no-store", signal: request.signal }).catch(() => null) : Promise.resolve(null),
       ]);
       if (!request.isLatest()) return;
@@ -276,7 +271,6 @@ export default function HastaDetayContent() {
       lastRefreshRef.current = Date.now();
       const body = (patientResult.body || {}) as Partial<PatientDetailData>;
       const taskJson = taskResponse?.ok ? await taskResponse.json().catch(() => null) : null;
-      const planJson = planResponse?.ok ? await planResponse.json().catch(() => null) : null;
       const balanceJson = balanceResponse?.ok ? await balanceResponse.json().catch(() => null) : null;
       if (!request.isLatest()) return;
       setData({
@@ -298,10 +292,6 @@ export default function HastaDetayContent() {
         setTasksError(!tasks);
         setTasksLoaded(true);
       }
-      if (Array.isArray(planJson?.items)) {
-        setTreatmentPlans(planJson.items);
-        setTreatmentPlansLoaded(true);
-      }
       if (serverBalanceNeeded) {
         const next = toServerBalance(balanceJson);
         // Yenileme başarısızsa eldeki bakiye korunur (yanlış "0" gösterilmez).
@@ -313,7 +303,7 @@ export default function HastaDetayContent() {
     } finally {
       if (request.isLatest()) setLoading(false);
     }
-  }, [id, beginLoad, can, canReadTasks, serverBalanceNeeded]);
+  }, [id, beginLoad, canReadTasks, serverBalanceNeeded]);
 
   const loadRef = useRef(load);
   loadRef.current = load;
@@ -322,7 +312,6 @@ export default function HastaDetayContent() {
   useEffect(() => {
     accessRecordedRef.current = false;
     lastRefreshRef.current = 0;
-    plansWantedRef.current = false;
     // Dosya Özet'te açılıyorsa görevler hasta isteğiyle birlikte (paralel)
     // istenir; başka sekmede açılıyorsa Özet'e geçilince (loadTasks).
     tasksWantedRef.current = tabRef.current === "bilgi";
@@ -332,8 +321,6 @@ export default function HastaDetayContent() {
     setTasksLoaded(false);
     setTasksError(false);
     setClinicTasks([]);
-    setTreatmentPlans([]);
-    setTreatmentPlansLoaded(false);
     setServerBalance(null);
     setIntent(null);
     setLoading(true);
@@ -413,25 +400,9 @@ export default function HastaDetayContent() {
   }, [hasData]);
 
   // Tembel isteklerin yanıtı geldiğinde dosya başka hastaya geçmişse (geri/ileri
-  // tuşu) yanıt yok sayılır: önceki hastanın planı/görevi yeni hastada görünmesin.
+  // tuşu) yanıt yok sayılır: önceki hastanın görevi yeni hastada görünmesin.
   const idRef = useRef(id);
   idRef.current = id;
-
-  const loadTreatmentPlans = useCallback(() => {
-    if (plansWantedRef.current || !id || !can("treatment:read")) return;
-    plansWantedRef.current = true;
-    fetch(`/api/treatment-plans?patientId=${encodeURIComponent(id)}&take=50`, { cache: "no-store" })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((json) => {
-        if (idRef.current !== id) return;
-        if (!Array.isArray(json?.items)) throw new Error("plans");
-        setTreatmentPlans(json.items);
-        setTreatmentPlansLoaded(true);
-      })
-      // Okunamadıysa "Plan yok" yazılmaz (bilinmeyen değer boş gösterilmez);
-      // sekme yeniden açılınca tekrar denenir.
-      .catch(() => { if (idRef.current === id) plansWantedRef.current = false; });
-  }, [can, id]);
 
   // Görevler Özet görünür olunca okunur; `retry` hata sonrası "Yeniden dene".
   const loadTasks = useCallback((retry = false) => {
@@ -628,9 +599,6 @@ export default function HastaDetayContent() {
     tasksLoaded,
     tasksError,
     loadTasks,
-    treatmentPlans,
-    treatmentPlansLoaded,
-    loadTreatmentPlans,
     labNames,
     labsLoading,
     loadLabNames,
@@ -641,7 +609,8 @@ export default function HastaDetayContent() {
     appointmentHref,
     intent,
     clearIntent,
-  } : null), [data, balance, balanceKnown, reload, can, canOpenTab, selectTab, hidePatientPhone, canEditPatient, doctors, doctorsLoaded, me.id, me.fullName, clinicName, getLetterhead, recentDoctorId, treatingDoctorNames, treatingDoctorIds, lockDoctorToSelf, clinicTasks, tasksLoaded, tasksError, loadTasks, treatmentPlans, treatmentPlansLoaded, loadTreatmentPlans, labNames, labsLoading, loadLabNames, openPayment, openEditPatient, openLabCreate, openTaskForm, appointmentHref, intent, clearIntent]);
+    startIntent,
+  } : null), [data, balance, balanceKnown, reload, can, canOpenTab, selectTab, hidePatientPhone, canEditPatient, doctors, doctorsLoaded, me.id, me.fullName, clinicName, getLetterhead, recentDoctorId, treatingDoctorNames, treatingDoctorIds, lockDoctorToSelf, clinicTasks, tasksLoaded, tasksError, loadTasks, labNames, labsLoading, loadLabNames, openPayment, openEditPatient, openLabCreate, openTaskForm, appointmentHref, intent, clearIntent, startIntent]);
 
   if (!id) {
     return (
@@ -689,8 +658,9 @@ export default function HastaDetayContent() {
 
   const debt = balance.totalDebt;
   // Borç ya da avans yoksa başlıkta "Kalan borç ₺0,00" yazılmaz (bilgi vermiyordu).
+  // Ad Hesap sekmesindeki ve dışa aktarımdakiyle aynı ("Avans" / "Hastanın avansı" karışıyordu).
   const showBalance = canOpenTab("odeme") && balanceKnown && Math.abs(debt) > 0.004;
-  const debtLabel = debt < -0.004 ? "Avans" : "Kalan borç";
+  const debtLabel = debt < -0.004 ? "Hastanın avansı" : "Kalan borç";
   const debtTone = debt > 0.004 ? "text-red-700" : debt < -0.004 ? "text-emerald-700" : "text-slate-800";
 
   const riskBadges = (size: "sm" | "md" = "sm"): ReactNode => (
@@ -708,7 +678,7 @@ export default function HastaDetayContent() {
   const openLabs = labSummaries.filter((summary) => !summary.isDone && !summary.cancelled);
 
   const tabItems: TabItem<TabKey>[] = visibleTabs.map((key) => {
-    if (key === "tedavi") return { key, label: TAB_LABELS[key], count: pendingCount, countTone: "neutral", countLabel: "yapılacak tedavi" };
+    if (key === "tedavi") return { key, label: TAB_LABELS[key], count: pendingCount, countTone: "neutral", countLabel: "planlanan tedavi" };
     if (key === "odeme") return { key, label: TAB_LABELS[key], count: overdueInstallments, countTone: "critical", countLabel: "geciken taksit" };
     if (key === "lab") return { key, label: TAB_LABELS[key], count: openLabs.length, countTone: openLabs.some((summary) => summary.late) ? "critical" : "neutral", countLabel: "açık lab işi" };
     return { key, label: TAB_LABELS[key] };
@@ -723,7 +693,8 @@ export default function HastaDetayContent() {
   ];
   const clinical: ActionMenuItem[] = [
     ...(can("examinations:write") && canOpenTab("tedavi") ? [{ key: "treatment", label: "Tedavi ekle", description: "Diş seçimi ve fiyat listesinden tedavi", icon: Stethoscope, onSelect: () => startIntent("tedavi", "treatment") }] : []),
-    ...(can("prescriptions:write") && canOpenTab("recete") ? [{ key: "rx", label: "Reçete yaz", icon: Pill, onSelect: () => startIntent("recete", "rx") }] : []),
+    // Reçete sekmesindeki düğme ve formla aynı ad (önceden menüde "Reçete yaz", sekmede "Yeni reçete").
+    ...(can("prescriptions:write") && canOpenTab("recete") ? [{ key: "rx", label: "Yeni reçete", icon: Pill, onSelect: () => startIntent("recete", "rx") }] : []),
     ...(can("lab:write") ? [{ key: "lab", label: "Yeni lab işi", icon: FlaskConical, onSelect: openLabCreate }] : []),
   ];
   const other: ActionMenuItem[] = [

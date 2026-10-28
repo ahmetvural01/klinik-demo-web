@@ -27,6 +27,8 @@ export type AutomationState = {
   smsDefaultInfo: boolean;
   /** Randevu formunda hatırlatma kutusu yeni randevularda seçili gelsin. */
   smsDefaultReminder: boolean;
+  /** Randevu formunda değerlendirme kutusu yeni randevularda seçili gelsin. */
+  smsDefaultSurvey: boolean;
 };
 
 export type CommunicationStatus = {
@@ -57,6 +59,7 @@ const DEFAULT_AUTOMATIONS: AutomationState = {
   paymentSchedule: { daysBefore: [3], onDueDate: true, overdueEnabled: true, overdueEveryDays: 3 },
   smsDefaultInfo: true,
   smsDefaultReminder: false,
+  smsDefaultSurvey: false,
 };
 
 function messageOf(data: unknown, fallback: string) {

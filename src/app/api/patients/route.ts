@@ -135,8 +135,11 @@ export const GET = withApiTiming("patients", async function GET(request: NextReq
     // istemez, gereksiz sorgu çalışmaz.
     const includeExtras = searchParams.get("extras") === "1";
 
+    // Arşivlenen hastalar (Hastalar > "Arşivlenenler"): yalnız arşivleyip geri
+    // alabilen kişi (patients:delete) görür; önceden arşiv hiçbir ekranda yoktu.
+    const archivedOnly = searchParams.get("arsiv") === "1" && await hasEffectivePermission(auth.user, "patients:delete");
     const tenantWhere: Prisma.PatientWhereInput = {
-      archivedAt: null,
+      archivedAt: archivedOnly ? { not: null } : null,
       ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
       homeBranchId: activeBranch.branchId,
     };

@@ -10,7 +10,6 @@ import { SERVICE_MODE_META, cycleLabel, planLabel, type ServiceMode } from "@/co
 const VALID_SUBSCRIPTION_PLANS = new Set(["TEMEL", "PROFESYONEL", "KURUMSAL"]);
 const VALID_BILLING_CYCLES = new Set(["AYLIK", "YILLIK"]);
 const VALID_SERVICE_MODES = new Set(["NORMAL", "LIMITED", "READ_ONLY", "SUSPENDED"]);
-const VALID_AD_INTENSITIES = new Set(["LOW", "MEDIUM", "HIGH"]);
 
 // GET /api/superadmin/institutions/[id] - Klinik dosyası
 export async function GET(_req: NextRequest, props: { params: Promise<{ id: string }> }) {
@@ -179,7 +178,9 @@ export async function PUT(request: NextRequest, props: { params: Promise<{ id: s
   if (body.email !== undefined && body.email !== null && body.email !== "" && (typeof body.email !== "string" || !/^\S+@\S+\.\S+$/.test(body.email.trim()))) {
     return NextResponse.json({ message: "Geçerli bir e-posta adresi girin" }, { status: 400 });
   }
-  for (const field of ["isActive", "adsEnabled", "whatsappEnabled"] as const) {
+  // Kliniğin reklam anahtarı (adsEnabled) yalnız Süperadmin › Reklamlar'dan
+  // (PATCH /api/superadmin/ads) değişir: denetim kaydı ve önbellek tek yerde.
+  for (const field of ["isActive", "whatsappEnabled"] as const) {
     if (body[field] !== undefined && typeof body[field] !== "boolean") {
       return NextResponse.json({ message: `${field} alanı doğru/yanlış olmalı` }, { status: 400 });
     }
@@ -219,9 +220,6 @@ export async function PUT(request: NextRequest, props: { params: Promise<{ id: s
   }
   if (body.serviceMode && !VALID_SERVICE_MODES.has(body.serviceMode)) {
     return NextResponse.json({ message: "Geçersiz servis modu" }, { status: 400 });
-  }
-  if (body.adIntensity !== undefined && !VALID_AD_INTENSITIES.has(body.adIntensity)) {
-    return NextResponse.json({ message: "Geçersiz reklam yoğunluğu" }, { status: 400 });
   }
 
   const existing = await prisma.institution.findUnique({ where: { id: params.id } });
@@ -271,8 +269,6 @@ export async function PUT(request: NextRequest, props: { params: Promise<{ id: s
       ...(body.maxActiveDoctors !== undefined
         ? { maxActiveDoctors }
         : planLimits ? { maxActiveDoctors: planLimits.maxActiveDoctors } : {}),
-      ...(body.adsEnabled !== undefined && { adsEnabled: body.adsEnabled }),
-      ...(body.adIntensity !== undefined && { adIntensity: body.adIntensity }),
       ...(body.paymentGraceUntil !== undefined && { paymentGraceUntil }),
       ...(body.suspendedUntil !== undefined && { suspendedUntil }),
       // Yalnızca süperadmin açabilir/kapatabilir — klinik kendi ayarlarından

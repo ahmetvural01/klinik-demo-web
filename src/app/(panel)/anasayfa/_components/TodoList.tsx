@@ -72,7 +72,7 @@ function buildItems(summary: HomeSummary, permissions: TodoPermissions, onOpenPa
     });
   }
 
-  // "Bugün aranacak" gecikmişleri de kapsar (Yapılacaklar > Hasta aramaları ile aynı grup).
+  // "Bugün aranacak" gecikmişleri de kapsar (Aramalar ve görevler > Hasta aramaları ile aynı grup).
   if (permissions.followUps && summary.followUps && summary.followUps.dueToday > 0) {
     const { dueToday, overdue } = summary.followUps;
     items.push({
@@ -222,7 +222,7 @@ type TodoListProps = {
 };
 
 /**
- * "Yapılacaklar": bugün ilgilenilmesi gereken işler tek listede. Her satır
+ * "Bekleyen işler" (zil paneliyle aynı ad): bugün ilgilenilmesi gereken işler tek listede. Her satır
  * işin yapıldığı süzgeçli listeye götürür (açık kalan randevular bu ekranda
  * pencerede kapatılır). Sayılar menü rozetleri ve ilgili sayfalarla aynı
  * tanımdan gelir; bilinmeyen sayı "0" olarak gösterilmez.
@@ -238,7 +238,7 @@ export function TodoList({ summary, loading, error, onRetry, permissions, onOpen
   const notice = summary && error ? `${error} Son yüklenen liste gösteriliyor.` : failedNames.length > 0 ? `Bazı sayılar alınamadı (${failedNames.join(", ")}).` : null;
 
   return (
-    <Section title="Yapılacaklar" padding="none" className={className}>
+    <Section title="Bekleyen işler" padding="none" className={className}>
       {!summary ? (
         error && !loading ? (
           <div className="p-3"><LoadErrorState compact message={error} onRetry={onRetry} /></div>

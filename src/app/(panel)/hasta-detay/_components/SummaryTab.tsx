@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
-import { CalendarClock, CalendarPlus, FlaskConical, Stethoscope, Wallet } from "lucide-react";
+import { CalendarClock, CalendarPlus, ChevronRight, FlaskConical, Stethoscope, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Section } from "@/components/ui/Section";
 import { DescriptionList, type DescriptionItem } from "@/components/ui/DescriptionList";
@@ -18,7 +18,9 @@ import {
   isPendingExam,
   money,
   roundMoney,
+  TAB_LABELS,
   type SmsPreference,
+  type TabKey,
 } from "./patient-file-shared";
 import { SmsConsentCard } from "./SmsConsentCard";
 import { TasksSection } from "./TasksSection";
@@ -29,7 +31,12 @@ type NextStep = {
   tone: "critical" | "warning" | "info" | "neutral";
   title: string;
   detail: string;
-  action?: { label: string; onClick?: () => void; href?: string };
+  /**
+   * İşin yapıldığı sekme; satıra tıklayınca açılır. Satırda ayrıca "Tahsilat
+   * al" / "Yeni randevu" düğmesi yok: aynı iş başlıktaki "İşlem ekle"de ve
+   * ilgili sekmede zaten var (önceden aynı düğme dosyada üç yerdeydi).
+   */
+  tab: TabKey;
 };
 
 // Kutusuz ikon: önceden her satırda renkli ikon kutusu (IconFrame) vardı.
@@ -78,11 +85,11 @@ function SubHeading({ children }: { children: ReactNode }) {
 }
 
 /**
- * Özet: bankonun "bu hasta için bugün ne yapmalıyım" sorusu (Yapılacaklar),
- * notlar, hastaya bağlı görevler ve başlıkta olmayan hasta bilgileri. Kimlik
- * (yaş, cinsiyet, telefon), risk rozetleri ve borç başlıkta TEK yerde durur;
- * burada tekrar edilmez. Bilgileri düzenlemek için tek giriş başlıktaki
- * "Düzenle"dir.
+ * Özet: bankonun "bu hasta için bugün ne yapmalıyım" sorusu (Bekleyen işler —
+ * zil ve Ana sayfadaki adla aynı), notlar, hastaya bağlı görevler ve başlıkta
+ * olmayan hasta bilgileri. Kimlik (yaş, cinsiyet, telefon), risk rozetleri ve
+ * borç başlıkta TEK yerde durur; burada tekrar edilmez. Bilgileri düzenlemek
+ * için tek giriş başlıktaki "Düzenle"dir; yeni kayıt "İşlem ekle"dedir.
  */
 export function SummaryTab() {
   const {
@@ -94,8 +101,6 @@ export function SummaryTab() {
     selectTab,
     canEditPatient,
     balance,
-    openPayment,
-    appointmentHref,
     openEditPatient,
     intent,
     clearIntent,
@@ -134,18 +139,19 @@ export function SummaryTab() {
           title: `${overdue.length} taksit gecikti · ${money(overdueTotal)}`,
           // Taksit, yalnız plan hekimi adına alınan tahsilatla kapanır (sunucu kuralı).
           detail: [oldest ? `En eski vade ${formatDateText(oldest)}` : "", planDoctor ? `tahsilatı ${planDoctor} adına alın` : ""].filter(Boolean).join(" · "),
-          action: can("payments:write") ? { label: "Tahsilat al", onClick: () => openPayment() } : { label: "Taksitleri gör", onClick: () => selectTab("odeme") },
+          tab: "odeme",
         });
       } else if (balance.totalDebt > 0.004) {
         // Tutar başlıkta ("Kalan borç"), dökümü Hesap sekmesinde: burada yalnız
-        // iş ve eylem (önceden aynı tutarlar burada ikinci kez yazıyordu).
+        // iş (önceden aynı tutarlar burada ikinci kez yazıyordu). Satır kalır:
+        // borcu olan hastada "bekleyen iş yok" yazmasın.
         steps.push({
           id: "debt",
           icon: Wallet,
           tone: "warning",
           title: "Tahsilat bekliyor",
           detail: "",
-          action: can("payments:write") ? { label: "Tahsilat al", onClick: () => openPayment() } : { label: "Hesabı gör", onClick: () => selectTab("odeme") },
+          tab: "odeme",
         });
       }
     }
@@ -163,7 +169,7 @@ export function SummaryTab() {
         tone: "info",
         title: `Sıradaki randevu: ${formatDateText(next.startAt, "long")} ${formatDateText(next.startAt, "time")}`,
         detail: [next.doctor?.fullName, upcoming.length > 1 ? `${upcoming.length - 1} randevu daha var` : ""].filter(Boolean).join(" · ") || "Hekim belirtilmedi",
-        action: { label: "Randevular", onClick: () => selectTab("randevular") },
+        tab: "randevular",
       });
     }
 
@@ -173,19 +179,19 @@ export function SummaryTab() {
         id: "pending-treatments",
         icon: Stethoscope,
         tone: "info",
-        title: `${pending.length} yapılacak tedavi`,
+        title: `${pending.length} planlanan tedavi`,
         detail: groupedTreatments(pending),
-        action: { label: "Tedaviye git", onClick: () => selectTab("tedavi") },
+        tab: "tedavi",
       });
-      // Yapılacak tedavisi olup ileri randevusu olmayan hasta: kontrol randevusu.
+      // Planlanan tedavisi olup ileri randevusu olmayan hasta: kontrol randevusu.
       if (!upcoming[0] && canOpenTab("randevular") && can("appointments:write")) {
         steps.push({
           id: "no-appointment",
           icon: CalendarPlus,
           tone: "warning",
           title: "İleri tarihli randevusu yok",
-          detail: "Yapılacak tedavisi için randevu verilebilir.",
-          action: { label: "Yeni randevu", href: appointmentHref },
+          detail: "Planlanan tedavisi için randevu verilebilir.",
+          tab: "randevular",
         });
       }
     }
@@ -203,12 +209,12 @@ export function SummaryTab() {
           tone: late ? "critical" : "neutral",
           title: open.length === 1 ? `Lab işi: ${first.order.labType} · ${LAB_STAGE_LABEL[first.summary.stage]}` : `${open.length} açık lab işi`,
           detail: open.length === 1 ? stageDetail(first.summary) : open.slice(0, 3).map(({ order, summary }) => `${order.labType} (${LAB_STAGE_LABEL[summary.stage]})`).join(", "),
-          action: { label: "Laboratuvar", onClick: () => selectTab("lab") },
+          tab: "lab",
         });
       }
     }
     return steps;
-  }, [data, balance, canOpenTab, can, openPayment, selectTab, appointmentHref]);
+  }, [data, balance, canOpenTab, can]);
 
   const saveNote = async () => {
     const text = noteText.trim();
@@ -264,25 +270,30 @@ export function SummaryTab() {
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
       <div className="min-w-0 space-y-4">
-        <Section title="Yapılacaklar" padding={nextSteps.length > 0 ? "none" : "md"}>
+        <Section title="Bekleyen işler" padding={nextSteps.length > 0 ? "none" : "md"}>
           {nextSteps.length === 0 ? (
             <p className="text-sm text-slate-500">Bu hasta için bekleyen iş yok.</p>
           ) : (
+            // Zildeki "Bekleyen işler" gibi: satırın tamamı işin yapıldığı
+            // sekmeyi açar (sağda ok). Satırda ayrı eylem düğmesi yok.
             <ul className="divide-y divide-slate-100">
               {nextSteps.map((step) => (
-                // Telefonda da eylem sağda kalır (ayrı sıra yok): kutusuz küçük
-                // ikon sayesinde metne yer açıldı.
-                <li key={step.id} className="flex items-center gap-3 px-4 py-2.5">
-                  <step.icon className={`h-4 w-4 shrink-0 ${TONE_ICON[step.tone]}`} aria-hidden="true" />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold text-slate-900">{step.title}</p>
-                    {step.detail && <p className="mt-0.5 line-clamp-2 text-xs text-slate-500" title={step.detail}>{step.detail}</p>}
-                  </div>
-                  {step.action && (
-                    <Button variant="secondary" size="sm" className="shrink-0" href={step.action.href} onClick={step.action.onClick}>
-                      {step.action.label}
-                    </Button>
-                  )}
+                <li key={step.id}>
+                  <button
+                    type="button"
+                    onClick={() => selectTab(step.tab)}
+                    className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-slate-50 focus-visible:bg-slate-50 focus-visible:-outline-offset-2"
+                  >
+                    <step.icon className={`h-4 w-4 shrink-0 ${TONE_ICON[step.tone]}`} aria-hidden="true" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-semibold text-slate-900">{step.title}</span>
+                      {step.detail && <span className="mt-0.5 line-clamp-2 block text-xs text-slate-500" title={step.detail}>{step.detail}</span>}
+                    </span>
+                    <span className="flex shrink-0 items-center gap-0.5 text-xs font-medium text-slate-500">
+                      <span className="max-sm:sr-only">{TAB_LABELS[step.tab]}</span>
+                      <ChevronRight className="h-4 w-4 text-slate-400" aria-hidden="true" />
+                    </span>
+                  </button>
                 </li>
               ))}
             </ul>

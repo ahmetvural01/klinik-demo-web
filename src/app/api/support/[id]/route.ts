@@ -1,4 +1,4 @@
-﻿import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 
@@ -122,5 +122,24 @@ export async function DELETE(_: NextRequest, props: Params) {
   const ticket = await prisma.supportTicket.delete({ where: { id: params.id } });
   await writeAudit(auth.user.id, "SUPPORT_DELETE", `Destek talebi silindi (${ticket.subject})`);
 
+  return NextResponse.json({ ok: true });
+}
+
+/**
+ * Klinik yanıtı okudu (`{ seen: true }`): zildeki "Destek yanıtladı" satırı
+ * kalkar. Sistem sahibinin görünmez oturumu işaretlemez (yönetici yanıtı
+ * kaçırmasın).
+ */
+export async function PATCH(request: NextRequest, props: Params) {
+  const params = await props.params;
+  const auth = await requireAuth("support:read");
+  if (auth.error) return auth.error;
+  const body = await request.json().catch(() => null);
+  if (!body || body.seen !== true) return NextResponse.json({ message: "Geçersiz istek" }, { status: 400 });
+  if (auth.user.ghostSession || !auth.user.institutionId) return NextResponse.json({ ok: true, skipped: true });
+  await prisma.supportTicket.updateMany({
+    where: { id: params.id, institutionId: auth.user.institutionId, answer: { not: null }, answerSeenAt: null },
+    data: { answerSeenAt: new Date() },
+  });
   return NextResponse.json({ ok: true });
 }

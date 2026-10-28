@@ -175,6 +175,13 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
       }
 
       let runningTotal = 0;
+      // Lot no / son kullanma artık ekrandan gelmez: gönderilmediyse satırdaki
+      // (eski) değer korunur; aksi halde her düzeltme stoğu geri alıp yeniden
+      // girmeye, kullanılmış satırda da düzeltmeyi reddetmeye çalışırdı.
+      const lineLotNo = (incoming: { lotNo?: string | null }, existing?: { lotNo?: string | null } | null) =>
+        incoming.lotNo === undefined ? existing?.lotNo || null : incoming.lotNo || null;
+      const lineExpiresAt = (incoming: { expiresAt?: string | null }, existing?: { expiresAt?: Date | null } | null) =>
+        incoming.expiresAt === undefined ? existing?.expiresAt || null : incoming.expiresAt ? new Date(incoming.expiresAt) : null;
 
       for (const incoming of items) {
         const existing = incoming.id ? existingById.get(incoming.id) : null;
@@ -183,6 +190,8 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
           // Yeni satır eklendi.
           const resolved = await resolveOrCreateStockItem(tx, institutionId, branch.branchId, firma.name, incoming);
           const lineTotal = Math.round(incoming.quantity * incoming.unitPrice * 100) / 100;
+          const lotNo = lineLotNo(incoming);
+          const expiresAt = lineExpiresAt(incoming);
           const createdItem = await tx.purchaseItem.create({
             data: {
               institutionId,
@@ -194,8 +203,8 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
               unit: resolved.unit,
               unitPrice: incoming.unitPrice,
               lineTotal,
-              lotNo: incoming.lotNo || null,
-              expiresAt: incoming.expiresAt ? new Date(incoming.expiresAt) : null,
+              lotNo,
+              expiresAt,
             },
           });
           const movement = isReceived
@@ -211,9 +220,9 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
                 supplier: firma.name,
                 unitPrice: incoming.unitPrice,
                 purchaseItemId: createdItem.id,
-                lotNo: incoming.lotNo,
+                lotNo,
                 receivedAt: current.receivedAt || current.tarih,
-                expiresAt: incoming.expiresAt,
+                expiresAt,
               })
             : null;
           if (movement) {
@@ -248,6 +257,9 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
           }
           const resolved = resolvedIncoming || (await resolveOrCreateStockItem(tx, institutionId, branch.branchId, firma.name, incoming));
           const lineTotal = Math.round(incoming.quantity * incoming.unitPrice * 100) / 100;
+          // Ürün değiştiyse eski ürünün lot bilgisi taşınmaz.
+          const lotNo = lineLotNo(incoming);
+          const expiresAt = lineExpiresAt(incoming);
           await tx.purchaseItem.update({
             where: { id: existing.id },
             data: {
@@ -258,8 +270,8 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
               unitPrice: incoming.unitPrice,
               lineTotal,
               stockMovementId: null,
-              lotNo: incoming.lotNo || null,
-              expiresAt: incoming.expiresAt ? new Date(incoming.expiresAt) : null,
+              lotNo,
+              expiresAt,
             },
           });
           const movement = isReceived
@@ -275,9 +287,9 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
                 supplier: firma.name,
                 unitPrice: incoming.unitPrice,
                 purchaseItemId: existing.id,
-                lotNo: incoming.lotNo,
+                lotNo,
                 receivedAt: current.receivedAt || current.tarih,
-                expiresAt: incoming.expiresAt,
+                expiresAt,
               })
             : null;
           if (movement) {
@@ -290,14 +302,16 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
           continue;
         }
 
-        // Aynı üründe miktar, maliyet veya parti bilgisi değiştiyse henüz
-        // tüketilmemiş eski parti kapatılır ve düzeltilmiş parti yeniden açılır.
-        const incomingExpiry = incoming.expiresAt ? new Date(incoming.expiresAt).getTime() : null;
+        // Aynı üründe miktar ya da fiyat (eski istemcide lot bilgisi) değiştiyse
+        // henüz kullanılmamış eski giriş geri alınır ve düzeltilmiş giriş yapılır.
+        const lotNo = lineLotNo(incoming, existing);
+        const expiresAt = lineExpiresAt(incoming, existing);
+        const incomingExpiry = expiresAt ? new Date(expiresAt).getTime() : null;
         const existingExpiry = existing.expiresAt ? new Date(existing.expiresAt).getTime() : null;
         const stockDataChanged =
           incoming.quantity !== Number(existing.quantity)
           || incoming.unitPrice !== Number(existing.unitPrice)
-          || (incoming.lotNo || null) !== (existing.lotNo || null)
+          || lotNo !== (existing.lotNo || null)
           || incomingExpiry !== existingExpiry;
         if (isReceived && stockDataChanged) {
           await withProductName(existing.productName, () => reversePurchaseItemStock({
@@ -307,7 +321,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
             institutionId,
             branchId: branch.branchId,
             userId: auth.user.id,
-            note: `Satın alma düzeltmesi: parti yeniden oluşturuldu (${existing.productName})`,
+            note: `Satın alma düzeltmesi: önceki giriş geri alındı (${existing.productName})`,
           }));
         }
         const lineTotal = Math.round(incoming.quantity * incoming.unitPrice * 100) / 100;
@@ -317,8 +331,8 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
             quantity: incoming.quantity,
             unitPrice: incoming.unitPrice,
             lineTotal,
-            lotNo: incoming.lotNo || null,
-            expiresAt: incoming.expiresAt ? new Date(incoming.expiresAt) : null,
+            lotNo,
+            expiresAt,
             stockMovementId: stockDataChanged && isReceived ? null : undefined,
           },
         });
@@ -331,13 +345,13 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
             userId: auth.user.id,
             type: "GIRIS",
             quantity: incoming.quantity,
-            note: "Satın alma düzeltmesi: parti yeniden oluşturuldu",
+            note: `${firma.name} satın alma düzeltmesi: düzeltilmiş giriş`,
             supplier: firma.name,
             unitPrice: incoming.unitPrice,
             purchaseItemId: existing.id,
-            lotNo: incoming.lotNo,
+            lotNo,
             receivedAt: current.receivedAt || current.tarih,
-            expiresAt: incoming.expiresAt,
+            expiresAt,
           });
           await tx.purchaseItem.update({
             where: { id: existing.id },

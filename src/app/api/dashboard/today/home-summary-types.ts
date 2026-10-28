@@ -1,4 +1,4 @@
-// GET /api/dashboard/today?ozet=1 yanıtı — ana sayfanın "Yapılacaklar" listesi
+// GET /api/dashboard/today?ozet=1 yanıtı — ana sayfanın "Bekleyen işler" listesi
 // ve başlıktaki sayıların TEK kaynağı. Yalnız tür tanımı (çalışma zamanı kodu
 // yok): istemci bileşenleri sunucu modülünü paketlemeden içe aktarabilsin.
 //
@@ -13,8 +13,7 @@ export type HomeSummarySection =
   | "lab"
   | "installments"
   | "messaging"
-  | "collections"
-  | "versions";
+  | "collections";
 
 export type HomeSummary = {
   /** Türkiye takvimine göre bugün, "YYYY-MM-DD". */
@@ -24,7 +23,7 @@ export type HomeSummary = {
     /** Sistem sahibinin kliniğe görünmez girişi: ekip mesajı/duyuru yazılamaz. */
     ghost: boolean;
     /**
-     * Doktor görünümü: Yapılacaklar'da yalnız kendi görevleri ve lab işleri
+     * Doktor görünümü: Bekleyen işler'de yalnız kendi görevleri ve lab işleri
      * (online talep, açık kalan randevu ve hasta aramaları ön büronun işidir;
      * Randevular sayfasında ve menü rozetinde görünmeye devam eder).
      */
@@ -44,7 +43,7 @@ export type HomeSummary = {
     tomorrowMine: number;
   };
   /**
-   * hastatracking:read (doktor görünümünde yok) — Yapılacaklar > Hasta aramaları
+   * hastatracking:read (doktor görünümünde yok) — Aramalar ve görevler > Hasta aramaları
    * ile aynı model: dueToday = "Bugün aranacak" (günü gelmiş, geçmiş ya da
    * tarihsiz açık aramalar), overdue = bunlardan günü geçmiş olanlar.
    */
@@ -60,6 +59,5 @@ export type HomeSummary = {
   /** payments:read + finance:center — bugünkü hasta tahsilatı (Kasa ile aynı tanım), metin ("8450.00"). */
   collectionsToday?: string;
   /** Ekip mesajları / duyurular değiştiyse ekran yalnız o listeyi yeniden ister. */
-  versions?: { messages?: string; announcements?: string };
   failed: HomeSummarySection[];
 };

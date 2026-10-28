@@ -4,7 +4,6 @@
 // biçimde yazılıyordu.
 
 import { formatCurrency } from "@/lib/format";
-import { getDisplayAppointmentStatus, APPOINTMENT_DISPLAY_STATUS_LABELS, APPOINTMENT_DISPLAY_STATUS_TONE } from "@/lib/appointment-status";
 import { examStatusKind, isChargeableExamStatus } from "@/lib/examination-status";
 import { patientAge } from "@/lib/patient-display";
 import type { BadgeTone } from "@/components/ui/Badge";
@@ -35,7 +34,9 @@ export const TAB_LABELS: Record<TabKey, string> = {
 export const TAB_PERMISSIONS: Record<TabKey, string[]> = {
   bilgi: ["patients:read"],
   randevular: ["appointments:read"],
-  tedavi: ["examinations:read", "treatment:read"],
+  // Planlanan ve yapılan tedaviler tek listede (muayene kaydı); ayrı tedavi
+  // planı kaldırıldı, sekme yalnız tedavi kayıtlarını görebilene açılır.
+  tedavi: ["examinations:read"],
   odeme: ["payments:read", "installments:read", "finance:read"],
   recete: ["prescriptions:read"],
   lab: ["lab:read"],
@@ -136,8 +137,10 @@ export type Appt = {
   type: string;
   status: string;
   note?: string | null;
+  /** Randevu bilgilendirme mesajı açık mı (iptal onayındaki "mesaj gider mi" cümlesi için). */
+  smsInfo?: boolean;
   doctor?: { id?: string; fullName: string } | null;
-  clinicUnit?: { name: string; code?: string | null } | null;
+  clinicUnit?: { id?: string; name: string; code?: string | null } | null;
 };
 
 export type Exam = {
@@ -189,14 +192,6 @@ export type ClinicTask = {
   createdAt: string;
   completedAt?: string | null;
   patient?: { id: string; fullName: string } | null;
-};
-
-export type TreatmentPlanLite = {
-  id: string;
-  title: string;
-  status: string;
-  totalCost: number | string | null;
-  steps: { id: string }[];
 };
 
 export type PatientDetailData = {
@@ -287,20 +282,9 @@ export const APPOINTMENT_TYPE_LABELS: Record<string, string> = {
 
 export const appointmentTypeLabel = (type: string | null | undefined) => APPOINTMENT_TYPE_LABELS[String(type || "")] || "Muayene";
 
-/**
- * Ekranda gösterilecek randevu durumu. Ham "GELDI" ekranda "Bekliyor" (hasta
- * geldi, bekleme salonunda), ham "BEKLIYOR" "Planlandı" yazar — bu kural
- * kullanıcı geri bildirimiyle konuldu (bkz. src/lib/appointment-status.ts);
- * değiştirilmez.
- */
-export function appointmentStatusView(rawStatus: string) {
-  const display = getDisplayAppointmentStatus(rawStatus || "");
-  return {
-    display,
-    label: APPOINTMENT_DISPLAY_STATUS_LABELS[display] || "Planlandı",
-    tone: (APPOINTMENT_DISPLAY_STATUS_TONE[display] || "info") as BadgeTone,
-  };
-}
+// Randevu durum adı burada ayrıca tutulmaz: hasta dosyası takvimle aynı rozeti
+// ve adı kullanır (components/randevu: AppointmentStatusBadge, statusChipLabel).
+// Önceden aynı durum burada "Bekliyor", takvimde "Geldi (bekliyor)" yazıyordu.
 
 export const DOCUMENT_CATEGORY_LABELS: Record<PatientDocument["category"], string> = {
   BELGE: "Belge",
@@ -321,7 +305,7 @@ export const roundMoney = (value: number) => Math.round((value + Number.EPSILON)
 /** Para her yerde aynı biçimde: ₺1.250,00 */
 export const money = (value: unknown) => formatCurrency(roundMoney(toNumber(value)));
 
-/** Muayene listesinde (henüz yapılmamış, ücrete yansımayan) kayıt mı? */
+/** Planlanan (henüz yapılmamış, ücrete yansımayan) tedavi mi? */
 export const isPendingExam = (exam: Pick<Exam, "status">) => examStatusKind(exam.status) === "pending";
 /** Yapılan (hastanın borcuna yansıyan) tedavi mi? İptal edilenler hariç. */
 export const isChargeableExam = (exam: Pick<Exam, "status">) => isChargeableExamStatus(exam.status);

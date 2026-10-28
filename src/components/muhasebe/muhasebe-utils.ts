@@ -26,12 +26,6 @@ export const requiresPos = (method: string) => sharedRequiresPos(method);
 
 export const methodLabel = (method?: string | null) => paymentMethodLabel(method);
 
-export const KDV_OPTIONS = [
-  { value: "0", label: "KDV yok (%0)" },
-  { value: "10", label: "%10" },
-  { value: "20", label: "%20" },
-];
-
 export const AY_ADLARI = [
   "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
   "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık",

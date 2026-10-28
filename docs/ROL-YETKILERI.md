@@ -28,7 +28,7 @@ Bu belge, klinik rollerinin (Yönetici, Doktor, Asistan, Banko, Muhasebe) varsay
 | Hasta telefonu ve TC'yi görmek | — | ✓ | ✓ | ✓ (alacak/taksit listesinde) |
 | Hasta aramaları (geri arama listesi) | ✓ (kayıt açar) | ✓ | ✓ | — |
 | Tedavi kaydı girmek ve iptal etmek | ✓ | okur | — | — |
-| Tedavi planı | ✓ | okur | — | — |
+| Tedavi teklifi (planlanan tedaviler; ayrı tedavi planı yok) | ✓ | okur, yazdırır | — | — |
 | Reçete yazmak | ✓ | okur, yazdırır | — | — |
 | Laboratuvar işi açmak, göndermek, teslim almak | ✓ | ✓ | ✓ | — |
 | Lab işini "hastaya takıldı" kapatmak | ✓ | ✓ | — | — |
@@ -127,7 +127,7 @@ Dalga 2'de 1–4, 6 ve 7 giderildi (bkz. §11). Açık kalan:
 
 Aşağıdaki kutular Rol Yetkileri ekranında görünür ama bugün hiçbir işlemi açıp kapatmaz. Ekrandaki açıklamalarında bu yazıyor.
 
-- **Hiçbir etkisi yok:** `treatment:approve` (plan onayı), `patients:merge` (birleştirme), `reports:write` (özel rapor), `audit:export`, `support:close`.
+- **Kaldırıldı (2026-10-28):** etkisi olmayan izinler Rol Yetkileri ekranından çıkarıldı: `treatment:*` (ayrı tedavi planı yok; planlanan tedaviler `examinations:*` ile), `patients:merge`, `reports:write`, `audit:export`, `support:close`, `messages:*` ve `announcements:*` (ekip mesajı ve klinik içi duyuru kaldırıldı; platform duyurusu herkese görünür).
 - **Başka bir izin üzerinden işliyor:**
   - `prescriptions:print`: reçeteyi görebilen yazdırır.
   - `staff:schedule`: çalışma saatlerini personel düzenleme izni değiştirir.

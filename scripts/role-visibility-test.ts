@@ -66,8 +66,8 @@ async function main() {
     assert(await page.locator('a[href="/muhasebe"]').count() === 0, "Doktor sidebar'ında Muhasebe bağlantısı render edildi.");
     assert(await page.locator('a[href="/finans"]').count() > 0, "Doktor Hakedişim bağlantısı görünmüyor.");
 
-    const financeApi = await context.request.get(`${BASE_URL}/api/finance`);
-    assert(financeApi.status() === 403, `Doktor kurum finans API'sine erişebildi: ${financeApi.status()}`);
+    const financeApi = await context.request.get(`${BASE_URL}/api/gider`);
+    assert(financeApi.status() === 403, `Doktor kurum gider API'sine erişebildi: ${financeApi.status()}`);
     const earningsApi = await context.request.get(`${BASE_URL}/api/hakedis?months=1`);
     assert(earningsApi.ok(), `Doktor kendi hakediş API'sine erişemedi: ${earningsApi.status()}`);
 

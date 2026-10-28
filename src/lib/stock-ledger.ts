@@ -14,6 +14,10 @@ type StockMovementInput = {
   supplier?: string | null;
   unitPrice?: number | null;
   purchaseItemId?: string | null;
+  /**
+   * Eski API uyumluluğu: ekranlar artık lot no ve son kullanma tarihi
+   * göndermez. Katmanlar (StockLot) yalnız maliyet (FIFO) için tutulur.
+   */
   lotNo?: string | null;
   receivedAt?: Date | string | null;
   expiresAt?: Date | string | null;
@@ -32,6 +36,76 @@ function dateOrNull(value?: Date | string | null) {
 
 async function lockStockItem(tx: TxClient, stockItemId: string) {
   await tx.$queryRaw`SELECT "id" FROM "StockItem" WHERE "id" = ${stockItemId} FOR UPDATE`;
+}
+
+const roundCost = (value: number) => Math.round(value * 100) / 100;
+
+/**
+ * Maliyet katmanı (StockLot) olmayan stok: parti sistemi gelmeden açılmış ya
+ * da miktarı doğrudan yazılmış kartlarda kart miktarı katmanlardan fazladır.
+ * Katmanlar kullanıcıya görünmez; bu fark yüzünden "Kullanım" reddedilmesin
+ * diye çıkıştan önce eksik miktar için bir katman açılır. Maliyeti: kalan
+ * katmanların ağırlıklı ortalaması, yoksa son teslim alınan alış fiyatı,
+ * yoksa son bilinen katman maliyeti, hiçbiri yoksa 0.
+ */
+async function coverUntrackedStock(
+  tx: TxClient,
+  item: { id: string; institutionId: string; branchId: string; quantity: number; createdAt: Date },
+) {
+  const activeLots: Array<{ quantityRemaining: number; unitCost: unknown }> = await tx.stockLot.findMany({
+    where: {
+      institutionId: item.institutionId,
+      branchId: item.branchId,
+      stockItemId: item.id,
+      status: "AKTIF",
+      quantityRemaining: { gt: 0 },
+    },
+    select: { quantityRemaining: true, unitCost: true },
+  });
+  const tracked = activeLots.reduce((sum, lot) => sum + Number(lot.quantityRemaining), 0);
+  const gap = Number(item.quantity) - tracked;
+  if (gap <= 0) return;
+
+  let unitCost = 0;
+  if (tracked > 0) {
+    unitCost = roundCost(activeLots.reduce((sum, lot) => sum + Number(lot.quantityRemaining) * Number(lot.unitCost || 0), 0) / tracked);
+  } else {
+    const lastLine = await tx.purchaseItem.findFirst({
+      where: {
+        stockItemId: item.id,
+        institutionId: item.institutionId,
+        branchId: item.branchId,
+        archivedAt: null,
+        purchase: { status: "AKTIF", receiptStatus: "TESLIM_ALINDI" },
+      },
+      orderBy: [{ purchase: { tarih: "desc" } }, { createdAt: "desc" }],
+      select: { unitPrice: true },
+    });
+    const lastLot = lastLine ? null : await tx.stockLot.findFirst({
+      where: { institutionId: item.institutionId, branchId: item.branchId, stockItemId: item.id },
+      orderBy: { receivedAt: "desc" },
+      select: { unitCost: true },
+    });
+    unitCost = roundCost(Number(lastLine?.unitPrice ?? lastLot?.unitCost ?? 0));
+  }
+
+  await tx.stockLot.create({
+    data: {
+      institutionId: item.institutionId,
+      branchId: item.branchId,
+      stockItemId: item.id,
+      purchaseItemId: null,
+      lotNo: null,
+      // Kayıtsız stok en eski stoktur: FIFO'da önce o kullanılır.
+      receivedAt: item.createdAt,
+      expiresAt: null,
+      quantityReceived: gap,
+      quantityRemaining: gap,
+      unitCost,
+      supplierName: null,
+      status: "AKTIF",
+    },
+  });
 }
 
 async function allocateLots(
@@ -95,9 +169,8 @@ async function allocateLots(
   }
 
   if (remaining > 0) {
-    throw new BusinessRuleError(
-      `Stok partileri ile kart bakiyesi uyumsuz. ${remaining} birim için kullanılabilir parti bulunamadı.`,
-    );
+    // coverUntrackedStock kart miktarını katmanlarla eşitlediği için buraya düşülmez; son savunma.
+    throw new BusinessRuleError("Stok kaydı ürün kartıyla uyuşmuyor; işlem kaydedilmedi. Sistem yöneticinize bildirin.");
   }
 }
 
@@ -131,7 +204,7 @@ export async function applyStockMovement({
   });
 
   if (!item) throw new BusinessRuleError("Stok kalemi bulunamadı", 404);
-  if (!item.isActive) throw new BusinessRuleError("Pasif stok kalemi güncellenemez", 409);
+  if (!item.isActive) throw new BusinessRuleError(`"${item.name}" arşivde; önce Stok'ta “Arşiv” sekmesinden geri alın.`, 409);
 
   // Satır kilidi alındıktan SONRA kontrol edilir: aynı requestKey ile eşzamanlı
   // gelen ikinci istek, birincisi commit olana kadar burada bekler (FOR UPDATE),
@@ -196,6 +269,8 @@ export async function applyStockMovement({
       },
     });
   } else {
+    // `item` hareketten önceki kart (miktar düşülmeden): eksik katman bu miktara göre tamamlanır.
+    await coverUntrackedStock(tx, item);
     await allocateLots(tx, item.institutionId, item.branchId, stockItemId, movement.id, quantity);
   }
 
@@ -217,7 +292,7 @@ export async function assertPurchaseItemLotEditable(tx: TxClient, purchaseItemId
   );
   if (consumed) {
     throw new BusinessRuleError(
-      "Bu satın alma partisinden stok çıkışı yapılmış. Ürün, miktar veya maliyet değiştirilemez; düzeltme için ters stok hareketi oluşturun.",
+      "Bu satın almayla gelen üründen kullanılmış. Ürün, miktar veya fiyat değiştirilemez; fark Stok'tan “Stok hareketi” ile düzeltilir.",
     );
   }
 }
@@ -259,7 +334,7 @@ export async function reversePurchaseItemStock({
     },
   });
   if (!item || Number(item.quantity) < quantity) {
-    throw new BusinessRuleError("Satın alma partisi kart bakiyesiyle uyuşmuyor; otomatik geri alma durduruldu.", 409);
+    throw new BusinessRuleError("Üründe kalan stok bu satın almadaki miktardan az; geri alma yapılamadı.", 409);
   }
 
   const updated = await tx.stockItem.update({

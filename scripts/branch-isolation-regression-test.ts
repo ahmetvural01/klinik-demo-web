@@ -65,8 +65,6 @@ async function main() {
       prisma.firma.create({ data: { institutionId: institution.id, branchId: branchA.id, name: "Ortak Tedarikçi" } }),
       prisma.firma.create({ data: { institutionId: institution.id, branchId: branchB.id, name: "Ortak Tedarikçi" } }),
       prisma.doctorBlock.create({ data: { institutionId: institution.id, branchId: branchA.id, doctorId: doctor.id, date: "2099-01-01", startTime: "10:00", endTime: "11:00", reason: "Merkez izin kaydı" } }),
-      prisma.message.create({ data: { institutionId: institution.id, branchId: branchA.id, userId: doctor.id, text: "Merkez şube mesajı" } }),
-      prisma.message.create({ data: { institutionId: institution.id, branchId: branchB.id, userId: doctor.id, text: "Cadde şube mesajı" } }),
     ]);
 
     const [ratesA, ratesB, hakedisA, hakedisB] = await Promise.all([
@@ -80,16 +78,13 @@ async function main() {
     assert(hakedisA.length === 1 && hakedisA[0].ciro === 1000 && hakedisA[0].hakedilen === 450, "Merkez hakedişi beklenen 450 TL değil.");
     assert(hakedisB.length === 1 && hakedisB[0].ciro === 2000 && hakedisB[0].hakedilen === 400, "Cadde hakedişi beklenen 400 TL değil.");
 
-    const [paymentsA, paymentsB, plansA, plansB, messagesA, messagesB] = await Promise.all([
+    const [paymentsA, paymentsB, plansA, plansB] = await Promise.all([
       prisma.payment.count({ where: { institutionId: institution.id, branchId: branchA.id } }),
       prisma.payment.count({ where: { institutionId: institution.id, branchId: branchB.id } }),
       prisma.taksitPlan.count({ where: { institutionId: institution.id, branchId: branchA.id } }),
       prisma.taksitPlan.count({ where: { institutionId: institution.id, branchId: branchB.id } }),
-      prisma.message.count({ where: { institutionId: institution.id, branchId: branchA.id } }),
-      prisma.message.count({ where: { institutionId: institution.id, branchId: branchB.id } }),
     ]);
     assert(paymentsA === 1 && paymentsB === 1 && plansA === 1 && plansB === 1, "Ödeme veya taksit planı şube sayımları karıştı.");
-    assert(messagesA === 1 && messagesB === 1, "Klinik içi mesajlar şubeler arasında karıştı.");
 
     const [blockInA, blockInB] = await Promise.all([
       findDoctorBlockConflict(doctor.id, branchA.id, turkeyLocalDateTimeToUtc("2099-01-01", "10:15"), turkeyLocalDateTimeToUtc("2099-01-01", "10:30")),
@@ -114,17 +109,8 @@ async function main() {
     }
     assert(mismatchedBlockRejected, "Başka kurum kimliği ile doktor kapalı saati oluşturulabildi.");
 
-    let mismatchedMessageRejected = false;
-    try {
-      await prisma.message.create({ data: { institutionId: foreignInstitution.id, branchId: branchA.id, userId: doctor.id, text: "Yabancı kurum mesajı" } });
-    } catch {
-      mismatchedMessageRejected = true;
-    }
-    assert(mismatchedMessageRejected, "Başka kurum kimliği ile şubeye mesaj oluşturulabildi.");
-
-    console.log("✓ Aynı doktorun iki şubedeki randevu, mesaj, kapalı saat, ödeme, taksit, stok, firma, oran ve hakediş verileri tamamen bağımsız kaldı.");
+    console.log("✓ Aynı doktorun iki şubedeki randevu, kapalı saat, ödeme, taksit, stok, firma, oran ve hakediş verileri tamamen bağımsız kaldı.");
   } finally {
-    await prisma.message.deleteMany({ where: { institutionId: institution.id } });
     await prisma.doctorBlock.deleteMany({ where: { institutionId: institution.id } });
     await prisma.appointment.deleteMany({ where: { institutionId: institution.id } });
     await prisma.examination.deleteMany({ where: { institutionId: institution.id } });

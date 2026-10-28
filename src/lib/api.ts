@@ -90,7 +90,7 @@ async function getInstitutionState(institutionId: string) {
 // "write" kelimesi geçen izinlerin yanı sıra, veri değiştiren TÜM eylem
 // soneklerini kapsar. Önceden yalnızca ":write" kontrol ediliyordu — bu
 // yüzden READ_ONLY moddaki bir kurumda "appointments:delete",
-// "payments:refund", "examinations:delete", "patients:merge" gibi TÜM
+// "payments:refund", "examinations:delete" gibi TÜM
 // silme/onay/iade/birleştirme uçları hâlâ çalışıyordu; "yazma işlemleri
 // kapatıldı" mesajı yanıltıcıydı (bkz. denetim raporu).
 const MUTATING_PERMISSION_SUFFIXES = new Set([

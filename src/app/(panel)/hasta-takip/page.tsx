@@ -15,7 +15,7 @@ const STATUS_BY_OLD_TAB: Record<string, string> = {
 };
 
 /**
- * Hasta Takip artık Yapılacaklar > "Hasta aramaları" sekmesinde. Eski adres
+ * Hasta Takip artık Aramalar ve görevler > "Hasta aramaları" sekmesinde. Eski adres
  * parametreleriyle sunucuda anında yönlenir; eski ?tab= değeri yeni durum
  * süzgecine (?durum=) eşlenir.
  */

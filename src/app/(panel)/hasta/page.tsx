@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useRef, useState, type FocusEvent, type PointerEvent, type TouchEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Archive, CalendarPlus, MessageSquare, Pencil, Phone, ShieldAlert, UserPlus } from "lucide-react";
+import { Archive, ArchiveRestore, CalendarPlus, MessageSquare, Pencil, Phone, ShieldAlert, UserPlus } from "lucide-react";
 import { usePermissions } from "@/components/auth/PermissionProvider";
 import { ArchivePatientModal } from "@/components/patient/ArchivePatientModal";
 import { PatientFormModal, type PatientFormInitialValues } from "@/components/patient/PatientFormModal";
@@ -133,6 +133,7 @@ function HastaContent() {
   const smsParam = (searchParams.get("smsConsent") || "").toUpperCase();
   const smsConsent = SMS_CONSENT_CODES.has(smsParam) ? smsParam : "";
   const wantsCreate = searchParams.get("yeni") === "1";
+  const archivedParam = searchParams.get("arsiv") === "1";
 
   const [query, setQuery] = useState(urlQuery);
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -158,6 +159,9 @@ function HastaContent() {
   const hidePhone = !can("patients:phone");
   const canWritePatients = can("patients:write");
   const canDeletePatients = can("patients:delete");
+  // Arşivlenen hastalar yalnız arşivleyip geri alabilen kişiye görünür.
+  const archived = archivedParam && canDeletePatients;
+  const [restoringId, setRestoringId] = useState<string | null>(null);
   // Randevular sayfası appointments:read ister; formu açmak appointments:write.
   const canBookAppointments = can("appointments:write") && can("appointments:read");
   // İletişim sayfası sms:read ister, tek hastaya gönderim sms:write; ikisi yoksa bağlantı ölü olur.
@@ -183,7 +187,7 @@ function HastaContent() {
   // "Hastalar" geri bağlantısı aynı arama/süzgeç/sayfaya döner.
   useEffect(() => {
     if (window.location.pathname === LIST_PATH) rememberPatientListAddress(window.location.search);
-  }, [urlQuery, page, pageSize, doctorId, sortParam, smsConsent]);
+  }, [urlQuery, page, pageSize, doctorId, sortParam, smsConsent, archived]);
 
   // Üst bardaki aramadan ya da başka ekrandan /hasta?q=… ile gelindiğinde
   // sayfa açıkken de arama kutusu güncellenir (denetim X-HL-01).
@@ -247,6 +251,7 @@ function HastaContent() {
     });
     if (doctorId) params.set("doctorId", doctorId);
     if (smsConsent) params.set("smsConsent", smsConsent);
+    if (archived) params.set("arsiv", "1");
 
     try {
       // cachedGet kasıtlı kullanılmıyor: 403'ü "kayıt yok"tan ayırmak gerekir.
@@ -288,7 +293,7 @@ function HastaContent() {
     } finally {
       if (requestId === requestRef.current) setLoading(false);
     }
-  }, [urlQuery, page, pageSize, sortByName, sortNameDesc, doctorId, smsConsent, setParams]);
+  }, [urlQuery, page, pageSize, sortByName, sortNameDesc, doctorId, smsConsent, archived, setParams]);
 
   useEffect(() => {
     void load("user");
@@ -393,7 +398,26 @@ function HastaContent() {
     if (top !== undefined && top < 0) listTopRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
   };
 
-  const clearFilters = () => setParams({ doktor: null, smsConsent: null, sayfa: null });
+  const clearFilters = () => setParams({ doktor: null, smsConsent: null, arsiv: null, sayfa: null });
+
+  const restorePatient = async (patient: Patient) => {
+    setRestoringId(patient.id);
+    try {
+      const response = await fetch(`/api/patients/${encodeURIComponent(patient.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "restore" }),
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.message || "Hasta arşivden geri alınamadı.");
+      showToastSafe({ type: "success", title: "Hasta geri alındı", message: `${patient.fullName} yeniden hasta listesinde. Arşivlenirken iptal edilen randevular geri açılmaz.` });
+      reloadAfterOwnChange();
+    } catch (restoreError) {
+      showToastSafe({ type: "error", message: restoreError instanceof Error ? restoreError.message : "Hasta arşivden geri alınamadı." });
+    } finally {
+      setRestoringId(null);
+    }
+  };
   const clearSearch = () => {
     setQuery("");
     setParams({ q: null, sayfa: null });
@@ -409,6 +433,11 @@ function HastaContent() {
       key: "sms",
       label: smsConsentFilterLabel(smsConsent),
       onRemove: () => setParams({ smsConsent: null, sayfa: null }),
+    }] : []),
+    ...(archived ? [{
+      key: "arsiv",
+      label: "Arşivlenen hastalar",
+      onRemove: () => setParams({ arsiv: null, sayfa: null }),
     }] : []),
   ];
   const hasFilters = activeFilters.length > 0;
@@ -447,7 +476,11 @@ function HastaContent() {
 
   // Satırda en sık eylem görünür (randevu ver — çerçevesiz ikon); düzenleme,
   // mesaj ve nadir arşivleme "…" menüsünde.
-  const rowActions = (patient: Patient) => (
+  const rowActions = (patient: Patient) => archived ? (
+    <div className="flex items-center justify-end">
+      <Button size="sm" variant="secondary" icon={ArchiveRestore} loading={restoringId === patient.id} onClick={() => void restorePatient(patient)}>Arşivden geri al</Button>
+    </div>
+  ) : (
     <div className="flex items-center justify-end gap-1">
       {canBookAppointments && (
         <IconButton icon={CalendarPlus} title="Randevu ver" tone="ghost" size="sm" href={appointmentHref(patient)} />
@@ -581,6 +614,17 @@ function HastaContent() {
             aria-label="Doktora göre: bu doktordan randevu ya da tedavi almış hastalar"
             className="sm:w-52"
           />
+          {canDeletePatients && (
+            <Select
+              value={archived ? "arsiv" : ""}
+              onChange={(event) => setParams({ arsiv: event.target.value === "arsiv" ? "1" : null, sayfa: null })}
+              aria-label="Hangi hastalar"
+              className="sm:w-48"
+            >
+              <option value="">Kayıtlı hastalar</option>
+              <option value="arsiv">Arşivlenen hastalar</option>
+            </Select>
+          )}
           <Select
             value={sortNameDesc ? "ad-za" : sortByName ? "ad" : ""}
             onChange={(event) => setParams({ sirala: event.target.value || null, sayfa: null })}
@@ -651,13 +695,16 @@ function HastaContent() {
           error={error}
           staleError={staleError}
           onRetry={() => void load(error ? "user" : "silent")}
-          onRowClick={openPatient}
-          getRowAriaLabel={(patient) => `${patient.fullName} hasta dosyasını aç`}
+          // Arşivdeki hastanın dosyası açılmaz; önce arşivden geri alınır.
+          onRowClick={archived ? undefined : openPatient}
+          getRowAriaLabel={archived ? undefined : (patient) => `${patient.fullName} hasta dosyasını aç`}
           toolbar={listToolbar}
           header={filterChips}
           mobileCard={mobileCard}
-          mobileCardActions={(patient) => <ActionMenu items={menuItems(patient, true)} label={`${patient.fullName} için işlemler`} />}
-          emptyText={searchEmpty ? "Aramanıza uyan hasta yok" : hasFilters ? "Bu filtreye uyan hasta yok" : "Henüz hasta kaydı yok"}
+          mobileCardActions={(patient) => archived
+            ? <Button size="sm" variant="secondary" icon={ArchiveRestore} loading={restoringId === patient.id} onClick={() => void restorePatient(patient)}>Geri al</Button>
+            : <ActionMenu items={menuItems(patient, true)} label={`${patient.fullName} için işlemler`} />}
+          emptyText={archived ? "Arşivlenmiş hasta yok" : searchEmpty ? "Aramanıza uyan hasta yok" : hasFilters ? "Bu filtreye uyan hasta yok" : "Henüz hasta kaydı yok"}
           emptyDescription={searchEmpty
             ? "Yazımı kontrol edin; hasta kayıtlı değilse yeni hasta olarak kaydedin."
             : hasFilters ? undefined : canWritePatients ? "İlk hastayı \"Yeni hasta\" ile kaydedin." : undefined}

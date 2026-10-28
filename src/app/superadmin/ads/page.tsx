@@ -1,60 +1,80 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { Pause, Pencil, Play, Plus, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import Link from "next/link";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { Badge } from "@/components/ui/Badge";
+import { Section } from "@/components/ui/Section";
 import { Callout } from "@/components/ui/Callout";
-import { Button, IconButton } from "@/components/ui/Button";
-import { FormModal } from "@/components/ui/FormModal";
-import { Input, Textarea } from "@/components/ui/Input";
+import { Button } from "@/components/ui/Button";
 import { FormField } from "@/components/ui/FormField";
+import { Input } from "@/components/ui/Input";
 import { Switch } from "@/components/ui/Switch";
-import { EmptyValue, ListTable, type ListTableColumn } from "@/components/ui/ListTable";
-import { createModuleEmptyIcon } from "@/components/ui/ModuleIcon";
-import { confirmDialog } from "@/lib/confirm-client";
+import { Badge } from "@/components/ui/Badge";
+import { CopyField } from "@/components/ui/CopyField";
+import { Disclosure } from "@/components/ui/Disclosure";
+import { StepList, type StepItem, type StepStatus } from "@/components/ui/StepList";
+import { Toolbar } from "@/components/ui/Toolbar";
+import { SearchInput } from "@/components/ui/SearchInput";
+import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import { LoadErrorState } from "@/components/ui/LoadErrorState";
+import { FormSkeleton, TableSkeleton } from "@/components/ui/PageSkeleton";
 import { showToastSafe } from "@/lib/toast-client";
-import { shortDate } from "@/components/superadmin/sa-format";
-import { turkeyDateKey } from "@/lib/tz";
+import { adsTxtLine, normalizeAdSlotId, normalizePublisherId } from "@/lib/panel-ads";
 import { errorMessage, isAbort, saGet, saSend } from "@/components/superadmin/sa-fetch";
 
-const AdsEmptyIcon = createModuleEmptyIcon("chart");
+type AdConfig = { enabled: boolean; publisherId: string; slotId: string };
+type ClinicRow = { id: string; name: string; isActive: boolean; isDemo: boolean; adsEnabled: boolean };
+type AdsResponse = { config: AdConfig; institutions: ClinicRow[] };
+type FieldKey = "publisherId" | "slotId";
 
-type Ad = {
-  id: string;
-  title: string;
-  content: string;
-  imageUrl?: string | null;
-  ctaText?: string | null;
-  ctaUrl?: string | null;
-  sponsorName?: string | null;
-  isActive: boolean;
-  startAt?: string | null;
-  endAt?: string | null;
-  createdAt: string;
-};
+const ADSENSE_URL = "https://adsense.google.com";
 
-const EMPTY = { title: "", content: "", imageUrl: "", ctaText: "", ctaUrl: "", sponsorName: "", startAt: "", endAt: "", isActive: false };
+// Sayfanın açıldığı adres (Google onayı için alan adı denetimi). Sunucuda boş.
+const noSubscribe = () => () => {};
+function useHostname() {
+  return useSyncExternalStore(noSubscribe, () => window.location.hostname, () => "");
+}
+
+function hostKind(hostname: string): "render" | "local" | "own" {
+  if (hostname.endsWith(".onrender.com")) return "render";
+  if (!hostname || hostname === "localhost" || hostname.endsWith(".local") || /^[\d.:]+$/.test(hostname)) return "local";
+  return "own";
+}
+
+function validate(form: AdConfig): Partial<Record<FieldKey, string>> {
+  const errors: Partial<Record<FieldKey, string>> = {};
+  if (form.publisherId.trim() && !normalizePublisherId(form.publisherId)) {
+    errors.publisherId = "ca-pub- ve 16 rakamdan oluşur (ör. ca-pub-1234567890123456).";
+  } else if (form.enabled && !form.publisherId.trim()) {
+    errors.publisherId = "Reklamları açmak için yayıncı kimliğini girin.";
+  }
+  if (form.slotId.trim() && !normalizeAdSlotId(form.slotId)) {
+    errors.slotId = "Yalnız rakamdan oluşur (ör. 1234567890).";
+  } else if (form.enabled && !form.slotId.trim()) {
+    errors.slotId = "Reklamları açmak için reklam birimi kimliğini girin.";
+  }
+  return errors;
+}
 
 /**
- * Reklamlar. ÖNEMLİ: klinik panelinde reklamların gösterildiği bir alan henüz
- * yok; bu yüzden menüden kaldırıldı ve sayfanın başında açıkça yazıyor.
- * Kayıtlar korunur. Etkisiz alanlar (öncelik, toplam/günlük gösterim sınırı —
- * hiçbir yerde uygulanmıyordu) formdan çıkarıldı; mevcut değerleri değişmez.
+ * Süperadmin › Reklamlar. Klinik panelindeki küçük reklam alanlarını tek
+ * sağlayıcı Google AdSense doldurur; elle reklam satılmaz. Burada: kurulum
+ * adımları, AdSense kimlikleri + platform anahtarı ve kliniğe göre anahtar.
+ * Kural (hangi ekranda, kimde gösterilir): src/lib/panel-ads.ts.
  */
 export default function AdsPage() {
-  const [ads, setAds] = useState<Ad[]>([]);
+  const hostname = useHostname();
+  const [saved, setSaved] = useState<AdConfig | null>(null);
+  const [form, setForm] = useState<AdConfig>({ enabled: false, publisherId: "", slotId: "" });
+  const [rows, setRows] = useState<ClinicRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
-  const [editing, setEditing] = useState<Ad | null>(null);
-  const [open, setOpen] = useState(false);
-  const [form, setForm] = useState(EMPTY);
-  // Pencere açılırkenki değerler: kirli formda kapatırken onay sorulur.
-  const [initialForm, setInitialForm] = useState(EMPTY);
-  const [formError, setFormError] = useState<string | null>(null);
+  const [tried, setTried] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [busyIds, setBusyIds] = useState<ReadonlySet<string>>(new Set());
 
   const reload = useCallback(() => setReloadKey((value) => value + 1), []);
 
@@ -62,10 +82,19 @@ export default function AdsPage() {
     const controller = new AbortController();
     setLoading(true);
     setLoadError(null);
-    saGet<Ad[]>("/api/superadmin/ads", "Reklamlar yüklenemedi.", controller.signal)
-      .then((data) => setAds(Array.isArray(data) ? data : []))
+    saGet<AdsResponse>("/api/superadmin/ads", "Reklam ayarları yüklenemedi.", controller.signal)
+      .then((data) => {
+        const config = {
+          enabled: Boolean(data?.config?.enabled),
+          publisherId: data?.config?.publisherId ?? "",
+          slotId: data?.config?.slotId ?? "",
+        };
+        setSaved(config);
+        setForm(config);
+        setRows(Array.isArray(data?.institutions) ? data.institutions : []);
+      })
       .catch((error) => {
-        if (!isAbort(error)) setLoadError(errorMessage(error, "Reklamlar yüklenemedi."));
+        if (!isAbort(error)) setLoadError(errorMessage(error, "Reklam ayarları yüklenemedi."));
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
@@ -73,184 +102,260 @@ export default function AdsPage() {
     return () => controller.abort();
   }, [reloadKey]);
 
-  const set = <K extends keyof typeof EMPTY>(key: K, value: (typeof EMPTY)[K]) => setForm((current) => ({ ...current, [key]: value }));
-
-  const openCreate = () => {
-    setEditing(null);
-    setForm(EMPTY);
-    setInitialForm(EMPTY);
-    setFormError(null);
-    setOpen(true);
+  const setField = <K extends keyof AdConfig>(key: K, value: AdConfig[K]) => {
+    setForm((current) => ({ ...current, [key]: value }));
   };
 
-  const openEdit = (ad: Ad) => {
-    setEditing(ad);
-    const next = {
-      title: ad.title, content: ad.content, imageUrl: ad.imageUrl ?? "", ctaText: ad.ctaText ?? "", ctaUrl: ad.ctaUrl ?? "",
-      sponsorName: ad.sponsorName ?? "", startAt: ad.startAt ? turkeyDateKey(new Date(ad.startAt)) : "", endAt: ad.endAt ? turkeyDateKey(new Date(ad.endAt)) : "", isActive: ad.isActive,
-    };
-    setForm(next);
-    setInitialForm(next);
-    setFormError(null);
-    setOpen(true);
-  };
+  // Alan hataları ilk kaydetme denemesinden sonra, alanın altında (sunucu aynı kuralı uygular).
+  const errors = tried ? validate(form) : {};
 
   const save = async () => {
-    if (!form.title.trim() || !form.content.trim()) return setFormError("Başlık ve metin zorunlu.");
+    setTried(true);
+    setSaveError(null);
+    if (Object.keys(validate(form)).length > 0) return;
     setSaving(true);
-    setFormError(null);
     try {
       const payload = {
-        title: form.title.trim(),
-        content: form.content.trim(),
-        imageUrl: form.imageUrl.trim() || null,
-        ctaText: form.ctaText.trim() || null,
-        ctaUrl: form.ctaUrl.trim() || null,
-        sponsorName: form.sponsorName.trim() || null,
-        startAt: form.startAt || null,
-        endAt: form.endAt || null,
-        isActive: form.isActive,
+        enabled: form.enabled,
+        publisherId: form.publisherId.trim() ? normalizePublisherId(form.publisherId) : "",
+        slotId: form.slotId.trim() ? normalizeAdSlotId(form.slotId) : "",
       };
-      if (editing) await saSend("/api/superadmin/ads", "PUT", { id: editing.id, ...payload }, "Reklam kaydedilemedi.");
-      else await saSend("/api/superadmin/ads", "POST", payload, "Reklam kaydedilemedi.");
-      showToastSafe({ type: "success", message: `${payload.title} kaydedildi.` });
-      setOpen(false);
-      reload();
+      const data = await saSend<{ config: AdConfig }>("/api/superadmin/ads", "PUT", payload, "Reklam ayarı kaydedilemedi.");
+      const next = { enabled: data.config.enabled, publisherId: data.config.publisherId, slotId: data.config.slotId };
+      setSaved(next);
+      setForm(next);
+      setTried(false);
+      showToastSafe({ type: "success", message: "Reklam ayarı kaydedildi." });
     } catch (error) {
-      setFormError(errorMessage(error, "Reklam kaydedilemedi."));
+      setSaveError(errorMessage(error, "Reklam ayarı kaydedilemedi."));
     } finally {
       setSaving(false);
     }
   };
 
-  const toggle = async (ad: Ad) => {
-    if (ad.isActive) {
-      const ok = await confirmDialog({ title: "Reklam durdurulsun mu?", message: `"${ad.title}" pasife alınacak.`, confirmText: "Durdur", cancelText: "Vazgeç" });
-      if (!ok) return;
-    }
-    setBusyId(ad.id);
+  const toggleClinic = async (row: ClinicRow, adsEnabled: boolean) => {
+    // Anında kaydeder; hata olursa anahtar eski haline döner (sözleşme §4.2).
+    setBusyIds((current) => new Set(current).add(row.id));
+    setRows((current) => current.map((item) => (item.id === row.id ? { ...item, adsEnabled } : item)));
     try {
-      await saSend("/api/superadmin/ads", "PUT", { id: ad.id, isActive: !ad.isActive }, "Reklam güncellenemedi.");
-      showToastSafe({ type: "success", message: ad.isActive ? `${ad.title} durduruldu.` : `${ad.title} aktif.` });
-      reload();
+      await saSend("/api/superadmin/ads", "PATCH", { institutionId: row.id, adsEnabled }, "Değişiklik kaydedilemedi.");
     } catch (error) {
-      showToastSafe({ type: "error", message: errorMessage(error, "Reklam güncellenemedi.") });
+      setRows((current) => current.map((item) => (item.id === row.id ? { ...item, adsEnabled: !adsEnabled } : item)));
+      showToastSafe({ type: "error", message: `${row.name}: ${errorMessage(error, "Değişiklik kaydedilemedi.")}` });
     } finally {
-      setBusyId(null);
+      setBusyIds((current) => {
+        const next = new Set(current);
+        next.delete(row.id);
+        return next;
+      });
     }
   };
 
-  const remove = async (ad: Ad) => {
-    const ok = await confirmDialog({ title: "Reklam silinsin mi?", message: `"${ad.title}" kalıcı olarak silinecek.`, confirmText: "Sil", cancelText: "Vazgeç", danger: true });
-    if (!ok) return;
-    setBusyId(ad.id);
-    try {
-      await saSend("/api/superadmin/ads", "DELETE", { id: ad.id }, "Reklam silinemedi.");
-      showToastSafe({ type: "success", message: `${ad.title} silindi.` });
-      reload();
-    } catch (error) {
-      showToastSafe({ type: "error", message: errorMessage(error, "Reklam silinemedi.") });
-    } finally {
-      setBusyId(null);
-    }
-  };
+  const filtered = useMemo(() => {
+    const q = query.trim().toLocaleLowerCase("tr-TR");
+    return q ? rows.filter((row) => row.name.toLocaleLowerCase("tr-TR").includes(q)) : rows;
+  }, [rows, query]);
+  const openCount = rows.filter((row) => row.adsEnabled && !row.isDemo).length;
 
-  const actions = (ad: Ad) => (
-    <div className="flex items-center justify-end gap-1.5">
-      <IconButton icon={ad.isActive ? Pause : Play} title={ad.isActive ? "Durdur" : "Aktif et"} size="sm" disabled={busyId === ad.id} onClick={() => void toggle(ad)} />
-      <IconButton icon={Pencil} title="Düzenle" size="sm" onClick={() => openEdit(ad)} />
-      <IconButton icon={Trash2} title="Sil" tone="danger" size="sm" disabled={busyId === ad.id} onClick={() => void remove(ad)} />
-    </div>
-  );
+  const savedPublisher = saved?.publisherId ?? "";
+  const savedSlot = saved?.slotId ?? "";
+  const host = hostKind(hostname);
+  const setupComplete = Boolean(savedPublisher && savedSlot) && host !== "render";
 
-  const columns: ListTableColumn<Ad>[] = [
+  const domainStatus: StepStatus = host === "render" ? "error" : host === "own" ? "done" : "upcoming";
+  const steps: StepItem[] = [
     {
-      key: "title",
-      header: "Reklam",
-      render: (ad) => (
-        <div className="min-w-0 max-w-xl">
-          <p className="font-semibold text-slate-900">{ad.title}</p>
-          <p className="line-clamp-1 text-xs text-slate-500">{ad.content}</p>
-        </div>
+      key: "alan-adi",
+      title: "Sistemi kendi alan adınızda açın",
+      status: domainStatus,
+      description:
+        host === "render"
+          ? `Şu an ${hostname} adresindesiniz; Google bu adresi onaylamaz. Render'a kendi alan adınızı (ör. panel.alanadiniz.com) bağlayın ve AdSense'e o adresi yazın.`
+          : host === "own"
+            ? `${hostname} uygun.`
+            : "Canlı adreste denetlenir; Google onrender.com adresini onaylamaz.",
+    },
+    {
+      key: "hesap",
+      title: "Google AdSense hesabı açıp siteyi onaya gönderin",
+      status: savedPublisher ? "done" : domainStatus === "error" ? "upcoming" : "current",
+      description: (
+        <>
+          <a href={ADSENSE_URL} target="_blank" rel="noopener noreferrer" className="font-semibold text-primary hover:underline">adsense.google.com</a>
+          {" "}adresinde hesap açın, sitenizi ekleyin. Onay birkaç gün ile birkaç hafta sürebilir.
+        </>
       ),
     },
-    { key: "sponsor", header: "Sponsor", render: (ad) => ad.sponsorName || <EmptyValue /> },
-    { key: "range", header: "Tarih aralığı", render: (ad) => <span className="whitespace-nowrap text-sm text-slate-600">{ad.startAt || ad.endAt ? `${shortDate(ad.startAt) || "—"} – ${shortDate(ad.endAt) || "süresiz"}` : "Süresiz"}</span> },
-    { key: "status", header: "Durum", render: (ad) => <Badge tone={ad.isActive ? "success" : "neutral"}>{ad.isActive ? "Aktif" : "Pasif"}</Badge> },
-    { key: "actions", header: "", align: "right", render: actions },
+    {
+      key: "kimlik",
+      title: "Onaydan sonra kimlikleri aşağıya girin",
+      status: savedPublisher && savedSlot ? "done" : savedPublisher ? "current" : "upcoming",
+      description: "AdSense › Reklamlar › Reklam birimine göre › Görüntülü reklam (duyarlı). Koddaki ca-pub-… ve data-ad-slot değerleri; kodun tamamını da yapıştırabilirsiniz.",
+    },
+    {
+      key: "ads-txt",
+      title: "ads.txt kendiliğinden yayınlanır",
+      status: savedPublisher ? "done" : "upcoming",
+      description: savedPublisher ? (
+        <CopyField label="ads.txt satırı" labelHidden value={adsTxtLine(savedPublisher)} openHref="/ads.txt" className="mt-1 max-w-xl" />
+      ) : (
+        "Yayıncı kimliği kaydedilince sitenizin /ads.txt adresinde yayınlanır; sizin bir şey yüklemeniz gerekmez."
+      ),
+    },
+    {
+      key: "otomatik",
+      title: "AdSense'te “Otomatik reklamlar” kapalı kalsın",
+      description: "Açılırsa Google reklamı istediği yere, hasta ekranlarına da koyabilir. Reklamlar yalnız bu sistemin ayırdığı küçük alanlarda çıkmalı.",
+    },
+    {
+      key: "gelir",
+      title: "Gelir AdSense panelinde görünür",
+      description: (
+        <>
+          Kazanç ve ödemeler{" "}
+          <a href={ADSENSE_URL} target="_blank" rel="noopener noreferrer" className="font-semibold text-primary hover:underline">adsense.google.com</a>
+          {" "}adresinde izlenir; ödeme için orada adres ve banka bilgilerinizi tamamlayın.
+        </>
+      ),
+    },
+  ];
+  const stepList = <StepList aria-label="Reklam kurulum adımları" steps={steps} />;
+
+  const columns: ListTableColumn<ClinicRow>[] = [
+    {
+      key: "name",
+      header: "Klinik",
+      render: (row) => <ClinicName row={row} />,
+    },
+    {
+      key: "ads",
+      header: "Reklam gösterilsin",
+      align: "right",
+      render: (row) => <ClinicSwitch row={row} busy={busyIds.has(row.id)} onChange={toggleClinic} />,
+    },
   ];
 
   return (
     <section className="space-y-4">
-      <PageHeader icon="sa-ads" title="Reklamlar" description="Sponsorlu içerik kayıtları." actions={<Button icon={Plus} onClick={openCreate}>Yeni reklam</Button>} />
-
-      <Callout tone="warning" title="Reklamlar kliniklerde görünmüyor">
-        Klinik panelinde gösterim alanı henüz yok; “aktif” görünen reklamlar hiçbir klinikte çıkmaz. Sponsorlara gösterim sözü vermeyin.
-      </Callout>
-
-      <ListTable<Ad>
-        columns={columns}
-        rows={ads}
-        rowKey={(ad) => ad.id}
-        loading={loading}
-        // Veri varken yenileme hatası listeyi silmez; üstte şerit olarak görünür.
-        error={ads.length > 0 ? null : loadError}
-        staleError={ads.length > 0 ? loadError : null}
-        onRetry={reload}
-        emptyText="Reklam yok"
-        emptyIcon={AdsEmptyIcon}
-        emptyIllustrative
-        rowClassName={(ad) => (ad.isActive ? "" : "opacity-70")}
-        mobileCard={(ad) => (
-          <div className="space-y-1.5">
-            <div className="flex items-start justify-between gap-2">
-              <p className="min-w-0 font-semibold text-slate-900">{ad.title}</p>
-              <Badge tone={ad.isActive ? "success" : "neutral"}>{ad.isActive ? "Aktif" : "Pasif"}</Badge>
-            </div>
-            <p className="line-clamp-2 text-xs text-slate-500">{ad.content}</p>
-            {actions(ad)}
-          </div>
-        )}
+      <PageHeader
+        icon="sa-ads"
+        title="Reklamlar"
+        description="Klinik panelindeki küçük reklam alanlarını Google AdSense doldurur; gelir AdSense hesabınıza yatar."
       />
 
-      <FormModal
-        open={open}
-        onClose={() => setOpen(false)}
-        title={editing ? "Reklamı düzenle" : "Yeni reklam"}
-        size="lg"
-        onSubmit={() => save()}
-        submitting={saving}
-        error={formError}
-        isDirty={JSON.stringify(form) !== JSON.stringify(initialForm)}
-      >
-        <FormField label="Başlık" htmlFor="ad-title" required>
-          <Input id="ad-title" value={form.title} onChange={(event) => set("title", event.target.value)} />
-        </FormField>
-        <FormField label="Metin" htmlFor="ad-content" required>
-          <Textarea id="ad-content" rows={3} value={form.content} onChange={(event) => set("content", event.target.value)} />
-        </FormField>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <FormField label="Sponsor" htmlFor="ad-sponsor">
-            <Input id="ad-sponsor" value={form.sponsorName} onChange={(event) => set("sponsorName", event.target.value)} />
-          </FormField>
-          <FormField label="Görsel adresi" htmlFor="ad-image">
-            <Input id="ad-image" value={form.imageUrl} onChange={(event) => set("imageUrl", event.target.value)} placeholder="https://" />
-          </FormField>
-          <FormField label="Düğme yazısı" htmlFor="ad-cta-text">
-            <Input id="ad-cta-text" value={form.ctaText} onChange={(event) => set("ctaText", event.target.value)} placeholder="İncele" />
-          </FormField>
-          <FormField label="Düğme bağlantısı" htmlFor="ad-cta-url">
-            <Input id="ad-cta-url" value={form.ctaUrl} onChange={(event) => set("ctaUrl", event.target.value)} placeholder="https://" />
-          </FormField>
-          <FormField label="Başlangıç" htmlFor="ad-start">
-            <Input id="ad-start" type="date" value={form.startAt} onChange={(event) => set("startAt", event.target.value)} />
-          </FormField>
-          <FormField label="Bitiş" htmlFor="ad-end">
-            <Input id="ad-end" type="date" value={form.endAt} onChange={(event) => set("endAt", event.target.value)} />
-          </FormField>
+      {/* Tek okunaklı sütun: iki sütunlu klinik listesi ve adım metinleri tam genişlikte dağılıyordu. */}
+      {loading && !saved ? (
+        <div className="max-w-3xl space-y-4">
+          <FormSkeleton fields={2} columns={2} />
+          <TableSkeleton rows={5} columns={2} toolbar />
         </div>
-        <Switch checked={form.isActive} onChange={(checked) => set("isActive", checked)} label="Kliniklerde gösterilsin" description="Gösterim alanı yapılana kadar açık reklam da kliniklerde görünmez." />
-      </FormModal>
+      ) : loadError && !saved ? (
+        <LoadErrorState message={loadError} onRetry={reload} />
+      ) : (
+        <div className="max-w-3xl space-y-4">
+          {loadError && (
+            <Callout tone="warning" compact role="status" action={<Button size="sm" variant="ghost" onClick={reload}>Yeniden dene</Button>}>
+              {loadError} Son yüklenen bilgiler gösteriliyor.
+            </Callout>
+          )}
+
+          {!setupComplete && <Section title="Kurulum">{stepList}</Section>}
+
+          <Section
+            title="Google AdSense"
+            description="Kliniğe sizin girişinizde reklam gösterilmez: kendi reklamınıza tıklamak AdSense hesabını kapattırabilir."
+          >
+            <div className="space-y-4">
+              {saveError && <Callout tone="critical" role="alert" compact>{saveError}</Callout>}
+              <div className="grid gap-3 sm:grid-cols-2">
+                <FormField label="Google AdSense yayıncı kimliği" htmlFor="ads-publisher" error={errors.publisherId}>
+                  <Input
+                    id="ads-publisher"
+                    value={form.publisherId}
+                    onChange={(event) => setField("publisherId", event.target.value)}
+                    placeholder="ca-pub-1234567890123456"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </FormField>
+                <FormField label="Reklam birimi kimliği" htmlFor="ads-slot" error={errors.slotId}>
+                  <Input
+                    id="ads-slot"
+                    value={form.slotId}
+                    onChange={(event) => setField("slotId", event.target.value)}
+                    placeholder="1234567890"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </FormField>
+              </div>
+              <Switch
+                checked={form.enabled}
+                onChange={(checked) => setField("enabled", checked)}
+                label="Reklamlar gösterilsin"
+                description="Kapalıyken hiçbir klinikte reklam görünmez."
+              />
+              <div className="flex justify-end border-t border-slate-100 pt-4">
+                <Button loading={saving} onClick={() => void save()}>Kaydet</Button>
+              </div>
+            </div>
+          </Section>
+
+          <ListTable<ClinicRow>
+            title="Klinikler"
+            subtitle={saved?.enabled ? `${openCount} klinikte açık` : `Reklamlar kapalı; açınca ${openCount} klinikte görünür`}
+            toolbar={(
+              <Toolbar>
+                <SearchInput value={query} onChange={setQuery} placeholder="Klinik adı" wrapperClassName="flex-1 min-w-[220px]" />
+              </Toolbar>
+            )}
+            columns={columns}
+            rows={filtered}
+            rowKey={(row) => row.id}
+            rowClassName={(row) => (row.isActive ? "" : "opacity-60")}
+            emptyText={query.trim() ? "Bu adla klinik yok" : "Klinik yok"}
+            mobileCard={(row) => (
+              <div className="flex items-center justify-between gap-3">
+                <ClinicName row={row} />
+                <ClinicSwitch row={row} busy={busyIds.has(row.id)} onChange={toggleClinic} />
+              </div>
+            )}
+          />
+
+          {setupComplete && (
+            <Disclosure title="Kurulum adımları" summary="Tamamlandı">
+              {stepList}
+            </Disclosure>
+          )}
+        </div>
+      )}
     </section>
+  );
+}
+
+function ClinicName({ row }: { row: ClinicRow }) {
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+      <Link href={`/superadmin/institutions/${row.id}`} className="min-w-0 truncate font-semibold text-slate-900 hover:text-primary hover:underline">
+        {row.name}
+      </Link>
+      {row.isDemo && <Badge tone="info">Demo</Badge>}
+      {!row.isActive && <Badge tone="neutral">Klinik kapalı</Badge>}
+    </div>
+  );
+}
+
+function ClinicSwitch({ row, busy, onChange }: { row: ClinicRow; busy: boolean; onChange: (row: ClinicRow, adsEnabled: boolean) => void }) {
+  // Deneme (demo) kliniğinde reklam hiç gösterilmez (müşteri adayı reklam görmesin).
+  if (row.isDemo) return <span className="block text-right text-xs text-slate-500">Demo — reklam yok</span>;
+  return (
+    <Switch
+      checked={row.adsEnabled}
+      onChange={(checked) => onChange(row, checked)}
+      disabled={busy}
+      label={`${row.name}: reklam gösterilsin`}
+      labelHidden
+      className="justify-end"
+    />
   );
 }

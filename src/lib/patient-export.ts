@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import { prisma } from "@/lib/prisma";
+import { examStatusKind, type ExamStatusKind } from "@/lib/examination-status";
 import {
   PATIENT_SHEET_NAME,
   PAYMENT_SHEET_NAME,
@@ -28,7 +29,9 @@ function fmtDate(d: Date | null): string {
 const YES_NO = (b: boolean) => (b ? "Evet" : "Hayır");
 const GENDER_LABEL: Record<string, string> = { ERKEK: "Erkek", KADIN: "Kadın" };
 const METHOD_LABEL: Record<string, string> = { NAKIT: "Nakit", KREDI_KARTI: "Kredi Kartı", HAVALE_EFT: "Havale/EFT", DIGER: "Diğer", MAIL_ORDER: "Diğer" };
-const STATUS_LABEL: Record<string, string> = { TAMAMLANDI: "Tamamlandı", DEVAM_EDIYOR: "Devam Ediyor", PLANLANDI: "Planlandı", IPTAL: "İptal" };
+// Tedavi durumu şablonun "Durum" seçenekleriyle aynı adla yazılır (içe
+// aktarımda geri okunur): planlanan → Planlandı, yapılan → Tamamlandı.
+const STATUS_LABEL: Record<ExamStatusKind, string> = { done: "Tamamlandı", in_progress: "Devam Ediyor", pending: "Planlandı", cancelled: "İptal" };
 
 function writeSheet(workbook: ExcelJS.Workbook, name: string, columns: readonly { header: string; width: number }[], rows: unknown[][]) {
   const sheet = workbook.addWorksheet(name);
@@ -61,7 +64,10 @@ export async function buildExportWorkbook(institutionId: string): Promise<{ buff
   const doctorNameById = new Map(doctors.map((d) => [d.id, d.fullName]));
   const patientIds = patients.map((p) => p.id);
 
-  const [payments, treatmentSteps, prescriptions] = await Promise.all([
+  // Tedavi geçmişi hasta dosyasındaki tedavi kayıtlarıdır (planlanan ve
+  // yapılan). Önceden yalnız ayrı tedavi planlarının adımları yazılıyor,
+  // kliniğin asıl tedavi kayıtları dışa aktarımda hiç yer almıyordu.
+  const [payments, examinations, prescriptions] = await Promise.all([
     patientIds.length
       ? prisma.payment.findMany({
           where: { patientId: { in: patientIds }, status: "ACTIVE" },
@@ -69,10 +75,9 @@ export async function buildExportWorkbook(institutionId: string): Promise<{ buff
         })
       : [],
     patientIds.length
-      ? prisma.treatmentStep.findMany({
-          where: { plan: { patientId: { in: patientIds } } },
-          include: { plan: true },
-          orderBy: { createdAt: "asc" },
+      ? prisma.examination.findMany({
+          where: { institutionId, patientId: { in: patientIds } },
+          orderBy: { diagnosedAt: "asc" },
         })
       : [],
     patientIds.length
@@ -137,17 +142,17 @@ export async function buildExportWorkbook(institutionId: string): Promise<{ buff
     workbook,
     TREATMENT_SHEET_NAME,
     TREATMENT_COLUMNS,
-    treatmentSteps
-      .filter((step) => patientById.has(step.plan.patientId))
-      .map((step) => [
-        patientById.get(step.plan.patientId)!.tcNo,
-        fmtDate(step.createdAt),
-        step.treatmentName,
-        doctorNameById.get(step.plan.doctorId) || "",
-        step.toothNo || "",
-        Number(step.amount),
-        STATUS_LABEL[step.plan.status] || step.plan.status,
-        step.note || "",
+    examinations
+      .filter((exam) => patientById.has(exam.patientId))
+      .map((exam) => [
+        patientById.get(exam.patientId)!.tcNo,
+        fmtDate(exam.diagnosedAt),
+        exam.treatmentName,
+        doctorNameById.get(exam.doctorId) || "",
+        exam.toothNo || "",
+        Number(exam.amount),
+        STATUS_LABEL[examStatusKind(exam.status)],
+        exam.note || "",
       ])
   );
 

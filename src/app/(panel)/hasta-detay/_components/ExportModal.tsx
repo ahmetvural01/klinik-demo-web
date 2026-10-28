@@ -10,8 +10,9 @@ import { showToastSafe } from "@/lib/toast-client";
 import { turkeyDateKey } from "@/lib/tz";
 import { examStatusKind, isChargeableExamStatus } from "@/lib/examination-status";
 import { LAB_STAGE_LABEL, getOrderSummary } from "@/lib/lab-workflow";
+import { statusChipLabel } from "@/components/randevu/appointment-utils";
 import { usePatientFile } from "./PatientFileContext";
-import { appointmentStatusView, appointmentTypeLabel, genderLabel, healthFlagsOf, money, paymentMethodLabel, type PatientBalance } from "./patient-file-shared";
+import { appointmentTypeLabel, genderLabel, healthFlagsOf, money, paymentMethodLabel, type PatientBalance } from "./patient-file-shared";
 
 type SectionKey = "profile" | "completedTreatments" | "plannedTreatments" | "payments" | "balance" | "appointments" | "labOrders" | "prescriptions" | "documents" | "notes";
 type Format = "pdf" | "excel";
@@ -26,7 +27,7 @@ type Raw = Record<string, unknown>;
 const SECTIONS: { key: SectionKey; label: string; description: string; anyOf: string[] }[] = [
   { key: "profile", label: "Hasta bilgileri", description: "Kimlik, iletişim, sağlık uyarıları", anyOf: ["patients:read"] },
   { key: "completedTreatments", label: "Yapılan tedaviler", description: "Borca yansıyan tedaviler", anyOf: ["examinations:read"] },
-  { key: "plannedTreatments", label: "Yapılacak tedaviler", description: "Henüz yapılmamış tedaviler ve tedavi planı adımları", anyOf: ["examinations:read", "treatment:read"] },
+  { key: "plannedTreatments", label: "Planlanan tedaviler", description: "Henüz yapılmamış, borca yansımayan tedaviler", anyOf: ["examinations:read"] },
   { key: "payments", label: "Tahsilatlar", description: "Tarih, tutar, yöntem, POS", anyOf: ["payments:read"] },
   { key: "balance", label: "Hesap özeti", description: "Tedavi toplamı, indirim, tahsilat, kalan", anyOf: ["payments:read", "finance:read"] },
   { key: "appointments", label: "Randevular", description: "Geçmiş ve gelecek randevular", anyOf: ["appointments:read"] },
@@ -58,9 +59,6 @@ function buildSections(patient: Raw, balance: PatientBalance, hidePhone: boolean
   const exams = list(patient.examinations);
   const doctorCol = (row: Raw) => (hideDoctor ? [] : [name(row.doctor)]);
   const withDoctor = (headers: string[], at: number) => (hideDoctor ? headers : [...headers.slice(0, at), "Hekim", ...headers.slice(at)]);
-  const plannedFromPlans = list(patient.treatmentPlans).flatMap((plan) => list(plan.steps)
-    .filter((step) => !["TAMAMLANDI", "IPTAL"].includes(String(step.status || "")))
-    .map((step): Raw => ({ ...step, planTitle: plan.title, doctor: plan.doctor, date: step.doneAt || plan.createdAt })));
   const health = healthFlagsOf(patient as unknown as Parameters<typeof healthFlagsOf>[0]).join(", ") || "Bilinen uyarı yok";
 
   return {
@@ -89,17 +87,15 @@ function buildSections(patient: Raw, balance: PatientBalance, hidePhone: boolean
         date(exam.diagnosedAt), str(exam.treatmentName), str(exam.toothNo), money(exam.amount), ...doctorCol(exam),
       ]),
     },
+    // Hasta dosyasının Tedavi sekmesindeki "Planlanan tedaviler" listesiyle aynı
+    // kayıtlar (ayrı tedavi planı kaldırıldı; önceden plan adımları da buraya
+    // "Kaynak" sütunuyla karışıyordu).
     plannedTreatments: {
-      title: "Yapılacak Tedaviler",
-      headers: withDoctor(["Kaynak", "Tarih", "Tedavi", "Diş", "Tutar"], 5),
-      rows: [
-        ...exams.filter((exam) => examStatusKind(String(exam.status || "")) === "pending").map((exam) => [
-          "Yapılacak tedavi", date(exam.diagnosedAt), str(exam.treatmentName), str(exam.toothNo), money(exam.amount), ...doctorCol(exam),
-        ]),
-        ...plannedFromPlans.map((step) => [
-          str(step.planTitle) === "-" ? "Tedavi planı" : `Plan: ${str(step.planTitle)}`, date(step.date), str(step.treatmentName), str(step.toothNo), money(step.amount), ...doctorCol(step as Raw),
-        ]),
-      ],
+      title: "Planlanan Tedaviler",
+      headers: withDoctor(["Tarih", "Tedavi", "Diş", "Tutar"], 4),
+      rows: exams.filter((exam) => examStatusKind(String(exam.status || "")) === "pending").map((exam) => [
+        date(exam.diagnosedAt), str(exam.treatmentName), str(exam.toothNo), money(exam.amount), ...doctorCol(exam),
+      ]),
     },
     payments: {
       title: "Tahsilatlar",
@@ -123,7 +119,7 @@ function buildSections(patient: Raw, balance: PatientBalance, hidePhone: boolean
       title: "Randevular",
       headers: withDoctor(["Tarih", "Tür", "Durum", "Not"], 1),
       rows: list(patient.appointments).map((appointment) => [
-        dateTime(appointment.startAt), ...doctorCol(appointment), appointmentTypeLabel(String(appointment.type || "")), appointmentStatusView(String(appointment.status || "")).label, str(appointment.note),
+        dateTime(appointment.startAt), ...doctorCol(appointment), appointmentTypeLabel(String(appointment.type || "")), statusChipLabel(String(appointment.status || "")), str(appointment.note),
       ]),
     },
     labOrders: {
@@ -276,7 +272,7 @@ export function ExportModal({ open, onClose }: { open: boolean; onClose: () => v
       const serverAllows = (key: SectionKey) => {
         if (!included) return true;
         if (key === "completedTreatments") return included.includes("examinations");
-        if (key === "plannedTreatments") return included.includes("examinations") || included.includes("treatmentPlans");
+        if (key === "plannedTreatments") return included.includes("examinations");
         if (key === "payments") return included.includes("payments");
         if (key === "appointments") return included.includes("appointments");
         if (key === "labOrders") return included.includes("labOrders");

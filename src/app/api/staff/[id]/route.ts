@@ -179,36 +179,33 @@ export async function PUT(request: NextRequest, props: Params) {
     );
   }
 
-  // Bir doktor/personel pasife alınırken, ona bağlı gelecek randevular/açık
-  // planlar/açık takipler kimse fark etmeden "hayalet" bir kullanıcıya bağlı
-  // kalmasın diye değişikliği engelliyoruz. İlgili kayıtlar devredilmeden
-  // personeli pasifleştirmek takvim ve klinik iş akışını tutarsız bırakır.
+  // Bir doktor/personel pasife alınırken, ona bağlı gelecek randevular ve
+  // açık takipler kimse fark etmeden "hayalet" bir kullanıcıya bağlı kalmasın
+  // diye değişikliği engelliyoruz. İlgili kayıtlar devredilmeden personeli
+  // pasifleştirmek takvim ve klinik iş akışını tutarsız bırakır. (Ayrı tedavi
+  // planı kaldırıldı; önceden açık planlar da sayılıyordu.)
   const removesClinicalAccess = currentMembership?.isActive !== false && (
     !newIsActive
     || (existing.role === "DOKTOR" && newRole !== "DOKTOR")
     || (!existing.profile?.hideAsDoctor && body.hideAsDoctor === true)
   );
   if (removesClinicalAccess) {
-    const [futureAppointments, openTreatmentPlans, openFollowUps] = await Promise.all([
+    const [futureAppointments, openFollowUps] = await Promise.all([
       prisma.appointment.count({
         where: { doctorId: existing.id, branchId: branch.branchId, startAt: { gte: new Date() }, status: { notIn: ["IPTAL", "GELMEDI"] } },
-      }),
-      (prisma as any).treatmentPlan.count({
-        where: { doctorId: existing.id, branchId: branch.branchId, status: { notIn: ["TAMAMLANDI", "IPTAL"] } },
       }),
       prisma.patientFollowUp.count({
         where: { doctorId: existing.id, status: "ACIK", patient: { homeBranchId: branch.branchId } },
       }),
     ]);
-    if (futureAppointments > 0 || openTreatmentPlans > 0 || openFollowUps > 0) {
+    if (futureAppointments > 0 || openFollowUps > 0) {
       const parts: string[] = [];
       if (futureAppointments > 0) parts.push(`${futureAppointments} gelecek randevu`);
-      if (openTreatmentPlans > 0) parts.push(`${openTreatmentPlans} açık tedavi planı`);
       if (openFollowUps > 0) parts.push(`${openFollowUps} açık hasta takibi`);
       return NextResponse.json({
         message: `Bu personelin ${parts.join(", ")} var. Klinik görünürlüğünü kaldırmadan önce bunları başka bir doktora devredin ya da kapatın.`,
         requiresReassignment: true,
-        counts: { futureAppointments, openTreatmentPlans, openFollowUps },
+        counts: { futureAppointments, openFollowUps },
       }, { status: 409 });
     }
   }
@@ -442,20 +439,17 @@ export async function DELETE(_: NextRequest, props: Params) {
     return NextResponse.json({ message: "Şube yöneticisi bağlantısı bu ekrandan kaldırılamaz." }, { status: 409 });
   }
 
-  const [futureAppointments, openTreatmentPlans, openFollowUps] = await Promise.all([
+  const [futureAppointments, openFollowUps] = await Promise.all([
     prisma.appointment.count({
       where: { doctorId: existing.id, branchId: branch.branchId, startAt: { gte: new Date() }, status: { notIn: ["IPTAL", "GELMEDI"] } },
     }),
-    (prisma as any).treatmentPlan.count({
-      where: { doctorId: existing.id, branchId: branch.branchId, status: { notIn: ["TAMAMLANDI", "IPTAL"] } },
-    }),
     prisma.patientFollowUp.count({ where: { doctorId: existing.id, status: "ACIK", patient: { homeBranchId: branch.branchId } } }),
   ]);
-  if (futureAppointments > 0 || openTreatmentPlans > 0 || openFollowUps > 0) {
+  if (futureAppointments > 0 || openFollowUps > 0) {
     return NextResponse.json({
       message: "Bu personele bağlı aktif klinik kayıtları var. Önce kayıtları devredin veya kapatın.",
       requiresReassignment: true,
-      counts: { futureAppointments, openTreatmentPlans, openFollowUps },
+      counts: { futureAppointments, openFollowUps },
     }, { status: 409 });
   }
 

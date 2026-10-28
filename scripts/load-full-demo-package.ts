@@ -6,6 +6,9 @@ let demoInstitutionId = "";
 let demoBranchId = "";
 
 const MARKER = "[DEMO_PAKET_20260506]";
+// Hasta dosyasındaki tedavi durumları (src/lib/examination-status.ts ile aynı değerler).
+const EXAM_STATUS_DONE = "TAMAMLANDI";
+const EXAM_STATUS_DIAGNOSIS = "Diagnoz (Ön Teşhis)";
 const DEMO_PASSWORD = process.env.DEMO_PASSWORD || "demo-password-change-me";
 const demoIdentityNo = (index: number) => `9000000000${index}`;
 
@@ -132,45 +135,6 @@ async function main() {
       create: { userId: user.id, workStart: "09:00", workEnd: "18:00", hideAsDoctor: false },
     });
   }
-
-  await prisma.superadminPermission.upsert({
-    where: { userId: createdUsers[Role.YONETICI].id },
-    update: {
-      modules: [
-        "dashboard",
-        "institutions",
-        "users",
-        "roles",
-        "invoices",
-        "sms",
-        "ads",
-        "smtp",
-        "reports",
-        "support",
-        "audit",
-        "announcements",
-        "settings",
-      ],
-    },
-    create: {
-      userId: createdUsers[Role.YONETICI].id,
-      modules: [
-        "dashboard",
-        "institutions",
-        "users",
-        "roles",
-        "invoices",
-        "sms",
-        "ads",
-        "smtp",
-        "reports",
-        "support",
-        "audit",
-        "announcements",
-        "settings",
-      ],
-    },
-  });
 
   const demoPatients = [
     { tcNo: "98000000001", fullName: `Demo Ayse Yilmaz ${MARKER}`, phone: "05550000101", gender: "K" },
@@ -318,13 +282,11 @@ async function main() {
     marker: `${MARKER}-PAY-1`,
   });
 
-  const plan = await upsertTreatmentPlanByMarker({
-    patientId: createdPatients[0].id,
-    doctorId,
-    marker: `${MARKER}-TPLAN-1`,
-  });
-
-  await upsertTreatmentSteps(plan.id, `${MARKER}-TSTEP`);
+  // Tedavi planı = planlanan tedaviler (ayrı plan tablosu kaldırıldı):
+  // bir yapılmış, iki planlanan tedavi.
+  await upsertTreatmentByMarker({ patientId: createdPatients[0].id, doctorId, marker: `${MARKER}-TEDAVI-MUAYENE`, treatmentName: "Muayene", amount: 500, status: EXAM_STATUS_DONE });
+  await upsertTreatmentByMarker({ patientId: createdPatients[0].id, doctorId, marker: `${MARKER}-TEDAVI-CERRAHI`, treatmentName: "Implant Cerrahisi", amount: 9000, status: EXAM_STATUS_DIAGNOSIS });
+  await upsertTreatmentByMarker({ patientId: createdPatients[0].id, doctorId, marker: `${MARKER}-TEDAVI-PROTEZ`, treatmentName: "Implant Ustu Protez", amount: 9000, status: EXAM_STATUS_DIAGNOSIS });
 
   const labOrder = await upsertLabOrderByMarker({
     patientId: createdPatients[2].id,
@@ -374,7 +336,6 @@ async function main() {
   await upsertFirmaIslemByMarker(firma.id, `${MARKER}-FIRMA-1`);
 
   await upsertSupportTicketByMarker(managerId, `${MARKER}-SUP-1`);
-  await upsertMessageByMarker(createdUsers[Role.ASISTAN].id, `${MARKER}-MSG-1`);
   await upsertAnnouncementByMarker({
     institutionId: institution.id,
     createdById: managerId,
@@ -389,24 +350,6 @@ async function main() {
     bankoId: createdUsers[Role.BANKO].id,
     posId: pos.id,
     patients: createdPatients,
-  });
-
-  const ad = await upsertAdvertisementByMarker(`${MARKER}-AD-1`);
-
-  await prisma.institutionAdAssignment.upsert({
-    where: {
-      institutionId_advertisementId: {
-        institutionId: institution.id,
-        advertisementId: ad.id,
-      },
-    },
-    update: { isActive: true, weight: 100 },
-    create: {
-      institutionId: institution.id,
-      advertisementId: ad.id,
-      isActive: true,
-      weight: 100,
-    },
   });
 
   const smsPackage = await prisma.smsPackage.upsert({
@@ -771,47 +714,32 @@ async function upsertPaymentByMarker(args: { institutionId: string; patientId: s
   });
 }
 
-async function upsertTreatmentPlanByMarker(args: { patientId: string; doctorId: string; marker: string }) {
-  const existing = await prisma.treatmentPlan.findFirst({
-    where: { patientId: args.patientId, title: { contains: args.marker } },
+/** Tek tedavi kaydı (planlanan ya da yapılan); işaret notta durur, ikinci çalıştırmada güncellenir. */
+async function upsertTreatmentByMarker(args: { patientId: string; doctorId: string; marker: string; treatmentName: string; amount: number; status: string }) {
+  const data = {
+    treatmentName: args.treatmentName,
+    amount: new Prisma.Decimal(args.amount),
+    status: args.status,
+    note: `${args.marker} Demo tedavi`,
+  };
+  const existing = await prisma.examination.findFirst({
+    where: { patientId: args.patientId, note: { contains: args.marker } },
   });
 
   if (existing) {
-    return prisma.treatmentPlan.update({
-      where: { id: existing.id },
-      data: {
-        title: `Implant Plani ${args.marker}`,
-        status: "DEVAM_EDIYOR",
-        totalCost: new Prisma.Decimal(18500),
-        notes: `${args.marker} Demo tedavi plani`,
-      },
-    });
+    await prisma.examination.update({ where: { id: existing.id }, data });
+    return;
   }
 
-  return prisma.treatmentPlan.create({
+  await prisma.examination.create({
     data: {
       institutionId: demoInstitutionId,
       branchId: demoBranchId,
       patientId: args.patientId,
       doctorId: args.doctorId,
-      title: `Implant Plani ${args.marker}`,
-      status: "DEVAM_EDIYOR",
-      totalCost: new Prisma.Decimal(18500),
-      notes: `${args.marker} Demo tedavi plani`,
+      diagnosedAt: new Date(),
+      ...data,
     },
-  });
-}
-
-async function upsertTreatmentSteps(planId: string, marker: string) {
-  const hasSteps = await prisma.treatmentStep.count({ where: { planId } });
-  if (hasSteps > 0) return;
-
-  await prisma.treatmentStep.createMany({
-    data: [
-      { institutionId: demoInstitutionId, branchId: demoBranchId, planId, order: 1, treatmentName: `Muayene ${marker}`, amount: new Prisma.Decimal(500), status: "TAMAMLANDI" },
-      { institutionId: demoInstitutionId, branchId: demoBranchId, planId, order: 2, treatmentName: `Cerrahi ${marker}`, amount: new Prisma.Decimal(9000), status: "BEKLIYOR" },
-      { institutionId: demoInstitutionId, branchId: demoBranchId, planId, order: 3, treatmentName: `Protez ${marker}`, amount: new Prisma.Decimal(9000), status: "BEKLIYOR" },
-    ],
   });
 }
 
@@ -1118,20 +1046,6 @@ async function upsertSupportTicketByMarker(userId: string, marker: string) {
   });
 }
 
-async function upsertMessageByMarker(userId: string, marker: string) {
-  const existing = await prisma.message.findFirst({ where: { text: { contains: marker } } });
-  if (existing) return;
-
-  await prisma.message.create({
-    data: {
-      userId,
-      institutionId: demoInstitutionId,
-      branchId: demoBranchId,
-      text: `${marker} Klinik ici duyuru mesaji`,
-    },
-  });
-}
-
 async function upsertAnnouncementByMarker(args: { institutionId: string; createdById: string; marker: string }) {
   const existing = await prisma.announcement.findFirst({
     where: { institutionId: args.institutionId, text: { contains: args.marker } },
@@ -1212,14 +1126,13 @@ async function upsertWorkflowScenarioPack(args: {
     marker: `${MARKER}-SCN-ASISTAN-ARAMA`,
   });
 
-  const completedPlan = await upsertTreatmentPlanByMarker({
+  await upsertTreatmentByMarker({
     patientId: p2.id,
     doctorId: args.doctorId,
     marker: `${MARKER}-SCN-TAMAMLANAN-TEDAVI`,
-  });
-  await prisma.treatmentPlan.update({
-    where: { id: completedPlan.id },
-    data: { status: "TAMAMLANDI", totalCost: new Prisma.Decimal(6200), notes: `${MARKER}-SCN-TAMAMLANAN-TEDAVI Onayli ve tamamlanmis tedavi` },
+    treatmentName: "Onayli ve tamamlanmis tedavi",
+    amount: 6200,
+    status: EXAM_STATUS_DONE,
   });
 
   await upsertPaymentByMarker({
@@ -1431,35 +1344,6 @@ async function upsertSupplierScenario(institutionId: string, marker: string, use
     quantity: 24,
     minQuantity: 6,
     unitPrice: 210,
-  });
-}
-
-async function upsertAdvertisementByMarker(marker: string) {
-  const existing = await prisma.advertisement.findFirst({ where: { title: { contains: marker } } });
-  if (existing) {
-    return prisma.advertisement.update({
-      where: { id: existing.id },
-      data: {
-        title: `Demo Kampanya ${marker}`,
-        content: "Implant paketi kampanyasi detaylari",
-        ctaText: "Detaylari Gor",
-        ctaUrl: "https://demo.klinik.local/kampanya",
-        sponsorName: "CepKlinik Demo",
-        isActive: true,
-      },
-    });
-  }
-
-  return prisma.advertisement.create({
-    data: {
-      title: `Demo Kampanya ${marker}`,
-      content: "Implant paketi kampanyasi detaylari",
-      ctaText: "Detaylari Gor",
-      ctaUrl: "https://demo.klinik.local/kampanya",
-      sponsorName: "CepKlinik Demo",
-      isActive: true,
-      priority: 50,
-    },
   });
 }
 

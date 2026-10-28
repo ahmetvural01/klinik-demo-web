@@ -1,7 +1,6 @@
 // Randevu durumu DB'de her zaman BEKLIYOR/GELDI/TAMAMLANDI/GELMEDI/IPTAL olarak
-// saklanır (çakışma kontrolü, hatırlatma senkronu, paket kullanım kontrolü vb.
-// bu ham değerlere göre çalışır — bkz. src/app/api/appointments,
-// src/app/api/patient-packages/[id]/use). Bu modül DB durumunu hiç
+// saklanır (çakışma kontrolü, hatırlatma senkronu vb. bu ham değerlere göre
+// çalışır — bkz. src/app/api/appointments). Bu modül DB durumunu hiç
 // değiştirmeden yalnızca EKRANDA gösterilecek/ekrandan seçilecek durumu türetir:
 //
 // - Ham "BEKLIYOR" (varsayılan, randevu oluşturulduğunda) → EKRANDA "Planlandı"
@@ -16,6 +15,13 @@
 // - Ham "GELMEDI"/"IPTAL" → değişmeden "Gelmedi"/"İptal" gösterilir.
 export type RawAppointmentStatus = "BEKLIYOR" | "GELDI" | "TAMAMLANDI" | "GELMEDI" | "IPTAL" | string;
 export type DisplayAppointmentStatus = "PLANLANDI" | "BEKLIYOR" | "TAMAMLANDI" | "GELMEDI" | "IPTAL";
+
+/**
+ * Hastanın klinikte bulunduğunu gösteren ham durumlar: Geldi (ekranda
+ * "Bekliyor") ve Tamamlandı. Hasta listesindeki "son ziyaret" ve
+ * Raporlar'daki "Gelen hasta" bu tek tanımı kullanır.
+ */
+export const APPOINTMENT_VISITED_STATUSES = ["GELDI", "TAMAMLANDI"] as const;
 
 export const APPOINTMENT_DISPLAY_STATUS_LABELS: Record<DisplayAppointmentStatus, string> = {
   PLANLANDI: "Planlandı",

@@ -58,6 +58,7 @@ export async function GET() {
           smsDefaultInfo: true,
           smsDefaultReminder: true,
           smsDefaultSurvey: true,
+          reviewLink: true,
           appointmentChangeNotifyEnabled: true,
           appointmentCancelNotifyEnabled: true,
         },
@@ -107,6 +108,8 @@ export async function GET() {
         info: setting?.smsDefaultInfo ?? true,
         reminder: setting?.smsDefaultReminder ?? false,
         survey: setting?.smsDefaultSurvey ?? false,
+        // Değerlendirme bağlantısı yoksa formdaki seçenek pasif (neden yazılır).
+        surveyReady: Boolean(setting?.reviewLink?.trim()),
       },
       // İptal/taşıma onayında "hastaya mesaj gider mi" sorusunun doğru
       // yanıtlanması için (İletişim › Otomatik mesajlar anahtarları). Önceden

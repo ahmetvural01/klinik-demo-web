@@ -51,7 +51,7 @@ function YetkisizContent() {
             {pageName ? <><b>{pageName}</b> sayfası</> : "Açmaya çalıştığınız sayfa"} sizin rolünüze kapalı.
             {permissionTitles.length > 0 && <> Gereken izin: <b>{permissionTitles.join(" veya ")}</b>.</>}
           </p>
-          <p className="mt-2">Bu işe ihtiyacınız varsa klinik yöneticinizden izin isteyin.</p>
+          <p className="mt-2">Bu işe ihtiyacınız varsa klinik yöneticinize söyleyin: yönetici rolünüzü değiştirebilir ya da rol izni için Destek&apos;e yazabilir.</p>
         </>
       )}
       actions={(

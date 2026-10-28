@@ -137,6 +137,8 @@ const PLATFORM_ACTION_LABELS: Record<string, string> = {
   SUPERADMIN_SUPPORT_ANSWER: "Destek talebi yanıtlandı",
   SUPERADMIN_SUPPORT_DELETE: "Destek talebi silindi",
   SUPERADMIN_SUPPORT_STATUS: "Destek talebi kapatıldı / açıldı",
+  SUPERADMIN_AD_CONFIG_UPDATE: "Reklam ayarı değişti",
+  // Eski elle satılan reklam kayıtları (yapı kaldırıldı; geçmiş günlük satırları için).
   SUPERADMIN_AD_CREATE: "Reklam oluşturuldu",
   SUPERADMIN_AD_UPDATE: "Reklam güncellendi",
   SUPERADMIN_AD_DELETE: "Reklam silindi",

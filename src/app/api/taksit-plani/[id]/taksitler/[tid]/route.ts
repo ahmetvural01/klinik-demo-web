@@ -3,6 +3,7 @@ import { PaymentMethod, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { requireActiveBranch } from "@/lib/branch-context";
+import { posSelectionRequired } from "@/lib/pos-requirement";
 import { createIntegratedPayment } from "@/lib/payment-ledger";
 import { BusinessRuleError } from "@/lib/public-error";
 import { isValidDateKey, turkeyDateKey, turkeyLocalDateTimeToUtc } from "@/lib/tz";
@@ -71,7 +72,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
       return NextResponse.json({ error: "Not geçersiz" }, { status: 400 });
     }
     const posRequired = yontem === "KREDI_KARTI" || yontem === "MAIL_ORDER";
-    if (posRequired && !posId) {
+    if (posRequired && !posId && await posSelectionRequired(yontem, auth.user.institutionId, branch.branchId)) {
       return NextResponse.json({ error: "Kart / mail order tahsilatı için POS seçimi zorunlu" }, { status: 400 });
     }
     if (!posRequired && posId) {

@@ -99,7 +99,7 @@ export type CalendarSettings = {
   appointmentDuration: number;
   holidayDays: string[];
   dailySchedules: DaySchedule[];
-  sms: { enabled: boolean; info: boolean; reminder: boolean; survey: boolean };
+  sms: { enabled: boolean; info: boolean; reminder: boolean; survey: boolean; surveyReady?: boolean };
   /** İletişim › Otomatik mesajlar: randevu değişince / iptal edilince hastaya haber ver. */
   notify?: { change: boolean; cancel: boolean };
   treatments: Array<{ value: string; label: string; color: string }>;

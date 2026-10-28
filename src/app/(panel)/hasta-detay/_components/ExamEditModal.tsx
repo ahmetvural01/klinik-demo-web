@@ -16,7 +16,7 @@ import { errorMessageOf, type Exam } from "./patient-file-shared";
 type Form = { treatmentName: string; toothNo: string; amount: string; doctorId: string; date: string; note: string };
 
 /**
- * Yapılacak / yapılan tedavi kaydını düzeltme penceresi (tek kayıt). Tutar
+ * Planlanan / yapılan tedavi kaydını düzeltme penceresi (tek kayıt). Tutar
  * ortak tutar alanıyla girilir: "3.500" 3.500 TL'dir (önceden yerel
  * ayrıştırıcı virgülsüz noktayı ondalık sayıyordu).
  */
@@ -99,7 +99,7 @@ export function ExamEditModal({ exam, onClose }: { exam: Exam | null; onClose: (
       open={Boolean(exam)}
       onClose={onClose}
       module="tedavi"
-      title={kind === "pending" ? "Yapılacak tedaviyi düzenle" : "Yapılan tedaviyi düzenle"}
+      title={kind === "pending" ? "Planlanan tedaviyi düzenle" : "Yapılan tedaviyi düzenle"}
       description={kind === "pending" ? "Henüz borca yansımadı." : "Tutarı hastanın borcunda ve hekim hakedişinde."}
       size="md"
       onSubmit={save}

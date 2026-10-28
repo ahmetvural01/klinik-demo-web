@@ -114,7 +114,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   const treatmentCheck = crossCheck(parsed.treatments, allKnownTc, knownDoctorNames, (tc) => `Hasta TC ${tc} ne dosyada ne de kurum kayıtlarında bulunamadı — bu tedavi satırı atlanacak`);
   const prescriptionCheck = crossCheck(parsed.prescriptions, allKnownTc, knownDoctorNames, (tc) => `Hasta TC ${tc} ne dosyada ne de kurum kayıtlarında bulunamadı — bu reçete satırı atlanacak`);
 
-  // Tedavi kaydı doktora ZORUNLU bağlıdır (TreatmentPlan.doctorId nullable değil) —
+  // Tedavi kaydı doktora ZORUNLU bağlıdır (Examination.doctorId nullable değil) —
   // dosyada yazılan doktor adı kurum personeliyle eşleşmezse satır aktarılamaz,
   // bu yüzden "eşleşmeyen doktor" burada uyarı değil gerçek bir hata sayılır.
   let treatmentsUnresolvedDoctor = 0;

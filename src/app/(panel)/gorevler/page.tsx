@@ -6,7 +6,7 @@ type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 const KEPT_PARAMS = ["yeni", "patientId", "patientName", "kapsam", "sorumlu"] as const;
 
 /**
- * Görevler artık Yapılacaklar > "Ekip görevleri" sekmesinde. Eski adres (yer
+ * Görevler artık Aramalar ve görevler > "Ekip görevleri" sekmesinde. Eski adres (yer
  * imleri, menü ve zil bağlantıları) parametreleriyle sunucuda anında yönlenir.
  */
 export default async function GorevlerRedirect({ searchParams }: { searchParams: SearchParams }) {

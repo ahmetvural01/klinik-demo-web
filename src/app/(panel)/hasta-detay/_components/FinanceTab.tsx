@@ -166,7 +166,7 @@ export function FinanceTab() {
     { key: "debt", label: debtLabel, value: <span className={`text-base font-extrabold tabular-nums ${debtTone}`}>{money(Math.abs(debt))}</span> },
   ];
   const summaryColumns = summaryItems.filter((item) => !item.hidden).length;
-  // Yapılacak (henüz yapılmamış) tedaviler borca dahil değildir; varsa bir kez söylenir.
+  // Planlanan (henüz yapılmamış) tedaviler borca dahil değildir; varsa bir kez söylenir.
   const pendingTreatments = data.examinations.some(isPendingExam);
 
   return (
@@ -188,7 +188,7 @@ export function FinanceTab() {
           <Callout tone="warning" compact>Bakiye şu an hesaplanamadı; tahsilatlar ve taksitler aşağıda. Birazdan sayfayı yenileyin.</Callout>
         )}
         {pendingTreatments && (
-          <p className="mt-3 text-xs text-slate-500">Yapılacak tedaviler borca dahil değildir; “Yapıldı” işaretlenince eklenir.</p>
+          <p className="mt-3 text-xs text-slate-500">Planlanan tedaviler borca dahil değildir; “Yapıldı” işaretlenince eklenir.</p>
         )}
       </Section>
 

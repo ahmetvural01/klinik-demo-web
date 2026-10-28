@@ -7,8 +7,7 @@ export type { StockItem };
 export type PurchaseItemRow = {
   id: string; stockItemId: string; productName: string;
   quantity: number; unit: string; unitPrice: number | string; lineTotal: number | string;
-  lotNo?: string | null; expiresAt?: string | null;
-  /** Bu satırın partisinden stok çıkışı yapıldı mı (yapıldıysa ürün/miktar/fiyat değiştirilemez, satın alma iptal edilemez). */
+  /** Bu satırla gelen üründen kullanıldı mı (kullanıldıysa ürün/miktar/fiyat değiştirilemez, satın alma iptal edilemez). */
   consumed?: boolean;
 };
 
@@ -18,7 +17,7 @@ export type Purchase = {
   id: string; firmaId: string; firmaIslemId?: string | null; tarih: string;
   receiptStatus: "SIPARIS_VERILDI" | "TESLIM_ALINDI"; receivedAt?: string | null;
   total?: number;
-  faturaNo?: string | null; aciklama?: string | null; kdvOrani: number; status: string;
+  aciklama?: string | null; status: string;
   firma?: { id: string; name: string };
   firmaIslem?: { tutar: number; dueDate?: string | null } | null;
   paymentSummary?: {
@@ -39,16 +38,17 @@ export type PurchaseLineForm = {
   category: string; unit: string; quantity: string;
   /** Normalize tutar metni ("120.50") ya da "" — MoneyInput değeri. */
   unitPrice: string;
-  lotNo: string; expiresAt: string;
-  /** Lot / SKT alanları açık mı (değer varsa her zaman açık). */
-  showLot?: boolean;
-  /** Düzenlemede: partisinden çıkış yapılmış satır kilitlidir. */
+  /** Düzenlemede: bu satırla gelen üründen kullanılmışsa satır kilitlidir. */
   locked?: boolean;
 };
 
 export type LineErrors = Record<string, { product?: string; quantity?: string; unitPrice?: string }>;
 
-export type PurchaseFirmaOption = { id: string; name: string; bakiye?: number };
+export type PurchaseFirmaOption = {
+  id: string; name: string; bakiye?: number;
+  /** Teslim alınmamış sipariş sayısı (yeni alımda "önce siparişi teslim al" uyarısı için). */
+  bekleyenSiparis?: number;
+};
 
 export type PurchasePrefill = {
   receiptStatus?: Purchase["receiptStatus"];
@@ -68,8 +68,6 @@ export const PAYMENT_STATUS_META: Record<NonNullable<Purchase["paymentSummary"]>
   ODENDI: { label: "Ödendi", tone: "success" },
 };
 
-export const KDV_OPTIONS = ["0", "1", "10", "20"] as const;
-
 export const newLineKey = () => newRequestKey("line");
 
 export const emptyLine = (patch: Partial<PurchaseLineForm> = {}): PurchaseLineForm => ({
@@ -80,8 +78,6 @@ export const emptyLine = (patch: Partial<PurchaseLineForm> = {}): PurchaseLineFo
   unit: "adet",
   quantity: "",
   unitPrice: "",
-  lotNo: "",
-  expiresAt: "",
   ...patch,
 });
 
@@ -127,8 +123,8 @@ export function summarizeLines(lines: PurchaseLineSummary[] | undefined, max = 2
 export function friendlyPurchaseError(message: string | null | undefined, fallback: string): string {
   const text = (message || "").trim();
   if (!text) return fallback;
-  if (text.includes("ters stok hareketi") || text.includes("partisinden stok çıkışı")) {
-    const product = /^([^:]+): Bu satın alma partisinden/.exec(text)?.[1];
+  if (text.includes("gelen üründen kullanılmış") || text.includes("ters stok hareketi") || text.includes("partisinden stok çıkışı")) {
+    const product = /^([^:]+): Bu satın alma(?:yla gelen üründen| partisinden)/.exec(text)?.[1];
     return `${product ? `${product} kullanıldığı için` : "Ürünlerin bir kısmı kullanıldığı için"} bu satırın ürünü, miktarı ve fiyatı değiştirilemez; satın alma da iptal edilemez. Kullanılmayan ürünleri firmaya iade ettiyseniz satın almayı “Düzenle” ile açıp o satırları silin ya da miktarını azaltın.`;
   }
   if (text.includes("firma ödemelerinden mahsup")) {
@@ -157,7 +153,10 @@ export function lineErrorSummary(items: PurchaseLineForm[], errors: LineErrors):
   return `Ürün satırlarını tamamlayın: ${rows.map((row) => `${row}. satır`).join(", ")}.`;
 }
 
-/** Satırları API gövdesine çevirir (oluşturma ve düzenleme aynı biçim). */
+/**
+ * Satırları API gövdesine çevirir (oluşturma ve düzenleme aynı biçim). Lot no
+ * ve son kullanma gönderilmez: düzeltmede sunucu satırdaki eski değeri korur.
+ */
 export function linesToPayload(items: PurchaseLineForm[]) {
   return items.map((line) => ({
     ...(line.id !== undefined ? { id: line.id || null } : {}),
@@ -167,25 +166,5 @@ export function linesToPayload(items: PurchaseLineForm[]) {
     unit: line.unit,
     quantity: Number(line.quantity),
     unitPrice: toMoneyValue(line.unitPrice) ?? "0.00",
-    lotNo: line.lotNo.trim() || null,
-    expiresAt: line.expiresAt || null,
   }));
-}
-
-/** Son kullanılan KDV oranı firma bazında hatırlanır (tarayıcıda; yalnız öneri). */
-export function readRememberedKdv(firmaId: string): string | null {
-  try {
-    const value = window.localStorage.getItem(`cepklinik:purchase-kdv:${firmaId}`);
-    return value && (KDV_OPTIONS as readonly string[]).includes(value) ? value : null;
-  } catch {
-    return null;
-  }
-}
-
-export function rememberKdv(firmaId: string, kdv: string) {
-  try {
-    window.localStorage.setItem(`cepklinik:purchase-kdv:${firmaId}`, kdv);
-  } catch {
-    // Depolama kapalıysa öneri yalnız bu oturumda olmaz; kayıt etkilenmez.
-  }
 }

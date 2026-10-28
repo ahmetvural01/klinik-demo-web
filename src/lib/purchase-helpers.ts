@@ -25,7 +25,7 @@ export async function resolveOrCreateStockItem(
       where: { id: item.stockItemId, ...(institutionId ? { institutionId } : {}), branchId },
     });
     if (!existing) throw new BusinessRuleError("Seçilen stok kalemi bulunamadı.", 404);
-    if (!existing.isActive) throw new BusinessRuleError(`Pasif stok kalemi kullanılamaz: ${existing.name}`, 409);
+    if (!existing.isActive) throw new BusinessRuleError(`"${existing.name}" arşivde; önce Stok'ta “Arşiv” sekmesinden geri alın.`, 409);
     return { id: existing.id, name: existing.name, unit: existing.unit };
   }
 

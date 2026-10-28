@@ -20,13 +20,11 @@ import {
   type ClinicUnit,
 } from "@/components/randevu/appointment-utils";
 import type { AppointmentFormInitial, AppointmentFormSaved } from "@/components/randevu/AppointmentFormModal";
-import { useAnnouncements, useHomeSummary, useLiveRefresh, useTeamMessages } from "./_components/home-data";
+import { useHomeSummary, useLiveRefresh } from "./_components/home-data";
 import { dayLabelOf, msUntilNextTurkeyMidnight, shiftDateKey, todayKeyTR } from "./_components/home-utils";
 import { TodoList } from "./_components/TodoList";
 import { TodayAppointments } from "./_components/TodayAppointments";
 import { OpenPastModal } from "./_components/OpenPastModal";
-import { AnnouncementsCard } from "./_components/Announcements";
-import { TeamMessages } from "./_components/TeamMessages";
 import { HOME_GRID, HOME_MAIN, HOME_SIDE_PANEL, HOME_SIDE_SECTION, HOME_TODO_ORDER } from "./_components/home-layout";
 
 // Randevu formu yalnız açılınca yüklenir (ilk açılışı ağırlaştırmasın).
@@ -42,7 +40,9 @@ type FormState = { mode: "create" | "edit"; appointment?: Appointment | null; in
 
 /**
  * Ana sayfa — "Bugün kim gelecek, kim bekliyor, benim ne yapmam gerekiyor?"
- * Başlık + Yapılacaklar + Bugünkü randevular + Duyurular + Ekip mesajları.
+ * Başlık + Bekleyen işler + Bugünkü randevular. Klinik içi duyuru ve ekip
+ * mesajları kaldırıldı (ürün sahibi: gereksiz); platform duyuruları (bakım vb.)
+ * her sayfanın üstünde tek satır görünür (PlatformNotices).
  * Bölümler yetkiye göre: randevu listesi randevuları görebilenlere (eylemler
  * yalnız randevu verebilenlere), taksit ve
  * tahsilat finans merkezine erişenlere; doktor kendi randevularını ve lab
@@ -53,17 +53,13 @@ type FormState = { mode: "create" | "edit"; appointment?: Appointment | null; in
 export default function AnasayfaPage() {
   // Oturumdaki kullanıcı: panel düzeni verirse hemen (liste özet isteğini
   // beklemez), yoksa özet yanıtından.
-  const { can, scopeKey, userId: contextUserId, ghost: contextGhost } = usePermissions();
+  const { can, userId: contextUserId } = usePermissions();
   // Bugünkü randevu listesi randevuları GÖREBİLEN herkese (eski ana sayfa da
   // okuma iznine bakıyordu); "Yeni randevu", Geldi/Tamamlandı ve açık kalan
   // randevuları kapatma yalnız yazma izniyle. Salt okuyan rol listeyi
   // eylemsiz görür (AgendaList/AppointmentDetailModal canCreate=false).
   const canReadAppointments = can("appointments:read");
   const canWriteAppointments = can("appointments:write");
-  const canReadMessages = can("messages:read");
-  const canWriteMessages = can("messages:write");
-  const canReadAnnouncements = can("announcements:read");
-  const canWriteAnnouncements = can("announcements:write");
   const canSeeCollections = can("finance:center") && can("payments:read");
 
   const appointmentPermissions = useMemo<AppointmentPermissions>(() => ({
@@ -118,8 +114,6 @@ export default function AnasayfaPage() {
   const navigateDay = useCallback((offset: number) => setDayNav({ base: todayKey, offset }), [todayKey]);
 
   const summary = useHomeSummary();
-  const messages = useTeamMessages(canReadMessages);
-  const announcements = useAnnouncements(canReadAnnouncements);
   const [agendaRefresh, setAgendaRefresh] = useState(0);
   const reloadSummary = summary.reload;
 
@@ -136,21 +130,6 @@ export default function AnasayfaPage() {
     void reloadSummary();
     setAgendaRefresh((value) => value + 1);
   });
-
-  // Ekip mesajları / duyurular yalnız özetteki sürümleri değişince yeniden istenir.
-  const messagesVersion = summary.data?.versions?.messages;
-  const announcementsVersion = summary.data?.versions?.announcements;
-  const reloadMessages = messages.reload;
-  const reloadAnnouncements = announcements.reload;
-  const versionsRef = useRef<{ messages?: string; announcements?: string } | null>(null);
-  useEffect(() => {
-    if (messagesVersion === undefined && announcementsVersion === undefined) return;
-    const previous = versionsRef.current;
-    versionsRef.current = { messages: messagesVersion, announcements: announcementsVersion };
-    if (!previous) return;
-    if (messagesVersion !== previous.messages) void reloadMessages();
-    if (announcementsVersion !== previous.announcements) void reloadAnnouncements();
-  }, [announcementsVersion, messagesVersion, reloadAnnouncements, reloadMessages]);
 
   // Takvim ayarları: tedavi adları/renkleri, doktorlar, randevu süresi (Randevular sayfasıyla ortak önbellek).
   const [calendar, setCalendar] = useState<CalendarSettings | null>(null);
@@ -247,9 +226,6 @@ export default function AnasayfaPage() {
     }
   }, [canWriteAppointments, hashRequested, openPastCount, summarySettled]);
 
-  // Görünmez (destek) oturumu panel düzeninden hemen bilinir: mesaj ve duyuru
-  // yazma kutusu özet gelene kadar bir an görünüp kaybolmaz.
-  const ghost = contextGhost || Boolean(summary.data?.viewer.ghost);
   // Bugünkü tahsilat: yüklenirken yer tutucu (başlık zıplamasın); alınamazsa hiç
   // gösterilmez — bilinmeyen tutar "₺0,00" yazılmaz.
   const collections = summary.data?.collectionsToday;
@@ -264,12 +240,7 @@ export default function AnasayfaPage() {
   // çizilir: doktorun listesi önce "Tüm doktorlar" sonra "Benim" olarak zıplamasın.
   const agendaReady = calendarSettled && (Boolean(viewerId) || Boolean(summary.data) || Boolean(summary.error));
 
-  // Duyurusu olmayan ve duyuru ekleyemeyen kullanıcıya boş bölüm gösterilmez.
-  const canCreateAnnouncements = canWriteAnnouncements && !ghost;
-  const showAnnouncements = canReadAnnouncements
-    && !(!canCreateAnnouncements && announcements.data?.length === 0 && !announcements.error);
-  // Sağ sütun: Yapılacaklar, Duyurular ve Ekip mesajları geniş ekranda TEK
-  // kartın bölümleri; dar ekranda ayrı kartlar (bkz. home-layout.ts).
+  // Sağ sütun: Bekleyen işler (geniş ekranda randevuların yanında, dar ekranda üstünde).
   const sidePanel = (
     <div className={canReadAppointments ? HOME_SIDE_PANEL : "grid gap-4"}>
       <TodoList
@@ -281,34 +252,6 @@ export default function AnasayfaPage() {
         onOpenPast={() => setOpenPastOpen(true)}
         className={canReadAppointments ? `${HOME_SIDE_SECTION} ${HOME_TODO_ORDER}` : ""}
       />
-      {showAnnouncements && (
-        <AnnouncementsCard
-          items={announcements.data}
-          loading={announcements.loading}
-          error={announcements.error}
-          onRetry={() => void reloadAnnouncements()}
-          update={announcements.update}
-          canCreate={canCreateAnnouncements}
-          canRemove={canWriteAnnouncements}
-          todayKey={todayKey}
-          className={canReadAppointments ? HOME_SIDE_SECTION : ""}
-        />
-      )}
-      {canReadMessages && (
-        <TeamMessages
-          messages={messages.data}
-          loading={messages.loading}
-          error={messages.error}
-          onRetry={() => void reloadMessages()}
-          update={messages.update}
-          canSend={canWriteMessages && !ghost}
-          ghost={ghost}
-          viewerId={viewerId}
-          scopeKey={scopeKey}
-          todayKey={todayKey}
-          className={canReadAppointments ? HOME_SIDE_SECTION : ""}
-        />
-      )}
     </div>
   );
 
@@ -325,7 +268,7 @@ export default function AnasayfaPage() {
       {canReadAppointments ? (
         // Geniş ekranda (1360 px+, ör. 1366/1440/1920 klinik ekranları) randevular
         // solda, sağ sütun tek kart; daha dar ekranda tek sütun:
-        // Yapılacaklar → randevular → duyurular ve mesajlar.
+        // Bekleyen işler → randevular → duyurular ve mesajlar.
         <div className={HOME_GRID}>
           <TodayAppointments
             className={HOME_MAIN}

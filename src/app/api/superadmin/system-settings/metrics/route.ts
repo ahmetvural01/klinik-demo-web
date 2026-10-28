@@ -7,8 +7,7 @@ import { evaluateSystemAlerts } from "@/lib/system-alerts";
 // /api/system/metrics ve /alerts da yalnız süperadmine açık; ama o yollar
 // süperadmin yüzeyi sayılmadığı için tarayıcıda açık bir gizli klinik girişi
 // (ghost çerezi) varsa onun kimliği (klinik yöneticisi) okunuyor, sekme 403
-// alıyordu. /api/superadmin altı her zaman süperadminin kendi oturumunu okur
-// ve "settings" modül yetkisine bağlıdır (bkz. lib/superadmin-modules).
+// alıyordu. /api/superadmin altı her zaman süperadminin kendi oturumunu okur.
 export async function GET() {
   const auth = await requireAuth("superadmin");
   if (auth.error) return auth.error;

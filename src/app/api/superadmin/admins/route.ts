@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { invalidateUserSessionCache, requireAuth, writeAudit } from "@/lib/api";
-import { DEFAULT_SUPERADMIN_MODULES } from "@/lib/superadmin-modules";
 import { isValidTurkishIdentityNumber } from "@/lib/tc-kimlik";
 
 export async function GET() {
@@ -53,7 +52,6 @@ export async function POST(request: NextRequest) {
   const identityNo = body.identityNo?.trim() || "";
   const password = body.password || "";
   const email = body.email?.trim() || null;
-  const modules = DEFAULT_SUPERADMIN_MODULES;
 
   if (!fullName || !identityNo || password.length < 8 || password.length > 72) {
     return NextResponse.json({ message: "Ad soyad, TC kimlik no ve 8-72 karakter şifre zorunlu" }, { status: 400 });
@@ -85,13 +83,7 @@ export async function POST(request: NextRequest) {
       institutionId: null,
       passwordHash,
       isActive: true,
-      superadminPermission: {
-        create: {
-          modules,
-        },
-      },
     },
-    include: { superadminPermission: true },
   });
 
   await writeAudit(auth.user.id, "SUPERADMIN_CREATE", `Yeni platform yöneticisi eklendi: ${user.fullName}`);
@@ -101,7 +93,6 @@ export async function POST(request: NextRequest) {
     fullName: user.fullName,
     email: user.email,
     isActive: user.isActive,
-    modules,
   });
 }
 
@@ -125,7 +116,7 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ message: "Şifre 8-72 karakter olmalı" }, { status: 400 });
   }
 
-  const target = await prisma.user.findUnique({ where: { id: body.id }, include: { superadminPermission: true } });
+  const target = await prisma.user.findUnique({ where: { id: body.id } });
   if (!target || target.role !== "SUPERADMIN") {
     return NextResponse.json({ message: "Kullanıcı bulunamadı" }, { status: 404 });
   }

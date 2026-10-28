@@ -12,7 +12,7 @@ export const MANAGEABLE_ROLES: Role[] = [
 // görünür; aşağıdaki varsayılan matrisle aynı şeyi söylemelidir.
 export const ROLE_META: Record<string, { label: string; color: string; description: string }> = {
   YONETICI: { label: "Yönetici", color: "violet", description: "Klinik sahibi ya da yöneticisi — personel, ayarlar, finans, raporlar ve işlem kayıtları dahil her şey." },
-  DOKTOR:   { label: "Doktor",   color: "blue",   description: "Diş hekimi — takvim, muayene ve tedavi kaydı, tedavi planı, reçete, laboratuvar, röntgen, onam ve kendi hakedişi. Tahsilat, Muhasebe ekranı, randevu iptali ve hasta telefonu/TC kapalı." },
+  DOKTOR:   { label: "Doktor",   color: "blue",   description: "Diş hekimi — takvim, muayene ve tedavi kaydı (planlanan ve yapılan, tedavi teklifi), reçete, laboratuvar, röntgen, onam ve kendi hakedişi. Tahsilat, Muhasebe ekranı, randevu iptali ve hasta telefonu/TC kapalı." },
   ASISTAN:  { label: "Asistan",  color: "teal",   description: "Hekim asistanı — randevu ve online talepler, hasta kaydı, hasta aramaları, hasta dosyasından tahsilat, röntgen/belge yükleme ve onam, laboratuvar işi, stok kullanımı. Tedavi kaydını ve reçeteyi hekim yazar; Muhasebe ekranı, tahsilat iptali ve taksit planı kapalı." },
   BANKO:    { label: "Banko",    color: "amber",  description: "Resepsiyon — hasta kaydı, randevu ve online talepler, hasta aramaları, tahsilat ve taksit planı, gün kasası, SMS/WhatsApp, onam ve belge, laboratuvar teslimi. Tedavi, reçete ve röntgen kayıtları, tahsilat iptali, gider ve hakediş kapalı." },
   MUHASEBE: { label: "Muhasebe", color: "emerald", description: "Muhasebe — tahsilat ve iptali, gider, tedarikçi ödemesi ve satın alma, alacak ve taksitler, hakediş, raporlar ve dışa aktarma. Hasta dosyası, randevu ve klinik (sağlık) bilgileri, fiyat değiştirme kapalı." },
@@ -38,9 +38,8 @@ export type PermissionDetail = {
 export const PERMISSION_GROUPS: PermissionGroup[] = [
   // ── KLİNİK ──────────────────────────────────────────────────────────────
   { key: "appointments",   icon: "📅", category: "klinik",   label: "Randevular",               permissions: ["appointments:read", "appointments:write", "appointments:delete", "appointments:approve"] },
-  { key: "patients",       icon: "🧑‍⚕️", category: "klinik",  label: "Hastalar",                 permissions: ["patients:read", "patients:write", "patients:delete", "patients:phone", "patients:merge"] },
+  { key: "patients",       icon: "🧑‍⚕️", category: "klinik",  label: "Hastalar",                 permissions: ["patients:read", "patients:write", "patients:delete", "patients:phone"] },
   { key: "examinations",   icon: "🔬", category: "klinik",   label: "Muayene ve tedavi kaydı",  permissions: ["examinations:read", "examinations:write", "examinations:delete"] },
-  { key: "treatment",      icon: "🦷", category: "klinik",   label: "Tedavi planları",          permissions: ["treatment:read", "treatment:write", "treatment:delete", "treatment:approve"] },
   { key: "prescriptions",  icon: "💊", category: "klinik",   label: "Reçete",                   permissions: ["prescriptions:read", "prescriptions:write", "prescriptions:print"] },
   { key: "lab",            icon: "🧪", category: "klinik",   label: "Laboratuvar",              permissions: ["lab:read", "lab:write", "lab:delete", "lab:complete"] },
   { key: "xray",           icon: "🩻", category: "klinik",   label: "Röntgen ve fotoğraf",      permissions: ["xray:read", "xray:write", "xray:delete"] },
@@ -54,18 +53,16 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
   { key: "earnings",       icon: "🩺", category: "finans",   label: "Hakediş",                  permissions: ["earnings:read"] },
   { key: "stock",          icon: "📦", category: "finans",   label: "Stok",                     permissions: ["stock:read", "stock:write", "stock:delete"] },
   { key: "prices",         icon: "💰", category: "finans",   label: "Fiyat listesi",            permissions: ["prices:read", "prices:write"] },
-  { key: "reports",        icon: "📈", category: "finans",   label: "Raporlar",                 permissions: ["reports:read", "reports:write", "reports:export"] },
+  { key: "reports",        icon: "📈", category: "finans",   label: "Raporlar",                 permissions: ["reports:read", "reports:export"] },
   // ── YÖNETİM ─────────────────────────────────────────────────────────────
   { key: "staff",          icon: "👥", category: "yonetim",  label: "Personel",                 permissions: ["staff:read", "staff:write", "staff:delete", "staff:schedule"] },
   { key: "dashboard",      icon: "🏠", category: "yonetim",  label: "Ana sayfa",                permissions: ["dashboard:read", "dashboard:stats"] },
-  { key: "audit",          icon: "🔍", category: "yonetim",  label: "İşlem kayıtları",          permissions: ["audit:read", "audit:export"] },
+  { key: "audit",          icon: "🔍", category: "yonetim",  label: "İşlem kayıtları",          permissions: ["audit:read"] },
   { key: "branches",       icon: "🏥", category: "yonetim",  label: "Şube erişimi",             permissions: ["branches:assign"] },
   // ── İLETİŞİM ────────────────────────────────────────────────────────────
   { key: "sms",            icon: "📱", category: "iletisim", label: "İletişim (SMS)",           permissions: ["sms:read", "sms:write", "sms:bulk"] },
   { key: "whatsapp",       icon: "💚", category: "iletisim", label: "WhatsApp",                 permissions: ["whatsapp:read", "whatsapp:write"] },
-  { key: "messages",       icon: "💬", category: "iletisim", label: "Ekip mesajları",           permissions: ["messages:read", "messages:write"] },
-  { key: "announcements",  icon: "📢", category: "iletisim", label: "Duyurular",                permissions: ["announcements:read", "announcements:write"] },
-  { key: "support",        icon: "🎧", category: "iletisim", label: "Destek",                   permissions: ["support:read", "support:write", "support:close"] },
+  { key: "support",        icon: "🎧", category: "iletisim", label: "Destek",                   permissions: ["support:read", "support:write"] },
   // ── SİSTEM ──────────────────────────────────────────────────────────────
   { key: "settings",       icon: "⚙️", category: "sistem",  label: "Ayarlar",                  permissions: ["settings:read", "settings:write"] },
   { key: "profile",        icon: "👤", category: "sistem",  label: "Profilim",                 permissions: ["profile:read", "profile:write", "profile:password"] },
@@ -93,16 +90,14 @@ export const PERMISSION_DETAILS: Record<string, PermissionDetail> = {
   "patients:write":         { code: "patients:write",         risk: "orta",    title: "Hastalar — Kayıt ve düzenleme",               description: "Yeni hasta açar; kişisel bilgileri, anamnezi ve hasta notunu günceller; SMS izin bağlantısını yeniden gönderir." },
   "patients:delete":        { code: "patients:delete",        risk: "yuksek",  title: "Hastalar — Arşivleme",                        description: "Hasta kaydını klinik geçmişiyle birlikte aktif listelerden arşive alır ve arşivden geri açar." },
   "patients:phone":         { code: "patients:phone",         risk: "yuksek",  title: "Hastalar — Telefon ve TC görme",              description: "Hasta telefonunu ve TC kimlik numarasını maskesiz gösterir (hasta, randevu, arama ve alacak listeleri). İzin yoksa sunucu bu alanları “***” olarak döndürür." },
-  "patients:merge":         { code: "patients:merge",         risk: "yuksek",  title: "Hastalar — Kayıt birleştirme",                description: "Mükerrer hasta kayıtlarını tek kayıtta birleştirir. Geri alınamaz. Şu an etkisiz: birleştirme işlemi henüz yok." },
   // ── MUAYENE ──────────────────────────────────────────────────────────────
   "examinations:read":      { code: "examinations:read",      risk: "orta",    title: "Muayene ve tedavi — Görüntüleme",             description: "Hastanın tedavi kalemlerini (diş, işlem, tutar, durum) ve klinik notlarını görür." },
   "examinations:write":     { code: "examinations:write",     risk: "orta",    title: "Muayene ve tedavi — Kayıt",                   description: "Tedavi kalemi ekler ve günceller; tutar hastanın borcuna yansır. Doğru fiyat için kliniğin fiyat listesini de okur." },
   "examinations:delete":    { code: "examinations:delete",    risk: "yuksek",  title: "Muayene ve tedavi — İptal",                   description: "Tedavi kaydını geçmişi ve denetim izi korunarak iptal eder." },
   // ── TEDAVİ PLANI ─────────────────────────────────────────────────────────
-  "treatment:read":         { code: "treatment:read",         risk: "orta",    title: "Tedavi planları — Görüntüleme",               description: "Hastanın tedavi planını, diş bazlı adımları ve plan tutarını görür." },
-  "treatment:write":        { code: "treatment:write",        risk: "orta",    title: "Tedavi planları — Oluşturma ve düzenleme",    description: "Tedavi planı oluşturur, plana adım ekler ve adımların durumunu günceller." },
-  "treatment:delete":       { code: "treatment:delete",       risk: "yuksek",  title: "Tedavi planları — İptal",                     description: "Tamamlanmamış tedavi planını geçmişiyle birlikte iptal eder." },
-  "treatment:approve":      { code: "treatment:approve",      risk: "yuksek",  title: "Tedavi planları — Yönetici onayı",            description: "Hazırlanan tedavi planını yönetici onayından geçirip hastaya sunar. Şu an etkisiz: plan onay adımı henüz hiçbir ekranda ve işlemde denetlenmiyor." },
+  // Ayrı tedavi planı kaldırıldı: plan, hasta dosyasının Tedavi sekmesindeki
+  // "Planlanan tedaviler" listesidir ve "Muayene ve tedavi" izinlerine bağlıdır.
+  // Kodlar ve rol varsayılanları kayıtlı matrisler bozulmasın diye duruyor.
   // ── REÇETE ───────────────────────────────────────────────────────────────
   "prescriptions:read":     { code: "prescriptions:read",     risk: "orta",    title: "Reçete — Görüntüleme",                        description: "Hastaya yazılan reçeteleri ve ilaçları görür." },
   "prescriptions:write":    { code: "prescriptions:write",    risk: "orta",    title: "Reçete — Yazma ve iptal",                     description: "Reçete yazar (ilaç, doz, not) ve yazılmış reçeteyi iptal eder." },
@@ -146,13 +141,12 @@ export const PERMISSION_DETAILS: Record<string, PermissionDetail> = {
   // ── STOK ─────────────────────────────────────────────────────────────────
   "stock:read":             { code: "stock:read",             risk: "dusuk",   title: "Stok — Görüntüleme",                          description: "Ürünleri, stok miktarlarını ve kritik stok uyarılarını görür. Maliyet yalnız finans izniyle görünür." },
   "stock:write":            { code: "stock:write",            risk: "orta",    title: "Stok — Ürün ve hareket",                      description: "Ürün ekler ve düzenler, stok girişi ve kullanım (çıkış) kaydeder. Satın alma için ayrıca finans yazma izni gerekir." },
-  "stock:delete":           { code: "stock:delete",           risk: "yuksek",  title: "Stok — Ürünü pasife alma",                    description: "Stok kartını hareket ve lot geçmişi korunarak pasife alır, gerekirse geri açar." },
+  "stock:delete":           { code: "stock:delete",           risk: "yuksek",  title: "Stok — Ürünü pasife alma",                    description: "Stok kartını hareket geçmişi korunarak pasife alır, gerekirse geri açar." },
   // ── FİYAT LİSTESİ ────────────────────────────────────────────────────────
   "prices:read":            { code: "prices:read",            risk: "dusuk",   title: "Fiyat listesi — Görüntüleme",                 description: "Kliniğin tedavi ve hizmet fiyatlarını görür." },
   "prices:write":           { code: "prices:write",           risk: "yuksek",  title: "Fiyat listesi — Düzenleme",                   description: "Fiyat ekler ve günceller; kliniğin fiyat listesini değiştirir." },
   // ── RAPORLAR ─────────────────────────────────────────────────────────────
   "reports:read":           { code: "reports:read",           risk: "orta",    title: "Raporlar — Görüntüleme",                      description: "Gelir-gider, alacak, hekim ve işlem raporlarını açar." },
-  "reports:write":          { code: "reports:write",          risk: "orta",    title: "Raporlar — Özel rapor",                       description: "Özel rapor parametrelerini belirler ve özel rapor oluşturur. Şu an etkisiz: özel rapor özelliği henüz yok." },
   "reports:export":         { code: "reports:export",         risk: "yuksek",  title: "Raporlar — Dışa aktarma",                     description: "Raporları Excel, PDF veya CSV olarak indirir. Toplu hasta verisi içerebilir." },
   // ── PERSONEL ─────────────────────────────────────────────────────────────
   "staff:read":             { code: "staff:read",             risk: "orta",    title: "Personel — Liste",                            description: "Personel listesini, rollerini ve çalışma saatlerini görür. Randevu, lab ve reçete formlarındaki hekim seçimi de bu listeyi kullanır." },
@@ -161,23 +155,15 @@ export const PERMISSION_DETAILS: Record<string, PermissionDetail> = {
   "staff:schedule":         { code: "staff:schedule",         risk: "orta",    title: "Personel — Çalışma saatleri",                 description: "Personelin haftalık çalışma saatlerini ve vardiyasını düzenler. Şu an ayrı denetlenmiyor: çalışma saatlerini Personel — Ekleme ve düzenleme izni değiştirir." },
   // ── İŞLEM KAYITLARI ──────────────────────────────────────────────────────
   "audit:read":             { code: "audit:read",             risk: "orta",    title: "İşlem kayıtları — Görüntüleme",               description: "Kim, ne zaman, ne yaptı kayıtlarını, kayıt kontrolünü ve hasta dosyası erişim kaydını görür." },
-  "audit:export":           { code: "audit:export",           risk: "yuksek",  title: "İşlem kayıtları — Dışa aktarma",              description: "İşlem kayıtlarını dışa aktarır; tüm kullanıcı hareketlerini içerir. Şu an etkisiz: klinik panelinde işlem kaydı dışa aktarma henüz yok." },
   // ── İLETİŞİM ─────────────────────────────────────────────────────────────
   "sms:read":               { code: "sms:read",               risk: "dusuk",   title: "İletişim — Gönderim geçmişi",                 description: "Gönderilen SMS ve iletileri, teslim durumlarını, hastaların SMS iznini ve kalan krediyi görür." },
   "sms:write":              { code: "sms:write",              risk: "orta",    title: "İletişim — Tek hastaya mesaj",                description: "Tek hastaya ya da seçili randevulara SMS/ileti gönderir, ileti şablonlarını düzenler. Hasta izni ve kredi kontrolü uygulanır." },
   "sms:bulk":               { code: "sms:bulk",               risk: "yuksek",  title: "İletişim — Toplu gönderim",                   description: "Hasta listesine ya da seçili gruba toplu ileti gönderir; kutlama günü otomatik gönderimlerini açıp kapatır. Hasta izinleri uygulanır." },
   "whatsapp:read":          { code: "whatsapp:read",          risk: "orta",    title: "WhatsApp — Görüşmeler",                       description: "Kliniğin WhatsApp yazışmalarını ve teslim durumlarını görür." },
   "whatsapp:write":         { code: "whatsapp:write",         risk: "orta",    title: "WhatsApp — Mesaj gönderme",                   description: "WhatsApp üzerinden hastaya yazar ve yanıt verir. Kliniğin WhatsApp bağlantısını yalnız Yönetici rolü kurar; WhatsApp’ı açık olmayan klinikte etkisi yoktur." },
-  // ── EKİP MESAJLARI ───────────────────────────────────────────────────────
-  "messages:read":          { code: "messages:read",          risk: "dusuk",   title: "Ekip mesajları — Okuma",                      description: "Ekip içi mesajları okur." },
-  "messages:write":         { code: "messages:write",         risk: "dusuk",   title: "Ekip mesajları — Yazma",                      description: "Ekip içi mesaj yazar, kendi mesajını düzenler ve siler (başkasının mesajını yalnız yönetici)." },
-  // ── DUYURULAR ────────────────────────────────────────────────────────────
-  "announcements:read":     { code: "announcements:read",     risk: "dusuk",   title: "Duyurular — Görüntüleme",                     description: "Klinik ve sistem duyurularını görür." },
-  "announcements:write":    { code: "announcements:write",    risk: "orta",    title: "Duyurular — Yayınlama",                       description: "Duyuru yayınlar, düzenler ve yayından kaldırır." },
   // ── DESTEK ───────────────────────────────────────────────────────────────
   "support:read":           { code: "support:read",           risk: "dusuk",   title: "Destek — Talepleri görme",                    description: "Kliniğin CepKlinik destek taleplerini ve yanıtlarını görür." },
   "support:write":          { code: "support:write",          risk: "orta",    title: "Destek — Talep açma",                         description: "Destek talebi açar; kliniğin taleplerini düzenler ve siler." },
-  "support:close":          { code: "support:close",          risk: "orta",    title: "Destek — Talep kapatma",                      description: "Çözülen talepleri kapatır ve arşivler. Şu an etkisiz: talepleri CepKlinik destek ekibi kapatır." },
   // ── AYARLAR ──────────────────────────────────────────────────────────────
   "settings:read":          { code: "settings:read",          risk: "dusuk",   title: "Ayarlar — Görüntüleme",                       description: "Ayarlar sayfasını açar: klinik bilgileri, çalışma saatleri, tedavi türleri ve üniteler." },
   "settings:write":         { code: "settings:write",         risk: "yuksek",  title: "Ayarlar — Düzenleme",                         description: "Klinik bilgilerini, çalışma saatlerini, tedavi türlerini, üniteleri, POS cihazlarını ve otomatik mesaj ayarlarını değiştirir." },
@@ -207,7 +193,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, string[]> = {
   SUPERADMIN: ["*"],
   YONETICI: ["*"],
   // Diş hekimi: takvim (sonraki seansı verme, Geldi/Tamamlandı), hasta dosyası
-  // ve anamnez, tedavi kaydı, tedavi planı, reçete, lab siparişi, röntgen,
+  // ve anamnez, tedavi kaydı (planlanan ve yapılan), reçete, lab siparişi, röntgen,
   // onam, kontrol araması açma ve kendi hakedişi. Tahsilat/taksit, Muhasebe
   // ekranı, randevu iptali, toplu iletişim ve hasta telefonu/TC kapalı.
   DOKTOR: [
@@ -215,7 +201,6 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, string[]> = {
     "appointments:read", "appointments:write",
     "patients:read", "patients:write",
     "examinations:read", "examinations:write", "examinations:delete",
-    "treatment:read", "treatment:write", "treatment:delete",
     "prescriptions:read", "prescriptions:write", "prescriptions:print",
     "lab:read", "lab:write", "lab:complete", "lab:delete",
     "xray:read", "xray:write", "xray:delete",
@@ -226,8 +211,6 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, string[]> = {
     "prices:read",
     "stock:read",
     "staff:read",
-    "messages:read", "messages:write",
-    "announcements:read",
     "support:read", "support:write",
     "profile:read", "profile:write", "profile:password",
   ],
@@ -242,7 +225,6 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, string[]> = {
     "appointments:read", "appointments:write", "appointments:delete", "appointments:approve",
     "patients:read", "patients:write", "patients:phone",
     "examinations:read",
-    "treatment:read",
     "prescriptions:read", "prescriptions:print",
     "lab:read", "lab:write", "lab:complete",
     "xray:read", "xray:write",
@@ -254,8 +236,6 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, string[]> = {
     "prices:read",
     "stock:read", "stock:write",
     "staff:read",
-    "messages:read", "messages:write",
-    "announcements:read",
     "support:read", "support:write",
     "profile:read", "profile:write", "profile:password",
   ],
@@ -280,8 +260,6 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, string[]> = {
     "whatsapp:read", "whatsapp:write",
     "stock:read", "stock:write",
     "staff:read",
-    "messages:read", "messages:write",
-    "announcements:read",
     "support:read", "support:write",
     "profile:read", "profile:write", "profile:password",
   ],
@@ -296,14 +274,12 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, string[]> = {
     "payments:read", "payments:write", "payments:refund",
     "installments:read", "installments:write", "installments:delete",
     "earnings:read",
-    "reports:read", "reports:write", "reports:export",
+    "reports:read", "reports:export",
     "prices:read",
     "stock:read", "stock:write",
     "patients:phone",
     "staff:read",
     "clinictasks:read", "clinictasks:write", "clinictasks:delete",
-    "messages:read", "messages:write",
-    "announcements:read",
     "support:read", "support:write",
     "profile:read", "profile:write", "profile:password",
   ],

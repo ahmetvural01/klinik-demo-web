@@ -47,7 +47,12 @@ export type LedgerRow = {
   expense?: LedgerExpense;
 };
 
-type Totals = { tahsilat: number; tahsilatCount: number; gider: number; giderCount: number; net: number; byMethod: Record<string, { in: number; out: number }> };
+type Totals = {
+  tahsilat: number; tahsilatCount: number; gider: number; giderCount: number; net: number;
+  byMethod: Record<string, { in: number; out: number }>;
+  /** Kartlı tahsilatın POS'a göre toplamı (hangi POS'tan ne kadar çekildi). */
+  byPos?: Array<{ id: string; name: string; in: number; count: number }>;
+};
 type LedgerResponse = { rows: LedgerRow[]; total: number; page: number; pageCount: number; take: number; truncated: boolean; totals: Totals; sources: { payments: boolean; expenses: boolean } };
 
 /** "IPTAL": dönemde iptal edilmiş tahsilat ve giderler (salt okunur iz). */
@@ -83,16 +88,16 @@ function rowTitle(row: LedgerRow) {
 }
 
 /**
- * İkinci satır: tahsilatta doktor ve not, giderde not ve fatura no, firma ve
- * hakediş ödemesinde türü. Önceden her tahsilatta "Tahsilat", her giderde
- * "Klinik gideri" sabit metni tekrar ediyordu; fatura no hiç görünmüyordu.
+ * İkinci satır: tahsilatta doktor ve not, giderde not, firma ve hakediş
+ * ödemesinde türü. Önceden her tahsilatta "Tahsilat", her giderde "Klinik
+ * gideri" sabit metni tekrar ediyordu. Fatura no gösterilmez (faturalı /
+ * faturasız ayrımı yok — ürün sahibinin kararı).
  * `hideDoctor`: bütün tahsilatlar aynı doktordaysa ad satırlarda tekrar
  * etmez (özetteki "Tahsilat" ipucunda bir kez yazar).
  */
 function rowDetail(row: LedgerRow, hideDoctor = false) {
-  const faturaNo = row.expense?.faturaNo ? `Fatura ${row.expense.faturaNo}` : "";
   if (row.subtype === "tahsilat") return [hideDoctor ? "" : doctorLabel(row.doctor), row.note].filter(Boolean).join(" · ");
-  if (row.subtype === "gider") return [row.note, faturaNo].filter(Boolean).join(" · ");
+  if (row.subtype === "gider") return row.note || "";
   if (row.subtype === "firma") return ["Firma ödemesi", row.note].filter(Boolean).join(" · ");
   return [row.item, row.note].filter(Boolean).join(" · ");
 }
@@ -213,6 +218,33 @@ export function LedgerTab({
     showToastSafe({ title: "İptal edilemedi", message: body?.message || body?.error || "Bağlantınızı kontrol edip tekrar deneyin.", type: "error", duration: 6000 });
   };
 
+  // Tedarikçi ödemesi Muhasebe'den de iptal edilir: tedarikçi sayfasıyla aynı
+  // uç (ödeme kaydı + "Firma Ödemesi" gideri birlikte geri alınır, borç artar).
+  const cancelFirmPayment = async (row: LedgerRow) => {
+    const islemId = row.expense?.sourceId;
+    if (!row.whoId || !islemId) return;
+    const confirmed = await confirmDialog({
+      title: "Tedarikçi ödemesi iptal edilsin mi?",
+      message: `${row.who || "Tedarikçi"} — ${money(row.amount)} ödeme iptal edilir; tedarikçinin kalan borcu bu kadar artar.`,
+      danger: true,
+      confirmText: "Ödemeyi iptal et",
+      cancelText: "Vazgeç",
+    });
+    if (!confirmed) return;
+    const response = await fetch(`/api/firma/${encodeURIComponent(row.whoId)}/islemler/${encodeURIComponent(islemId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "IPTAL" }),
+    }).catch(() => null);
+    if (response?.ok) {
+      showToastSafe({ message: "Tedarikçi ödemesi iptal edildi.", type: "success" });
+      onChanged();
+      return;
+    }
+    const body = await response?.json().catch(() => null);
+    showToastSafe({ title: "İptal edilemedi", message: body?.message || body?.error || "Bağlantınızı kontrol edip tekrar deneyin.", type: "error", duration: 6000 });
+  };
+
   // ── Dışa aktarma: seçili dönem ve süzgeçlerin TÜM kayıtları (sunucu finance:export ister).
   const fetchAllRows = async (): Promise<LedgerRow[]> => {
     if (!query) throw new Error("Önce geçerli bir dönem seçin.");
@@ -229,7 +261,6 @@ export function LedgerTab({
     Doktor: row.doctor || "",
     Açıklama: row.note || "",
     Yöntem: methodLabel(row.method),
-    "Fatura no": row.expense?.faturaNo || "",
     Tutar: `${row.kind === "TAHSILAT" ? "" : "-"}${row.amount.toFixed(2).replace(".", ",")}`,
   }));
   const fileBase = range ? `gelir-gider-${range.from}-${range.to}` : "gelir-gider";
@@ -254,8 +285,8 @@ export function LedgerTab({
         ? `${formatRangeLabel(range)} · İptal edilen kayıtlar toplamlara girmez`
         : `${formatRangeLabel(range)} · Tahsilat ${money(totals?.tahsilat)} · Gider ${money(totals?.gider)} · Fark ${money(totals?.net)}`,
     );
-    addPdfSection(doc, 28, "Hareketler", ["Tarih", "Kim", "Kalem", "Doktor", "Açıklama", "Yöntem", "Fatura no", "Tutar"],
-      exportRows(rows).map((row) => [row.Tarih, row.Kim, row.Kalem, row.Doktor, row.Açıklama, row.Yöntem, row["Fatura no"], row.Tutar]));
+    addPdfSection(doc, 28, "Hareketler", ["Tarih", "Kim", "Kalem", "Doktor", "Açıklama", "Yöntem", "Tutar"],
+      exportRows(rows).map((row) => [row.Tarih, row.Kim, row.Kalem, row.Doktor, row.Açıklama, row.Yöntem, row.Tutar]));
     doc.save(`${fileBase}.pdf`);
   };
 
@@ -280,18 +311,17 @@ export function LedgerTab({
   const rowMenu = (row: LedgerRow) => {
     if (row.voided) return null;
     if (row.locked) {
-      return row.whoId ? (
-        <ActionMenu
-          label={`${rowTitle(row)} için işlemler`}
-          items={[{
-            key: "firma",
-            label: "Firma ekstresinde aç",
-            description: "Firma ödemesi orada düzenlenir ve iptal edilir",
-            icon: ExternalLink,
-            href: `/firma-detay?id=${encodeURIComponent(row.whoId)}`,
-          }]}
-        />
-      ) : null;
+      if (!row.whoId) return null;
+      const firmItems: ActionMenuItem[] = [{
+        key: "firma",
+        label: "Tedarikçi sayfasında aç",
+        icon: ExternalLink,
+        href: `/firma-detay?id=${encodeURIComponent(row.whoId)}`,
+      }];
+      if (canWriteFinance && row.expense?.sourceId) {
+        firmItems.push({ key: "iptal", label: "Ödemeyi iptal et", icon: Ban, danger: true, separatorBefore: true, onSelect: () => void cancelFirmPayment(row) });
+      }
+      return <ActionMenu label={`${rowTitle(row)} için işlemler`} items={firmItems} />;
     }
     const items: ActionMenuItem[] = [];
     if (canEdit(row)) items.push({ key: "edit", label: "Düzenle", icon: Pencil, onSelect: () => openRow(row) });
@@ -359,8 +389,10 @@ export function LedgerTab({
   const methodEntries = totals && !cancelledView
     ? Object.entries(totals.byMethod).filter(([, value]) => value.in > 0 || value.out > 0)
     : [];
-  // Birden çok yöntem varsa nakit hücresi "Yönteme göre dağılım"ı açıp kapatır (ayrı kutu yok).
-  const canShowMethods = methodEntries.length > 1;
+  // POS'a göre kartlı tahsilat (gün sonu / ay sonu: hangi POS'tan ne kadar çekildi).
+  const posEntries = totals && !cancelledView ? (totals.byPos || []).filter((entry) => entry.in > 0) : [];
+  // Birden çok yöntem ya da POS kaydı varsa nakit hücresi dağılımı açıp kapatır (ayrı kutu yok).
+  const canShowMethods = methodEntries.length > 1 || posEntries.length > 0;
   const showMethods = canShowMethods && methodsOpen;
   const stats: StatItem[] = cancelledView ? [] : [
     // Sıfır tutar işaretsiz ve renksiz ("−₺0,00" kırmızı görünmesin).
@@ -376,7 +408,7 @@ export function LedgerTab({
       // varsa ipucu dağılımı açar (nakdin giren/çıkanı dağılım satırında yazar).
       hint: canShowMethods ? (
         <span className="inline-flex items-center gap-0.5 font-semibold text-primary">
-          Yönteme göre dağılım
+          {posEntries.length > 0 ? "Yöntem ve POS dağılımı" : "Yönteme göre dağılım"}
           <ChevronDown className={`h-3 w-3 shrink-0 transition-transform ${showMethods ? "rotate-180" : ""}`} aria-hidden="true" />
         </span>
       ) : showOut && cash.out > 0 ? `+${money(cash.in)} · −${money(cash.out)}` : undefined,
@@ -435,7 +467,7 @@ export function LedgerTab({
         <SearchInput
           value={search}
           onChange={setSearch}
-          placeholder={showExpenses ? "Hasta, firma, gider türü veya fatura no ara" : "Hasta, doktor veya açıklama ara"}
+          placeholder={showExpenses ? "Hasta, firma veya gider türü ara" : "Hasta, doktor veya açıklama ara"}
           wrapperClassName="flex-1 min-w-[220px]"
         />
       </Toolbar>
@@ -469,6 +501,17 @@ export function LedgerTab({
                 </span>
               </span>
             ))}
+            {posEntries.length > 0 && (
+              <span className="flex basis-full flex-wrap items-baseline gap-x-4 gap-y-1">
+                <span className="font-semibold text-slate-500">POS&apos;a göre</span>
+                {posEntries.map((entry) => (
+                  <span key={entry.id} className="inline-flex items-baseline gap-1.5 whitespace-nowrap">
+                    <span>{entry.name}</span>
+                    <span className="font-semibold tabular-nums text-emerald-700">+{money(entry.in)}</span>
+                  </span>
+                ))}
+              </span>
+            )}
           </div>
         ) : undefined}
         rows={invalidPeriod ? [] : data?.rows || []}

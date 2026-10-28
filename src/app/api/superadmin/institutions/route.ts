@@ -43,7 +43,6 @@ export async function GET(request: NextRequest) {
         isDemo: true,
         demoExpiresAt: true,
         adsEnabled: true,
-        adIntensity: true,
         whatsappEnabled: true,
         createdAt: true,
         owner: { select: { fullName: true } },
