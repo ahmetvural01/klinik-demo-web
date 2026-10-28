@@ -7,6 +7,7 @@
 import { TOOTH_STATUS_LABELS, type ToothStatus } from "@/components/ToothChart";
 import { formatDateText } from "@/components/ui/Money";
 import { formatPhoneNumber } from "@/lib/format";
+import { escapeHtml, letterheadFooterHtml, letterheadHtml, printDocument } from "@/lib/print-letterhead";
 import type { ClinicLetterhead } from "./clinic-letterhead";
 import {
   ageFrom,
@@ -26,38 +27,36 @@ import {
   type TaksitPlan,
 } from "./patient-file-shared";
 
-export function escapeHtml(value: unknown) {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
+export { escapeHtml };
 
 const date = (value?: string | null) => (value ? formatDateText(value) : "—");
 
 export type PrintContext = { data: PatientDetailData; clinic: ClinicLetterhead; hidePhone: boolean };
 
-function printHtml(body: string) {
-  const el = document.getElementById("ks-print-area");
-  if (!el) return;
-  el.innerHTML = `<div class="ks-page"><div class="ks-frame">${body}</div></div>`;
-  window.setTimeout(() => {
-    window.print();
-    window.setTimeout(() => { el.innerHTML = ""; }, 1000);
-  }, 150);
+// Belgenin gövde stili (antet ve altbilgi ortak: src/lib/print-letterhead.ts).
+const DOC_CSS = `
+  .ks-doc { display: flex; flex-direction: column; min-height: 268mm; }
+  .patient-bar { background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 4px; padding: 5px 10px; display: flex; gap: 18px; flex-wrap: wrap; font-size: 9.5px; color: #475569; }
+  .patient-bar strong { color: #1e293b; }
+  .content { padding: 8px 0; flex: 1; }
+  .sec-title { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #1e3a5f; border-bottom: 1px solid #1e3a5f; padding-bottom: 3px; margin: 10px 0 6px; }
+  table { width: 100%; border-collapse: collapse; font-size: 10px; }
+  thead tr { background: #1e3a5f; color: #fff; }
+  th { padding: 5px 8px; text-align: left; font-weight: 600; font-size: 9px; letter-spacing: 0.3px; }
+  td { padding: 4px 8px; border-bottom: 1px solid #f1f5f9; }
+  tbody tr:nth-child(even) { background: #f8fafc; }
+  tfoot td { background: #f1f5f9; font-weight: 700; border-top: 1.5px solid #cbd5e1; font-size: 10px; }
+  .tooth-chart { margin: 4px 0 8px; }
+  .sign-row { display: flex; justify-content: flex-end; margin-top: 18px; }
+  .sign-line { min-width: 160px; border-top: 1px solid #94a3b8; padding-top: 3px; font-size: 8.5px; color: #64748b; text-align: center; }
+`;
+
+function printHtml(title: string, body: string) {
+  printDocument(title, `<div class="ks-doc">${body}</div>`, DOC_CSS);
 }
 
-// Antet kliniğin kendi künyesidir: önceden ad altına her klinik için sabit
-// "Diş Sağlığı Merkezi" yazılıyordu (muayenehane/poliklinik için yanlış unvan)
-// ve adres/telefon yoktu.
 function header({ clinic }: PrintContext, docType: string) {
-  const sub = [clinic.address, clinic.phone ? `Tel: ${clinic.phone}` : ""].filter(Boolean).join(" · ");
-  return `<div class="header">
-    <div><div class="h-title">${escapeHtml(clinic.name || "Klinik")}</div>${sub ? `<div class="h-sub">${escapeHtml(sub)}</div>` : ""}</div>
-    <div class="h-right"><div style="font-size:12px;font-weight:700;letter-spacing:1px">${escapeHtml(docType)}</div><div style="font-size:9px;opacity:0.8">${escapeHtml(formatDateText(new Date()))}</div></div>
-  </div>`;
+  return letterheadHtml(clinic, { title: docType, date: formatDateText(new Date()) });
 }
 
 function patientBar({ data, hidePhone }: PrintContext) {
@@ -71,8 +70,8 @@ function patientBar({ data, hidePhone }: PrintContext) {
   </div>`;
 }
 
-const footerWith = (note: string) => `<div class="footer"><span>${escapeHtml(note)}</span><div class="sign-area"><div class="sign-line">Hekim İmza / Kaşe</div></div></div>`;
-const footer = footerWith("Bu belge bilgi amaçlı hazırlanmıştır.");
+const footerWith = ({ clinic }: PrintContext, note: string) => `<div class="sign-row"><div class="sign-line">Hekim İmza / Kaşe</div></div>${letterheadFooterHtml(clinic, note)}`;
+const footer = (context: PrintContext) => footerWith(context, "Bu belge bilgi amaçlı hazırlanmıştır.");
 
 function toothChartHtml(toothChart?: string | null) {
   if (!toothChart) return "";
@@ -106,7 +105,7 @@ export function printTreatmentReport(context: PrintContext, treatments: Exam[], 
         <tr><td colspan="3" style="text-align:right">Net tutar:</td><td style="text-align:right">${escapeHtml(money(discounted))}</td><td></td></tr>` : ""}
       </tfoot>`
     : "";
-  printHtml(`
+  printHtml(`Tedavi raporu — ${context.data.fullName}`, `
     ${header(context, "TEDAVİ RAPORU")}
     ${patientBar(context)}
     <div class="content">
@@ -117,7 +116,7 @@ export function printTreatmentReport(context: PrintContext, treatments: Exam[], 
       ${totals}
       </table>
     </div>
-    ${footer}
+    ${footer(context)}
   `);
 }
 
@@ -137,7 +136,7 @@ export function printTreatmentQuote(context: PrintContext, treatments: Exam[]) {
       <td>${escapeHtml(exam.doctor?.fullName || "—")}</td>
       <td style="text-align:right">${escapeHtml(money(exam.amount))}</td>
     </tr>`).join("");
-  printHtml(`
+  printHtml(`Tedavi teklifi — ${context.data.fullName}`, `
     ${header(context, "TEDAVİ TEKLİFİ")}
     ${patientBar(context)}
     <div class="content">
@@ -151,7 +150,7 @@ export function printTreatmentQuote(context: PrintContext, treatments: Exam[]) {
       </tfoot>
       </table>
     </div>
-    ${footerWith("Bu belge fiyat teklifidir; fatura ya da borç belgesi değildir.")}
+    ${footerWith(context, "Bu belge fiyat teklifidir; fatura ya da borç belgesi değildir.")}
   `);
 }
 
@@ -163,7 +162,7 @@ export function printPaymentStatement(context: PrintContext, payments: Pay[]) {
       <td>${escapeHtml(payment.description || "—")}</td>
       <td style="text-align:right;font-weight:600">${escapeHtml(money(payment.amount))}</td>
     </tr>`).join("");
-  printHtml(`
+  printHtml(`Tahsilat dökümü — ${context.data.fullName}`, `
     ${header(context, "TAHSİLAT DÖKÜMÜ")}
     ${patientBar(context)}
     <div class="content">
@@ -172,7 +171,7 @@ export function printPaymentStatement(context: PrintContext, payments: Pay[]) {
       <tbody>${rows || "<tr><td colspan='4' style='text-align:center;padding:12px;color:#9ca3af'>Kayıt yok</td></tr>"}</tbody>
       <tfoot><tr><td colspan="3" style="text-align:right">Toplam tahsilat:</td><td style="text-align:right">${escapeHtml(money(total))}</td></tr></tfoot></table>
     </div>
-    ${footer}
+    ${footer(context)}
   `);
 }
 
@@ -184,7 +183,7 @@ export function printInstallmentPlan(context: PrintContext, plan: TaksitPlan) {
       <td style="text-align:right">${escapeHtml(money(getItemPaid(item)))}</td>
       <td>${escapeHtml(TAKSIT_ITEM_STATUS_LABELS[item.status] || item.status)}</td>
     </tr>`).join("");
-  printHtml(`
+  printHtml(`Ödeme planı — ${context.data.fullName}`, `
     ${header(context, "ÖDEME PLANI")}
     ${patientBar(context)}
     <div class="content">
@@ -199,43 +198,6 @@ export function printInstallmentPlan(context: PrintContext, plan: TaksitPlan) {
       <table><thead><tr><th style="text-align:center">#</th><th>Vade</th><th style="text-align:right">Tutar</th><th style="text-align:right">Ödenen</th><th>Durum</th></tr></thead>
       <tbody>${rows || "<tr><td colspan='5' style='text-align:center;padding:12px;color:#9ca3af'>Kayıt yok</td></tr>"}</tbody></table>
     </div>
-    ${footer}
+    ${footer(context)}
   `);
-}
-
-/** Yazdırma alanı ve yalnız yazdırırken geçerli stiller. Sayfada bir kez yer alır. */
-export function PrintArea() {
-  return (
-    <>
-      <div id="ks-print-area" />
-      <style jsx global>{`
-        @media print {
-          body * { visibility: hidden !important; }
-          #ks-print-area { visibility: visible !important; display: block !important; position: fixed !important; top: 0; left: 0; width: 100%; background: white; z-index: 99999; }
-          #ks-print-area * { visibility: visible !important; }
-          @page { size: A4; margin: 10mm; }
-          #ks-print-area .ks-page { width: 190mm; min-height: 267mm; margin: 0 auto; padding: 0; display: flex; flex-direction: column; font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 11px; color: #1e293b; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-          #ks-print-area .ks-frame { border: 1.5px solid #1e3a5f; flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-          #ks-print-area .header { background: #1e3a5f !important; color: #fff !important; padding: 7px 14px; display: flex; justify-content: space-between; align-items: center; }
-          #ks-print-area .h-title { font-size: 15px; font-weight: 700; letter-spacing: 0.3px; }
-          #ks-print-area .h-sub { font-size: 9px; opacity: 0.75; margin-top: 2px; }
-          #ks-print-area .h-right { text-align: right; font-size: 10px; }
-          #ks-print-area .patient-bar { background: #f1f5f9 !important; border-bottom: 1px solid #e2e8f0; padding: 5px 14px; display: flex; gap: 20px; flex-wrap: wrap; font-size: 9.5px; color: #475569; }
-          #ks-print-area .patient-bar strong { color: #1e293b; }
-          #ks-print-area .content { padding: 10px 14px; flex: 1; }
-          #ks-print-area .sec-title { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #1e3a5f; border-bottom: 1px solid #1e3a5f; padding-bottom: 3px; margin: 10px 0 6px; }
-          #ks-print-area table { width: 100%; border-collapse: collapse; font-size: 10px; }
-          #ks-print-area thead tr { background: #1e3a5f !important; color: #fff !important; }
-          #ks-print-area th { padding: 5px 8px; text-align: left; font-weight: 600; font-size: 9px; letter-spacing: 0.3px; }
-          #ks-print-area td { padding: 4px 8px; border-bottom: 1px solid #f1f5f9; }
-          #ks-print-area tbody tr:nth-child(even) { background: #f8fafc !important; }
-          #ks-print-area tfoot td { background: #f1f5f9 !important; font-weight: 700; border-top: 1.5px solid #cbd5e1; font-size: 10px; }
-          #ks-print-area .tooth-chart { margin: 4px 0 8px; }
-          #ks-print-area .footer { border-top: 1px solid #e2e8f0; padding: 6px 14px; display: flex; justify-content: space-between; align-items: flex-end; background: #f8fafc !important; font-size: 8.5px; color: #94a3b8; }
-          #ks-print-area .sign-area { text-align: center; }
-          #ks-print-area .sign-line { border-top: 1px solid #94a3b8; margin-top: 22px; padding-top: 3px; font-size: 8px; color: #94a3b8; }
-        }
-      `}</style>
-    </>
-  );
 }

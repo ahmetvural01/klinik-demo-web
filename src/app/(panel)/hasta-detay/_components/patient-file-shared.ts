@@ -197,6 +197,9 @@ export type ClinicTask = {
 export type PatientDetailData = {
   id: string;
   fullName: string;
+  /** Kartın son düzenlenmesi (Bilgi sekmesinin altındaki "Son değişiklik"). */
+  updatedAt?: string;
+  lastChangedBy?: string | null;
   tcNo: string | null;
   isForeigner?: boolean;
   phoneCountryCode?: string;

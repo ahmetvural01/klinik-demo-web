@@ -382,6 +382,11 @@ export function SummaryTab() {
                   : <p className="text-sm text-slate-500">Bilinen sağlık uyarısı yok.</p>}
               </div>
             )}
+            {data.lastChangedBy && data.updatedAt && (
+              <p className="border-t border-slate-100 pt-2 text-xs text-slate-500">
+                Son değişiklik: {data.lastChangedBy} · {formatDateText(data.updatedAt, "datetime")}
+              </p>
+            )}
           </div>
         </Section>
       </aside>

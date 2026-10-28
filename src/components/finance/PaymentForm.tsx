@@ -29,6 +29,7 @@ import { compareMoney, moneyInputError, toMoneyValue } from "@/lib/money-input";
 import { isPaymentMethod, requiresPos, type PaymentMethod } from "@/lib/payment-methods";
 import type { StaffLike } from "@/lib/staff-roles";
 import { showToastSafe } from "@/lib/toast-client";
+import { printPaymentReceipt } from "@/components/finance/payment-receipt";
 import { turkeyDateKey } from "@/lib/tz";
 
 /** Hastanın açık taksit planı (tahsilat önerisi için). */
@@ -313,7 +314,7 @@ export function PaymentForm(props: PaymentFormProps) {
     }
     if (isNew && debt !== null && compareMoney(values.amount, debt) === 1) {
       const base = compareMoney(debt, 0) === 1 ? debt : "0";
-      return { text: `Kalan borçtan ${formatMoney(subtractMoney(values.amount, base))} fazla; fazlası hastanın avansı olarak kalır.`, tone: "warning" };
+      return { text: `Kalan borçtan ${formatMoney(subtractMoney(values.amount, base))} fazla; fazlası hastanın sonraki tedavilerinden düşülür.`, tone: "warning" };
     }
     return null;
   })();
@@ -332,8 +333,15 @@ export function PaymentForm(props: PaymentFormProps) {
     return next;
   };
 
-  const finish = (message: string) => {
-    showToastSafe({ type: "success", icon: "finance", duration: 4500, message });
+  // receiptPaymentId: yeni tahsilattan sonra bildirimde "Makbuz yazdır".
+  const finish = (message: string, receiptPaymentId?: string) => {
+    showToastSafe({
+      type: "success",
+      icon: "finance",
+      duration: receiptPaymentId ? 9000 : 4500,
+      message,
+      action: receiptPaymentId ? { label: "Makbuz yazdır", onClick: () => void printPaymentReceipt(receiptPaymentId) } : undefined,
+    });
     onSaved?.();
     onClose();
   };
@@ -356,7 +364,7 @@ export function PaymentForm(props: PaymentFormProps) {
       : compareMoney(values.amount, "10") === -1
         ? `${formatMoney(values.amount)} tahsilat kaydedilsin mi? Tutar çok düşük görünüyor.`
         : props.mode === "new" && debt !== null && compareMoney(debt, 0) === 1 && excess !== null && compareMoney(excess, debt) === 1
-          ? `${formatMoney(values.amount)} tahsilat kaydedilsin mi? Kalan borç ${formatMoney(debt)}; fazlası hastanın avansı olarak kalır.`
+          ? `${formatMoney(values.amount)} tahsilat kaydedilsin mi? Kalan borç ${formatMoney(debt)}; fazlası hastanın sonraki tedavilerinden düşülür.`
           : null;
     if (suspicious && !(await confirmDialog({ title: "Tutarı kontrol edin", message: suspicious, confirmText: "Evet, kaydet", cancelText: "Tutarı düzelt" }))) {
       window.requestAnimationFrame(() => amountRef.current?.focus());
@@ -443,7 +451,7 @@ export function PaymentForm(props: PaymentFormProps) {
         taksitCount > 0 ? `${taksitCount} taksit ödendi olarak işlendi` : "",
         completed > 0 ? "bugünkü randevusu Tamamlandı yapıldı" : "",
       ].filter(Boolean);
-      finish(`${patient.fullName} için ${formatMoney(values.amount)} tahsilat kaydedildi${extras.length ? ` (${extras.join(", ")})` : ""}.`);
+      finish(`${patient.fullName} için ${formatMoney(values.amount)} tahsilat kaydedildi${extras.length ? ` (${extras.join(", ")})` : ""}.`, typeof data?.id === "string" ? data.id : undefined);
     } finally {
       setSaving(false);
     }

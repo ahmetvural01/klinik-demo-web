@@ -26,7 +26,6 @@ import { useLabOrderActions } from "@/components/lab/useLabOrderActions";
 import { getLabRowAction, labStatusLine } from "@/components/lab/lab-row-action";
 import { fetchJson, normalizeLabOrder, normalizeLabOrders, phoneSearchKey, type LabOrderView, type LabTripView } from "@/components/lab/lab-order-model";
 import { cachedGet } from "@/lib/client-cache";
-import { formatPhoneNumber } from "@/lib/format";
 import type { StaffLike } from "@/lib/staff-roles";
 import {
   LAB_LABELS,
@@ -411,7 +410,7 @@ export default function LabPage() {
     );
   };
 
-  // Rozetin altındaki TEK kısa satır ("Zirkonyum Alt Yapı · dönüş 14 Eki").
+  // Rozetin altındaki TEK kısa satır ("Zirkonyum Alt Yapı · dönüş 14.10").
   // Satır hiçbir zaman ikinciye taşmaz: uzun iş adı kesilir, tarih kesilmez;
   // cümlenin tamamı (kaçıncı gün dahil) ipucunda ve iş ayrıntısında. Rozetle
   // aynı anlamı taşıyan metin ("Henüz gönderilmedi", "İş iptal edildi") yazılmaz.
@@ -426,10 +425,11 @@ export default function LabPage() {
     );
   };
 
-  // Hekim süzgeci seçiliyken her satırda aynı hekim adı yazılmaz (süzgeç etiketinde görünür).
+  // Hekim süzgeci seçiliyken ya da listede tek hekim varken her satırda aynı hekim adı yazılmaz.
+  const singleDoctor = new Set(listRows.map(({ order }) => order.doctor.id)).size <= 1;
   const workLine = (order: LabOrderView) => {
     const teeth = teethList(order.teeth);
-    return [teeth.length ? `Diş ${teeth.join(", ")}` : "", order.labName, doctorFilter ? "" : order.doctor.fullName].filter(Boolean).join(" · ");
+    return [teeth.length ? `Diş ${teeth.join(", ")}` : "", order.labName, doctorFilter || singleDoctor ? "" : order.doctor.fullName].filter(Boolean).join(" · ");
   };
 
   // Durum tek sütunda, en fazla iki satır: rozet + "sıradaki adım · tarih".
@@ -448,10 +448,8 @@ export default function LabPage() {
       key: "patient",
       header: "Hasta",
       render: ({ order }) => (
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-slate-900">{order.patient.fullName}</p>
-          {order.patient.phone && order.patient.phone !== "***" && <p className="text-xs tabular-nums text-slate-500">{formatPhoneNumber(order.patient.phone)}</p>}
-        </div>
+        // Lab listesinde telefon gerekmez (arama hasta dosyasından); satır tek bilgiye iner.
+        <p className="truncate text-sm font-semibold text-slate-900">{order.patient.fullName}</p>
       ),
     },
     {

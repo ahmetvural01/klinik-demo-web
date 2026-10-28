@@ -53,7 +53,7 @@ export async function GET(request: NextRequest, props: Params) {
     }),
     prisma.institution.findUnique({
       where: { id: institutionId },
-      select: { name: true, address: true, phone: true },
+      select: { name: true, address: true, phone: true, logo: true },
     }),
     hasEffectivePermission(auth.user, "patients:phone").then((allowed) => !allowed),
   ]);
@@ -100,6 +100,8 @@ export async function GET(request: NextRequest, props: Params) {
       name: setting?.institutionName || institution?.name || "",
       address: setting?.institutionAddress ?? institution?.address ?? "",
       phone: setting?.institutionPhone || institution?.phone || "",
+      // Bütün çıktılarla aynı antet: logo varsa reçetede de görünür.
+      logoUrl: /^(https:\/\/|data:image\/)/i.test(institution?.logo?.trim() || "") ? institution?.logo?.trim() || "" : "",
     },
     patient: {
       id: patient.id,

@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
  * `/api/settings`'ten okunuyordu; o uç ayar yetkisi (settings:read) istediği
  * için hekim, asistan ve banko çıktılarında klinik adı yerine "Klinik"
  * yazıyordu (ve logo dahil bütün ayarlar her seferinde iniyordu). Burada
- * yalnız antette görünen herkese açık künye döner; logo ve ayarlar dönmez.
+ * yalnız antette görünen künye ve logo döner; diğer ayarlar dönmez.
  */
 export async function GET() {
   const auth = await requireAuth("patients:read");
@@ -26,10 +26,11 @@ export async function GET() {
     }),
     prisma.institution.findUnique({
       where: { id: auth.user.institutionId },
-      select: { name: true, email: true, phone: true, address: true, taxNo: true, registryNo: true, website: true },
+      select: { name: true, email: true, phone: true, address: true, taxNo: true, registryNo: true, website: true, logo: true },
     }),
   ]);
 
+  const logo = institution?.logo?.trim() || "";
   // /api/settings ile aynı öncelik: önce Ayarlar'da yazılan, yoksa kurum kaydı.
   return NextResponse.json({
     institutionName: settings?.institutionName || institution?.name || "",
@@ -39,5 +40,7 @@ export async function GET() {
     institutionWebsite: settings?.institutionWebsite ?? institution?.website ?? "",
     institutionTaxNo: institution?.taxNo || "",
     institutionRegistryNo: institution?.registryNo || "",
+    // Bütün çıktıların antedindeki logo (https adresi ya da yüklenmiş görsel).
+    logoUrl: /^(https:\/\/|data:image\/)/i.test(logo) ? logo : "",
   });
 }

@@ -1,3 +1,5 @@
+import { formatDayMonth } from "@/components/ui/Money";
+
 // Laboratuvar iş akışının TEK kaynağı: iş türleri, adım şablonları, not
 // içindeki gizli işaretler, durum adları ve "bu iş şu an nerede, sıradaki
 // adım ne" hesabı. Önceden aynı şablon ve yardımcılar Laboratuvar sayfasında,
@@ -526,16 +528,17 @@ export function isOpenLabOrder(order: { status: string }) {
   return order.status !== "HASTAYA_TAKILDI" && order.status !== "IPTAL";
 }
 
+// Tarih biçimi sistem genelinde tek: "28.10.2026"; satır içi kısa biçim bu yıl için "28.10".
 export function formatLabDate(iso?: string | Date | null) {
   if (!iso) return "";
-  return new Date(iso).toLocaleDateString("tr-TR", { day: "numeric", month: "short", year: "numeric" });
+  return new Date(iso).toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "Europe/Istanbul" });
 }
 
 export function formatShortLabDate(iso?: string | Date | null) {
   if (!iso) return "";
   const date = new Date(iso);
   const sameYear = date.getFullYear() === new Date().getFullYear();
-  return date.toLocaleDateString("tr-TR", sameYear ? { day: "numeric", month: "short" } : { day: "numeric", month: "short", year: "numeric" });
+  return sameYear ? formatDayMonth(date) : formatLabDate(date);
 }
 
 export const LAB_CURRENCY = new Intl.NumberFormat("tr-TR", { style: "currency", currency: "TRY", minimumFractionDigits: 0, maximumFractionDigits: 2 });

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type SignaturePad from "signature_pad";
 import { Eraser, FileSignature, PenLine, Printer, XCircle } from "lucide-react";
+import { LETTERHEAD_CSS, letterheadHtml } from "@/lib/print-letterhead";
 import { showToastSafe } from "@/lib/toast-client";
 import { cachedGet } from "@/lib/client-cache";
 import { FormModal } from "@/components/ui/FormModal";
@@ -44,6 +45,7 @@ type InstitutionInfo = {
   institutionTaxNo?: string;
   institutionRegistryNo?: string;
   institutionWebsite?: string;
+  logoUrl?: string;
 };
 
 type Props = {
@@ -320,14 +322,6 @@ export function PatientConsentPanel({ patientId, patientName, patientTcNo, canWr
     const statusText = consent.status === "IPTAL" ? "İPTAL EDİLMİŞ KAYIT" : "AKTİF İMZALI KAYIT";
     const sections = splitConsentSections(consent.body);
     const clinicName = institution?.institutionName || "Klinik";
-    const clinicLines = [
-      institution?.institutionAddress,
-      institution?.institutionPhone ? `Tel: ${institution.institutionPhone}` : "",
-      institution?.institutionEmail ? `E-posta: ${institution.institutionEmail}` : "",
-      institution?.institutionWebsite ? `Web: ${institution.institutionWebsite}` : "",
-      institution?.institutionTaxNo ? `Vergi No: ${institution.institutionTaxNo}` : "",
-      institution?.institutionRegistryNo ? `Sicil No: ${institution.institutionRegistryNo}` : "",
-    ].filter((line): line is string => Boolean(line));
     const renderParagraphs = (content: string) =>
       content
         .split(/\n{2,}/g)
@@ -367,7 +361,7 @@ export function PatientConsentPanel({ patientId, patientName, patientTcNo, canWr
     button { border: 1px solid #cbd5e1; background: #0f172a; color: #fff; border-radius: 8px; padding: 8px 12px; font-weight: 700; }
     .document { max-width: 920px; margin: 22px auto; }
     .sheet { background: white; border: 1px solid #d7dde7; padding: 18mm 16mm; box-shadow: 0 18px 45px rgba(15, 23, 42, 0.12); }
-    .letterhead { display: grid; grid-template-columns: 1fr auto; gap: 18px; border-bottom: 2px solid #111827; padding-bottom: 8px; margin-bottom: 10px; }
+    ${LETTERHEAD_CSS}
     .clinic { color: #475569; font-size: 10.5px; }
     .clinic h1 { font-size: 22px; letter-spacing: 0; color: #0f172a; margin: 0 0 4px; }
     .doc-title { font-size: 18px; margin: 8px 0 4px; color: #0f172a; }
@@ -392,7 +386,7 @@ export function PatientConsentPanel({ patientId, patientName, patientTcNo, canWr
       .toolbar { display: none; }
       .document { margin: 0; max-width: none; }
       .sheet { border: 0; padding: 0; box-shadow: none; }
-      .letterhead { margin-bottom: 7px; padding-bottom: 6px; }
+      .ks-lh { margin-bottom: 7px; padding-bottom: 6px; }
       .doc-title { font-size: 15px; margin-top: 6px; }
       .meta-grid { margin: 6px 0 8px; }
       .notice { padding: 5px 7px; margin-bottom: 7px; }
@@ -403,7 +397,7 @@ export function PatientConsentPanel({ patientId, patientName, patientTcNo, canWr
     }
     @media screen and (max-width: 760px) {
       .sheet { padding: 18px; }
-      .letterhead, .meta-grid, .signature-block, .signature-footer { grid-template-columns: 1fr; }
+      .meta-grid, .signature-block, .signature-footer { grid-template-columns: 1fr; }
       .sections { column-count: 1; }
       .meta-cell { border-right: 0; border-bottom: 1px solid #cbd5e1; }
       .meta-cell:last-child { border-bottom: 0; }
@@ -414,17 +408,16 @@ export function PatientConsentPanel({ patientId, patientName, patientTcNo, canWr
   <div class="document">
     <div class="toolbar"><button onclick="window.print()">Yazdır</button></div>
     <main class="sheet">
-      <header class="letterhead">
-        <div class="clinic">
-          <h1>${escapeHtml(clinicName)}</h1>
-          ${clinicLines.map((line) => `<div>${escapeHtml(line)}</div>`).join("")}
-        </div>
-        <div class="clinic" style="text-align:right">
-          <strong>Hasta Onam Dosyası</strong><br />
-          Belge No: ${escapeHtml(consent.id.slice(-8).toUpperCase())}<br />
-          Durum: ${escapeHtml(statusText)}
-        </div>
-      </header>
+      ${letterheadHtml({
+        name: clinicName,
+        phone: institution?.institutionPhone || "",
+        email: institution?.institutionEmail || "",
+        address: institution?.institutionAddress || "",
+        website: institution?.institutionWebsite || "",
+        taxNo: institution?.institutionTaxNo || "",
+        registryNo: institution?.institutionRegistryNo || "",
+        logoUrl: institution?.logoUrl || "",
+      }, { title: "Hasta onam dosyası", date: formatDate(consent.signedAt), meta: [`Belge no: ${consent.id.slice(-8).toUpperCase()}`, statusText] })}
       <span class="status">${statusText}</span>
       <h1 class="doc-title">${escapeHtml(consent.title)}</h1>
       <section class="meta-grid">

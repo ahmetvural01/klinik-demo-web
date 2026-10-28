@@ -51,14 +51,22 @@ const decimalText = (value: Prisma.Decimal | null | undefined) => (value ?? new 
 // ── Randevular (Randevular sayfasının ?lite=1 sayaçlarıyla aynı) ─────────────
 async function appointmentsSection(scope: Scope, viewerId: string, todayStart: Date) {
   const tomorrow = { gte: new Date(todayStart.getTime() + DAY_MS), lt: new Date(todayStart.getTime() + 2 * DAY_MS) };
-  const [onlineRequests, waitlist, openPast, tomorrowAll, tomorrowMine] = await Promise.all([
+  const todayRange = { gte: todayStart, lt: new Date(todayStart.getTime() + DAY_MS) };
+  const [onlineRequests, waitlist, openPast, tomorrowAll, tomorrowMine, todayByStatus] = await Promise.all([
     prisma.bookingRequest.count({ where: { ...scope, status: "BEKLIYOR" } }),
     prisma.waitlist.count({ where: { ...scope, status: { in: ["BEKLIYOR", "ARANDI"] } } }),
     prisma.appointment.count({ where: openPastWhere(scope, todayStart) }),
     prisma.appointment.count({ where: { ...scope, startAt: tomorrow, status: { not: "IPTAL" } } }),
     prisma.appointment.count({ where: { ...scope, startAt: tomorrow, status: { not: "IPTAL" }, doctorId: viewerId } }),
+    prisma.appointment.groupBy({ by: ["status"], where: { ...scope, startAt: todayRange }, _count: { _all: true } }),
   ]);
-  return { onlineRequests, waitlist, openPast, openPastLookbackDays: OPEN_PAST_LOOKBACK_DAYS, tomorrow: tomorrowAll, tomorrowMine };
+  const countOf = (statuses: string[]) => todayByStatus.filter((row) => statuses.includes(row.status)).reduce((sum, row) => sum + row._count._all, 0);
+  const today = {
+    total: countOf(["BEKLIYOR", "ONAYLANDI", "GELDI", "TAMAMLANDI", "GELMEDI"]),
+    arrived: countOf(["GELDI", "TAMAMLANDI"]),
+    noShow: countOf(["GELMEDI"]),
+  };
+  return { onlineRequests, waitlist, openPast, openPastLookbackDays: OPEN_PAST_LOOKBACK_DAYS, tomorrow: tomorrowAll, tomorrowMine, today };
 }
 
 // ── Görevler (üst bar zilindeki "zamanı gelen görev" ile aynı) ───────────────

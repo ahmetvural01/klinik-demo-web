@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CalendarPlus, Check, CheckCheck, ClipboardPlus, FileText, ListChecks, Pencil, Phone, RotateCcw, Wallet } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { formatDateText } from "@/components/ui/Money";
+import { undoAppointmentStatus } from "@/components/randevu/appointment-undo";
 import { Badge } from "@/components/ui/Badge";
 import { Callout } from "@/components/ui/Callout";
 import { DescriptionList } from "@/components/ui/DescriptionList";
@@ -135,12 +136,22 @@ export function AppointmentDetailModal({
       if (result.message) setError(result.message);
       return;
     }
+    const previous = current;
     const next = { ...current, status };
     setCurrent(next);
     onChanged(next);
     // "Geldi"den sonra bildirim de hastanın geldiğini söyler (önceden "Bekliyor" — K3).
     const resultText = status === "GELDI" ? "bekleme salonunda" : statusChipLabel(status);
-    showToastSafe({ title: label, message: `${current.patient?.fullName || "Hasta"} · ${resultText}`, type: "success" });
+    // İptal onaylı yapılır ve hastaya mesaj gidebilir; geri alma yalnız diğer durumlarda.
+    showToastSafe({
+      title: label,
+      message: `${current.patient?.fullName || "Hasta"} · ${resultText}`,
+      type: "success",
+      action: status === "IPTAL" ? undefined : {
+        label: "Geri al",
+        onClick: () => void undoAppointmentStatus(next, previous.status, (restored) => { setCurrent(restored); onChanged(restored); }),
+      },
+    });
   };
 
   /**
@@ -401,7 +412,30 @@ export function AppointmentDetailModal({
             </div>
           )}
         </section>
+        <RecordHistoryLine appointmentId={current.id} version={current.status} />
       </div>
     </Modal>
   );
+}
+
+/**
+ * "Oluşturan / Son değişiklik: kim, ne zaman" — pencerenin en altında tek
+ * soluk satır; randevuya kimin dokunduğu sorulduğunda kayıt defterine gerek kalmaz.
+ */
+function RecordHistoryLine({ appointmentId, version }: { appointmentId: string; version: string }) {
+  const [meta, setMeta] = useState<{ createdAt: string; createdBy: string | null; updatedAt: string | null; updatedBy: string | null } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/appointments/${encodeURIComponent(appointmentId)}/meta`, { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((json) => { if (!cancelled) setMeta(json); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [appointmentId, version]);
+  if (!meta) return null;
+  const parts = [
+    meta.createdBy ? `Oluşturan: ${meta.createdBy} · ${formatDateText(meta.createdAt, "datetime")}` : `Oluşturuldu: ${formatDateText(meta.createdAt, "datetime")}`,
+    meta.updatedAt && meta.updatedBy ? `Son değişiklik: ${meta.updatedBy} · ${formatDateText(meta.updatedAt, "datetime")}` : "",
+  ].filter(Boolean);
+  return <p className="border-t border-slate-100 pt-2 text-xs text-slate-500">{parts.join(" — ")}</p>;
 }

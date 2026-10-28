@@ -41,6 +41,8 @@ export type HomeSummary = {
     /** Yarın (iptal hariç) tüm randevular / oturumdaki kullanıcının randevuları. */
     tomorrow: number;
     tomorrowMine: number;
+    /** Bugünün randevuları (tüm doktorlar): toplam (iptal hariç), gelen, gelmeyen. */
+    today?: { total: number; arrived: number; noShow: number };
   };
   /**
    * hastatracking:read (doktor görünümünde yok) — Aramalar ve görevler > Hasta aramaları

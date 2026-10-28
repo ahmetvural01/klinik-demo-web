@@ -36,7 +36,7 @@ type BalanceRow = {
 type View = "borclu" | "avans";
 const VIEW_OPTIONS: { value: View; label: string }[] = [
   { value: "borclu", label: "Borçlu" },
-  { value: "avans", label: "Fazla ödeme" },
+  { value: "avans", label: "Ön ödeme" },
 ];
 const PAGE_SIZE = 50;
 
@@ -235,9 +235,9 @@ export function BalancesTab({
     { key: "hasta", header: "Hasta", sortKey: "hasta", render: nameCell },
     {
       key: "bakiye",
-      header: view === "avans" ? "Fazla ödeme" : "Kalan borç",
+      header: view === "avans" ? "Ön ödeme" : "Kalan borç",
       headerHint: view === "avans"
-        ? "Alınan tahsilatların indirimli tedavi tutarını aşan kısmı."
+        ? "Hastanın yapılan tedaviden fazla ödediği tutar (ör. tedaviden önce alınan ödeme); sonraki tedavilerden düşülür."
         : "İndirimli tedavi tutarı − alınan tahsilatlar (taksit tahsilatları dahil). İptal edilen ve planlanan tedaviler hariç.",
       align: "right",
       sortKey: "bakiye",
@@ -273,13 +273,13 @@ export function BalancesTab({
 
   const exportExcel = async () => {
     const { downloadCsv } = await import("@/lib/csv-export");
-    downloadCsv(view === "avans" ? "fazla-odeme-yapan-hastalar.csv" : "hasta-alacaklari.csv", filtered.map((row) => ({
+    downloadCsv(view === "avans" ? "on-odemesi-olan-hastalar.csv" : "hasta-alacaklari.csv", filtered.map((row) => ({
       Hasta: row.fullName,
       Telefon: canSeePatientPhone ? row.phone || "" : "",
       Doktor: row.doctors.map((doctor) => doctor.fullName).join(" / "),
       "Tedavi (indirimli)": row.netTedavi.toFixed(2).replace(".", ","),
       Ödenen: row.odenen.toFixed(2).replace(".", ","),
-      [view === "avans" ? "Fazla ödeme" : "Kalan borç"]: Math.abs(row.bakiye).toFixed(2).replace(".", ","),
+      [view === "avans" ? "Ön ödeme" : "Kalan borç"]: Math.abs(row.bakiye).toFixed(2).replace(".", ","),
       "Taksit planı kalanı": row.plan ? row.plan.kalan.toFixed(2).replace(".", ",") : "",
       "Son hareket": lastMovement(row).at ? shortDate(lastMovement(row).at) : "",
     })));
@@ -287,7 +287,7 @@ export function BalancesTab({
 
   const patientHint = rows ? [`${filtered.length} hasta`, sharedDoctor || ""].filter(Boolean).join(" · ") : undefined;
   const stats: StatItem[] = view === "avans"
-    ? [{ key: "total", label: "Toplam fazla ödeme", value: money(total), tone: "success", hint: patientHint }]
+    ? [{ key: "total", label: "Toplam ön ödeme", value: money(total), tone: "success", hint: patientHint }]
     : [
         { key: "total", label: "Toplam alacak", value: money(total), hint: patientHint },
         ...(canReadInstallments ? [{
@@ -300,7 +300,7 @@ export function BalancesTab({
       ];
 
   const activeFilters: ActiveFilter[] = [
-    ...(view === "avans" ? [{ key: "view", label: "Fazla ödeme yapanlar", onRemove: () => setView("borclu") }] : []),
+    ...(view === "avans" ? [{ key: "view", label: "Ön ödemesi olanlar", onRemove: () => setView("borclu") }] : []),
     ...(search.trim() ? [{ key: "q", label: `"${search.trim()}"`, onRemove: () => setSearch("") }] : []),
   ];
 
@@ -328,7 +328,7 @@ export function BalancesTab({
         onRetry={() => void load(view)}
         sort={sort}
         onSortChange={(key) => setSort((current) => ({ key, dir: current.key === key && current.dir === "desc" ? "asc" : "desc" }))}
-        emptyText={search ? "Aramaya uyan hasta yok" : view === "avans" ? "Fazla ödeme yapan hasta yok" : "Borcu olan hasta yok"}
+        emptyText={search ? "Aramaya uyan hasta yok" : view === "avans" ? "Ön ödemesi olan hasta yok" : "Borcu olan hasta yok"}
         emptyDescription={search ? "Arama metnini değiştirip tekrar deneyin." : undefined}
         emptyAction={search ? <Button size="sm" variant="secondary" onClick={() => setSearch("")}>Aramayı temizle</Button> : undefined}
         // Telefon kartı iki satır: ad + borç; telefon · (doktor) · son hareket. Eylemler sağ üstte "…".

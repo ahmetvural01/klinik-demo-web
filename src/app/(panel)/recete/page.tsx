@@ -25,7 +25,7 @@ type PrintData = {
     voidedAt?: string | null;
     doctor?: { id: string; fullName: string } | null;
   };
-  clinic: { name: string; address: string; phone: string };
+  clinic: { name: string; address: string; phone: string; logoUrl?: string };
   patient: {
     id: string;
     fullName: string;
@@ -119,14 +119,21 @@ function PrescriptionDocument({ data }: { data: PrintData }) {
         </div>
       )}
 
-      <header className="flex items-start justify-between gap-4 border-b-2 border-slate-800 pb-3">
-        <div className="min-w-0">
-          <h2 className="text-base font-bold leading-tight text-slate-900">{clinic.name || <BlankLine width="w-48" />}</h2>
-          {contactLine && <p className="mt-1 text-xs text-slate-600">{contactLine}</p>}
+      {/* Bütün çıktılarla aynı antet (src/lib/print-letterhead.ts): logo, ad, iletişim; sağda belge adı ve tarih. */}
+      <header className="flex items-start justify-between gap-4 border-b-2 border-[#1e3a5f] pb-2.5">
+        <div className="flex min-w-0 items-center gap-2.5">
+          {clinic.logoUrl && (
+            // eslint-disable-next-line @next/next/no-img-element -- yazdırılan belge; logo data URL olabilir.
+            <img src={clinic.logoUrl} alt="" className="max-h-11 max-w-[110px] object-contain" />
+          )}
+          <div className="min-w-0">
+            <h2 className="text-[15px] font-bold leading-tight text-slate-900">{clinic.name || <BlankLine width="w-48" />}</h2>
+            {contactLine && <p className="mt-0.5 text-[10px] text-slate-600">{contactLine}</p>}
+          </div>
         </div>
         <div className="shrink-0 text-right">
-          <p className={`text-lg font-black tracking-[0.18em] ${isVoid ? "text-red-600" : "text-slate-900"}`}>{isVoid ? "İPTAL EDİLMİŞ REÇETE" : "REÇETE"}</p>
-          <p className="mt-0.5 text-xs text-slate-600">{formatDate(prescription.createdAt)}</p>
+          <p className={`text-sm font-extrabold uppercase tracking-[0.12em] ${isVoid ? "text-red-600" : "text-[#1e3a5f]"}`}>{isVoid ? "İptal edilmiş reçete" : "Reçete"}</p>
+          <p className="mt-0.5 text-[10px] text-slate-600">{formatDate(prescription.createdAt)}</p>
         </div>
       </header>
 

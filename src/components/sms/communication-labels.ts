@@ -1,4 +1,5 @@
 import type { BadgeTone } from "@/components/ui/Badge";
+import { formatDayMonth } from "@/components/ui/Money";
 
 // İletişim modülünde ekranda görünen TÜM durum/tür/kanal adları tek yerde.
 // Kod adları (SUPPRESSED, APPOINTMENT_REMINDER, WHATSAPP...) kullanıcıya
@@ -112,12 +113,13 @@ export function smsConsentOf(status: string | null | undefined) {
   return SMS_CONSENT[(status && status in SMS_CONSENT ? status : "NONE") as ConsentStatus];
 }
 
-const SHORT_DATE = new Intl.DateTimeFormat("tr-TR", { day: "numeric", month: "short", timeZone: "Europe/Istanbul" });
-const SHORT_DATE_YEAR = new Intl.DateTimeFormat("tr-TR", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/Istanbul" });
+// Tarih biçimi sistem genelinde tek: "28.10.2026" (bu yıl içinde kısa "28.10").
+const SHORT_DATE = { format: (date: Date) => formatDayMonth(date) };
+const SHORT_DATE_YEAR = new Intl.DateTimeFormat("tr-TR", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "Europe/Istanbul" });
 const TIME = new Intl.DateTimeFormat("tr-TR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Istanbul" });
 const YEAR = new Intl.DateTimeFormat("tr-TR", { year: "numeric", timeZone: "Europe/Istanbul" });
 
-/** "12 Eki 14:30" — gönderim geçmişi satırı (bu yıldan değilse yıl da yazılır). */
+/** "12.10 14:30" — gönderim geçmişi satırı (bu yıldan değilse yıl da yazılır). */
 export function dateTimeStamp(value: string | Date) {
   const date = typeof value === "string" ? new Date(value) : value;
   const day = YEAR.format(date) === YEAR.format(new Date()) ? SHORT_DATE.format(date) : SHORT_DATE_YEAR.format(date);

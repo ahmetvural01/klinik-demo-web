@@ -219,6 +219,8 @@ export const GET = withApiTiming("patients-detail", async function GET(request: 
       ...PROFILE_SELECT,
       notes: true,
       toothChart: true,
+      updatedAt: true,
+      updatedById: true,
       smsPreference: canReadMessaging ? {
         select: {
           status: true,
@@ -363,6 +365,13 @@ export const GET = withApiTiming("patients-detail", async function GET(request: 
   }));
 
   await logPatientAccess(request, auth.user, patient);
+
+  // Hasta kartında "Son değişiklik: kim, ne zaman" (yalnız kartı düzenleyen biliniyorsa).
+  const editorId = (patient as { updatedById?: string | null }).updatedById;
+  const editor = editorId
+    ? await prisma.user.findFirst({ where: { id: editorId, institutionId: auth.user.institutionId || undefined }, select: { fullName: true } })
+    : null;
+  (patient as { lastChangedBy?: string | null }).lastChangedBy = editor?.fullName || null;
 
   // DOKTOR ve ASISTAN telefon numaralarını ve TC kimlik numarasını göremez
   // (bkz. patients/route.ts — aynı gerekçe: TC no telefondan daha az hassas
@@ -584,6 +593,7 @@ export async function PUT(request: NextRequest, props: Params) {
       where: { id: params.id },
       data: {
         ...updateData,
+        updatedById: auth.user.id,
         ...(consentChanged && whatsappConsent
           ? {
               whatsappOptInAt: new Date(),

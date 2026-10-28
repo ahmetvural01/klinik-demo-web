@@ -787,6 +787,8 @@ model Patient {
   archiveReason              String?
   createdAt                  DateTime                    @default(now())
   updatedAt                  DateTime                    @updatedAt
+  // Kayıt penceresindeki "Son değişiklik: kim, ne zaman" (hasta kartı düzenlemesi).
+  updatedById                String?
   bloodType                  String?
   toothChart                 String?
   referrer                   String?
@@ -859,6 +861,9 @@ model Appointment {
   smsSurvey        Boolean               @default(false)
   createdAt        DateTime              @default(now())
   updatedAt        DateTime              @updatedAt
+  // Randevu penceresindeki "Oluşturan / Son değişiklik: kim, ne zaman".
+  createdById      String?
+  updatedById      String?
   status           AppointmentStatus     @default(BEKLIYOR)
   // Hatırlatma mesajındaki "Geleceğim / Gelemeyeceğim" bağlantısı
   // (sayfa: src/app/r/[token], kurallar: src/lib/appointment-confirm.ts).

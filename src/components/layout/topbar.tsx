@@ -32,6 +32,7 @@ import { SearchInput } from "@/components/ui/SearchInput";
 import { Spinner } from "@/components/ui/Spinner";
 import { usePermissions } from "@/components/auth/PermissionProvider";
 import { BranchSwitcher, type BranchSwitcherData } from "@/components/layout/BranchSwitcher";
+import { MobileBottomNav } from "@/components/layout/MobileBottomNav";
 import { BillingNoticeButton, BillingNoticeDetails, isFullBillingPath, useBillingNotice } from "@/components/layout/billing-status-banner";
 import { UserMenu } from "@/components/layout/header-menus";
 import { ShellPopover } from "@/components/layout/shell-popover";
@@ -48,6 +49,7 @@ import { showToastSafe } from "@/lib/toast-client";
 import { roleLabel } from "@/lib/staff-roles";
 import { clientMutation } from "@/lib/client-mutation";
 import { routes } from "@/lib/routes";
+import { buildNavGroups } from "@/lib/nav";
 import { pageTitleFor } from "@/lib/page-titles";
 import { formatPhoneNumber } from "@/lib/format";
 import { maskedIdentityLabel } from "@/lib/patient-display";
@@ -85,9 +87,9 @@ const ICON_TONE: Record<CountBadgeTone, string> = {
 // Üst bar artık sayfa adını yazmaz (sayfanın kendi başlığı var) ve sayfaya
 // göre değişen hızlı düğmeler göstermez: her ekranda aynı yerde aynı arama,
 // aynı "Yeni" menüsü, aynı Bekleyen işler ve hesap menüsü durur.
-const SEARCH_PLACEHOLDER = "Hasta ara: ad, TC veya telefon…";
+const SEARCH_PLACEHOLDER = "Hasta, sayfa ya da iş ara";
 /** Telefon ve TC göremeyen rol (patients:phone yok) bunlarla arayamaz; yer tutucu yalnız adı söyler. */
-const SEARCH_PLACEHOLDER_NAME_ONLY = "Hasta ara: ad…";
+const SEARCH_PLACEHOLDER_NAME_ONLY = "Hasta adı, sayfa ya da iş ara";
 
 /**
  * Hasta dosyasının yazdığı bağlam (hasta paketi: sessionStorage["ks:hasta-baglam"]
@@ -169,8 +171,13 @@ function WaitingList({ items, myPatientsFor, onNavigate }: { items: WaitingPatie
   );
 }
 
+/** Aramada Türkçe büyük/küçük harf ve "ı/i" farkı gözetmeden eşleşme. */
+function searchKey(value: string) {
+  return value.toLocaleLowerCase("tr").replace(/ı/g, "i").normalize("NFD").replace(/[̀-ͯ]/g, "");
+}
+
 export function Topbar({ user, branchContext }: Props) {
-  const { can, scopeKey, role } = usePermissions();
+  const { can, hasFeature, scopeKey, role } = usePermissions();
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -193,7 +200,25 @@ export function Topbar({ user, branchContext }: Props) {
   const [showResults, setShowResults] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const searchRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const hidePhone = !can("patients:phone");
+  // Kullanıcının menüsündeki sayfalar: aramada "stok", "rapor" yazınca sayfa da çıkar.
+  const navPages = useMemo(() => buildNavGroups({ can, hasFeature }).flatMap((group) => group.items), [can, hasFeature]);
+
+  // Ctrl+K (Mac'te ⌘K): her ekrandan arama kutusuna geç.
+  useEffect(() => {
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLocaleLowerCase("en") === "k") {
+        const input = searchInputRef.current;
+        if (!input) return;
+        event.preventDefault();
+        input.focus();
+        input.select();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   // Dışarı tıklanınca liste kapanır ama yazılan arama silinmez (önceden siliniyordu).
   useOutsideClick(searchRef, () => setShowResults(false), showResults);
 
@@ -242,25 +267,6 @@ export function Topbar({ user, branchContext }: Props) {
     resetSearch();
   };
 
-  const onSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "Escape") {
-      setShowResults(false);
-      setActiveIndex(-1);
-      return;
-    }
-    if (!showResults || results.length === 0) return;
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      setActiveIndex((index) => Math.min(index + 1, results.length - 1));
-    } else if (event.key === "ArrowUp") {
-      event.preventDefault();
-      setActiveIndex((index) => Math.max(index - 1, -1));
-    } else if (event.key === "Enter" && activeIndex >= 0) {
-      event.preventDefault();
-      openPatient(results[activeIndex].id);
-    }
-  };
-
   const submitSearch = (event: FormEvent) => {
     event.preventDefault();
     if (q.trim()) {
@@ -294,6 +300,59 @@ export function Topbar({ user, branchContext }: Props) {
   if (can("lab:write")) createItems.push({ key: "lab", label: "Lab işi", description: "Laboratuvara iş gönder", icon: FlaskConical, href: routes.newLabOrder(contextPatientId) });
   // Muhasebecinin asıl işi; önceden menüde yalnız "Tahsilat" vardı.
   if (can("finance:write") && can("finance:center")) createItems.push({ key: "gider", label: "Gider", description: "Gider veya ödeme kaydet", icon: Receipt, href: routes.newExpense() });
+
+  // ── Arama sonuçları: hastalar + sayfalar + işler (tek kutu, Ctrl+K) ───────
+  type SearchEntry = { key: string; group: "Hastalar" | "Sayfalar" | "İşler"; label: string; detail?: string; patient?: SearchResult; onSelect: () => void };
+  const term = searchKey(q.trim());
+  const pageEntries: SearchEntry[] = term.length >= 2
+    ? navPages.filter((page) => searchKey(page.label).includes(term)).slice(0, 4).map((page) => ({
+        key: `sayfa-${page.key}`,
+        group: "Sayfalar",
+        label: page.label,
+        onSelect: () => { router.push(page.href); resetSearch(); },
+      }))
+    : [];
+  const actionEntries: SearchEntry[] = term.length >= 2
+    ? createItems.filter((item) => searchKey(`${item.label} ${item.description || ""} yeni`).includes(term)).slice(0, 3).map((item) => ({
+        key: `is-${item.key}`,
+        group: "İşler",
+        label: `Yeni ${item.label.toLocaleLowerCase("tr")}`,
+        detail: typeof item.description === "string" ? item.description : undefined,
+        onSelect: () => {
+          resetSearch();
+          if (item.href) router.push(item.href);
+          else item.onSelect?.();
+        },
+      }))
+    : [];
+  const patientEntries: SearchEntry[] = results.map((patient) => ({
+    key: `hasta-${patient.id}`,
+    group: "Hastalar",
+    label: patient.fullName,
+    detail: [maskedIdentityLabel(patient), !hidePhone && patient.phone ? formatPhoneNumber(patient.phone) : ""].filter(Boolean).join(" · "),
+    patient,
+    onSelect: () => openPatient(patient.id),
+  }));
+  const entries: SearchEntry[] = [...patientEntries, ...pageEntries, ...actionEntries];
+
+  const onSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Escape") {
+      setShowResults(false);
+      setActiveIndex(-1);
+      return;
+    }
+    if (!showResults || entries.length === 0) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setActiveIndex((index) => Math.min(index + 1, entries.length - 1));
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveIndex((index) => Math.max(index - 1, -1));
+    } else if (event.key === "Enter" && activeIndex >= 0 && entries[activeIndex]) {
+      event.preventDefault();
+      entries[activeIndex].onSelect();
+    }
+  };
 
   // ── Bekleme salonu ────────────────────────────────────────────────────────
   // Bekleme salonu klinik akışıdır (sunucu yalnız hasta kaydını açabilen role
@@ -414,7 +473,8 @@ export function Topbar({ user, branchContext }: Props) {
       <header className="relative z-[160] isolate flex h-14 w-full min-w-0 shrink-0 items-center justify-between gap-2 border-b border-slate-200 bg-[rgb(var(--app-surface))] px-3 sm:gap-3 sm:px-4 lg:px-5">
         {/* Sol: menü (telefon/tablet), şube, hasta arama */}
         <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
-          <div className="shrink-0 lg:hidden">
+          {/* Telefonda menü alt çubukta (MobileBottomNav); burada tablet için. */}
+          <div className="hidden shrink-0 md:block lg:hidden">
             <IconButton
               icon={Menu}
               title="Menüyü aç"
@@ -430,6 +490,7 @@ export function Topbar({ user, branchContext }: Props) {
             <div ref={searchRef} className="relative min-w-0 max-w-md flex-1">
               <form onSubmit={submitSearch} role="search">
                 <SearchInput
+                  ref={searchInputRef}
                   value={q}
                   onChange={(value) => {
                     setQ(value);
@@ -441,7 +502,7 @@ export function Topbar({ user, branchContext }: Props) {
                   }}
                   onKeyDown={onSearchKeyDown}
                   placeholder={hidePhone ? SEARCH_PLACEHOLDER_NAME_ONLY : SEARCH_PLACEHOLDER}
-                  aria-label={hidePhone ? "Hasta ara: ad" : "Hasta ara: ad, TC kimlik no veya telefon"}
+                  aria-label={hidePhone ? "Ara: hasta adı, sayfa ya da iş" : "Ara: hasta (ad, TC kimlik no, telefon), sayfa ya da iş"}
                   role="combobox"
                   aria-controls="ust-bar-hasta-sonuclari"
                   aria-expanded={showResults && q.trim().length >= 2}
@@ -449,36 +510,46 @@ export function Topbar({ user, branchContext }: Props) {
                   aria-activedescendant={activeIndex >= 0 ? `ust-bar-hasta-${activeIndex}` : undefined}
                 />
               </form>
+              {/* Kısayol ipucu yalnız klavyeli geniş ekranda ve kutu boşken. */}
+              {!q && (
+                <kbd aria-hidden="true" className="pointer-events-none absolute right-3 top-1/2 hidden -translate-y-1/2 rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-sans text-[11px] font-semibold text-slate-400 lg:block">
+                  Ctrl K
+                </kbd>
+              )}
               {showResults && q.trim().length >= 2 && (
-                <div id="ust-bar-hasta-sonuclari" role="listbox" aria-label="Hasta arama sonuçları" className="ui-popover absolute left-0 right-0 top-full z-[220] mt-2 max-h-[min(70vh,28rem)] overflow-y-auto py-1">
-                  {results.length > 0 ? results.map((patient, index) => {
-                    // TC tam yazılmaz: diğer hasta seçicilerindeki gibi son 4 hane ("TC •••• 4530").
-                    const detail = [maskedIdentityLabel(patient), !hidePhone && patient.phone ? formatPhoneNumber(patient.phone) : ""].filter(Boolean).join(" · ");
+                <div id="ust-bar-hasta-sonuclari" role="listbox" aria-label="Arama sonuçları" className="ui-popover absolute left-0 right-0 top-full z-[220] mt-2 max-h-[min(70vh,28rem)] overflow-y-auto py-1">
+                  {entries.map((entry, index) => {
+                    const firstOfGroup = index === 0 || entries[index - 1].group !== entry.group;
                     return (
-                      <button
-                        key={patient.id}
-                        id={`ust-bar-hasta-${index}`}
-                        type="button"
-                        role="option"
-                        aria-selected={activeIndex === index}
-                        onMouseEnter={() => setActiveIndex(index)}
-                        onClick={() => openPatient(patient.id)}
-                        className={`flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors ${activeIndex === index ? "bg-primary/10" : "hover:bg-slate-50"}`}
-                      >
-                        <Avatar name={patient.fullName} size="sm" />
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-semibold text-slate-800">{patient.fullName}</span>
-                          {detail && <span className="block truncate text-xs text-slate-500">{detail}</span>}
-                        </span>
-                        <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
-                      </button>
+                      <div key={entry.key}>
+                        {firstOfGroup && (pageEntries.length > 0 || actionEntries.length > 0) && (
+                          <div className="px-3 pb-1 pt-2 text-[11px] font-bold uppercase tracking-wide text-slate-400" aria-hidden="true">{entry.group}</div>
+                        )}
+                        <button
+                          id={`ust-bar-hasta-${index}`}
+                          type="button"
+                          role="option"
+                          aria-selected={activeIndex === index}
+                          onMouseEnter={() => setActiveIndex(index)}
+                          onClick={entry.onSelect}
+                          className={`flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors ${activeIndex === index ? "bg-primary/10" : "hover:bg-slate-50"}`}
+                        >
+                          {entry.patient && <Avatar name={entry.patient.fullName} size="sm" />}
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-semibold text-slate-800">{entry.label}</span>
+                            {entry.detail && <span className="block truncate text-xs text-slate-500">{entry.detail}</span>}
+                          </span>
+                          <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
+                        </button>
+                      </div>
                     );
-                  }) : (
+                  })}
+                  {results.length === 0 && (
                     <div className="px-4 py-3 text-center text-sm text-slate-500">
                       {searchLoading ? (
                         <span role="status" className="inline-flex items-center gap-2"><Spinner className="h-3.5 w-3.5 text-primary" />Hastalar aranıyor…</span>
                       ) : searchError ? (
-                        <span role="alert" className="text-red-600">Arama şu anda yapılamıyor. Biraz sonra yeniden deneyin.</span>
+                        <span role="alert" className="text-red-600">Hasta araması şu anda yapılamıyor. Biraz sonra yeniden deneyin.</span>
                       ) : (
                         <span>Bu aramayla eşleşen hasta yok.</span>
                       )}
@@ -496,7 +567,7 @@ export function Topbar({ user, branchContext }: Props) {
               geniş düğme arama kutusunu ~100 px'e sıkıştırıyordu. Menü açılmadan
               önce (dokunma, odak, tuş) hasta dosyasının bağlamı yeniden okunur. */}
           {createItems.length > 0 && (
-            <div className="flex shrink-0" onPointerDownCapture={refreshContextPatient} onFocusCapture={refreshContextPatient} onKeyDownCapture={refreshContextPatient}>
+            <div className="hidden shrink-0 md:flex" onPointerDownCapture={refreshContextPatient} onFocusCapture={refreshContextPatient} onKeyDownCapture={refreshContextPatient}>
               <ActionMenu
                 trigger="button"
                 variant="secondary"
@@ -629,6 +700,7 @@ export function Topbar({ user, branchContext }: Props) {
           </div>
         </div>
       </header>
+      <MobileBottomNav canAppointments={can("appointments:read")} canPatients={can("patients:read")} createItems={createItems} />
       {showPatientForm && (
         <PatientFormModal
           open

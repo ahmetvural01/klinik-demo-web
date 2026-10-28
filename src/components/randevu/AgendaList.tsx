@@ -8,6 +8,7 @@ import { ListTable, EmptyValue, type ListTableColumn } from "@/components/ui/Lis
 import { showToastSafe } from "@/lib/toast-client";
 import type { TreatmentOption } from "@/lib/appointment-follow-up";
 import { patchAppointment } from "@/components/randevu/appointment-api";
+import { undoAppointmentStatus } from "@/components/randevu/appointment-undo";
 import {
   STATUS_ICON,
   displayStatus,
@@ -125,7 +126,13 @@ export function QuickStatusButton({ appointment, onChanged }: { appointment: App
     onChanged({ ...appointment, status: next.status });
     // "Geldi"den sonra bildirim de geldiğini söyler (önceden "Bekliyor" yazıyordu — K3).
     const resultText = next.status === "GELDI" ? "Geldi · bekleme salonunda" : statusChipLabel(next.status);
-    showToastSafe({ message: `${appointment.patient?.fullName || "Hasta"} · ${resultText}`, type: "success" });
+    // Yanlış satıra dokunulduysa tek dokunuşla eski durumuna döner.
+    const previous = appointment.status;
+    showToastSafe({
+      message: `${appointment.patient?.fullName || "Hasta"} · ${resultText}`,
+      type: "success",
+      action: { label: "Geri al", onClick: () => void undoAppointmentStatus(appointment, previous, onChanged) },
+    });
   };
   return (
     <div className="flex flex-col items-end gap-1.5 md:flex-row md:justify-end">

@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { usePermissions } from "@/components/auth/PermissionProvider";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { formatDateText } from "@/components/ui/Money";
 import { Tabs, useTabParam, type TabItem } from "@/components/ui/Tabs";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -70,7 +71,6 @@ import {
   type TabKey,
 } from "./_components/patient-file-shared";
 import { SummaryTab } from "./_components/SummaryTab";
-import { PrintArea } from "./_components/print";
 
 // Varsayılan (Özet) dışındaki sekmeler ve bütün pencereler ancak açılınca
 // yüklenir: hasta dosyasının ilk açılışında inen kod küçülür (PDF kitaplığı,
@@ -656,11 +656,26 @@ export default function HastaDetayContent() {
   const identity = [age !== null ? `${age} yaş` : "", genderLabel(data.gender)].filter(Boolean).join(" · ");
   const showPhone = !hidePatientPhone && Boolean(data.phone) && data.phone !== "***";
 
+  // Banko hastayı dosyayı açar açmaz tanısın: son geldiği gün ve sıradaki randevusu
+  // başlık satırında (Randevular sekmesini açmadan). Yalnız randevuyu görebilen rol.
+  const nowMs = Date.now();
+  const visits = (data.appointments || []).filter((appt) => appt.status === "GELDI" || appt.status === "TAMAMLANDI");
+  const lastVisit = visits.reduce<string | null>((latest, appt) => (!latest || appt.startAt > latest ? appt.startAt : latest), null);
+  const nextAppt = (data.appointments || [])
+    .filter((appt) => (appt.status === "BEKLIYOR" || appt.status === "ONAYLANDI") && new Date(appt.startAt).getTime() > nowMs)
+    .reduce<string | null>((soonest, appt) => (!soonest || appt.startAt < soonest ? appt.startAt : soonest), null);
+  const visitText = [
+    nextAppt ? `Sıradaki randevu ${formatDateText(nextAppt, "datetime")}` : "",
+    lastVisit ? `Son ziyaret ${formatDateText(lastVisit)}` : "",
+  ].filter(Boolean).join(" · ");
+
   const debt = balance.totalDebt;
   // Borç ya da avans yoksa başlıkta "Kalan borç ₺0,00" yazılmaz (bilgi vermiyordu).
   // Ad Hesap sekmesindeki ve dışa aktarımdakiyle aynı ("Avans" / "Hastanın avansı" karışıyordu).
   const showBalance = canOpenTab("odeme") && balanceKnown && Math.abs(debt) > 0.004;
-  const debtLabel = debt < -0.004 ? "Hastanın avansı" : "Kalan borç";
+  // Hasta yapılan tedaviden fazla ödediyse (ör. tedaviden önce alınan ödeme):
+  // "Ön ödeme", sonraki tedavilerden düşülür (Muhasebe › Alacaklar ile aynı ad).
+  const debtLabel = debt < -0.004 ? "Ön ödeme" : "Kalan borç";
   const debtTone = debt > 0.004 ? "text-red-700" : debt < -0.004 ? "text-emerald-700" : "text-slate-800";
 
   const riskBadges = (size: "sm" | "md" = "sm"): ReactNode => (
@@ -720,11 +735,13 @@ export default function HastaDetayContent() {
             icon="users"
             back={{ href: backHref, label: "Hastalar" }}
             title={data.fullName}
-            description={(identity || showPhone || healthFlags.length > 0) ? (
+            description={(identity || showPhone || healthFlags.length > 0 || visitText) ? (
               <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 {identity && <span>{identity}</span>}
                 {identity && showPhone && <span aria-hidden="true">·</span>}
                 {showPhone && <PhoneLink phone={data.phone} countryCode={data.phoneCountryCode} className="text-slate-600" />}
+                {visitText && (identity || showPhone) && <span aria-hidden="true">·</span>}
+                {visitText && <span>{visitText}</span>}
                 {riskBadges()}
               </span>
             ) : undefined}
@@ -825,7 +842,6 @@ export default function HastaDetayContent() {
         )}
         {exportOpen && <ExportModal open onClose={() => setExportOpen(false)} />}
         {accessLogOpen && <AccessLogModal open onClose={() => setAccessLogOpen(false)} patientId={data.id} patientName={data.fullName} />}
-        <PrintArea />
       </section>
     </PatientFileProvider>
   );

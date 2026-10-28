@@ -79,7 +79,7 @@ function initialValuesFromQuery(query: string): PatientFormInitialValues | undef
 function BalanceText({ value }: { value: number | null | undefined }) {
   if (value === null || value === undefined || Math.abs(value) < 0.005) return null;
   if (value > 0) return <span className="font-semibold tabular-nums text-red-700">{formatCurrency(value)} borç</span>;
-  return <span className="tabular-nums text-emerald-700">{formatCurrency(Math.abs(value))} avans</span>;
+  return <span className="tabular-nums text-emerald-700">{formatCurrency(Math.abs(value))} ön ödeme</span>;
 }
 
 /**

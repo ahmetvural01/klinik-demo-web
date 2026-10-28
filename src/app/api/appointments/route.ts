@@ -418,6 +418,7 @@ export async function POST(request: NextRequest) {
       const appt = await tx.appointment.create({
         data: {
           ...parsed.data,
+          createdById: auth.user.id,
           institutionId: auth.user.institutionId!,
           branchId: activeBranch.branchId,
           clinicUnitId: selectedUnit?.id || null,

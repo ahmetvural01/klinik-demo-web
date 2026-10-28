@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { usePathname, useSearchParams } from "next/navigation";
-import { Plus, Receipt } from "lucide-react";
+import { CalendarCheck, Plus, Receipt } from "lucide-react";
+import { DayEndModal } from "@/components/muhasebe/DayEndModal";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Tabs } from "@/components/ui/Tabs";
 import { Button } from "@/components/ui/Button";
@@ -72,6 +73,7 @@ export default function MuhasebePage() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { can, scopeKey } = usePermissions();
+  const [dayEndOpen, setDayEndOpen] = useState(false);
   const canReadPayments = can("payments:read");
   const canWritePayments = can("payments:write");
   const canRefundPayments = can("payments:refund");
@@ -249,8 +251,11 @@ export default function MuhasebePage() {
   }
 
   // Başlık eylemleri SABİT: sekme değişince yer/ad değiştirmez. Tek birincil eylem.
-  const headerActions = canWritePayments || canWriteFinance ? (
+  // Gün sonu: tahsilatı ve gideri görebilen (kasayı kapatan) kişi.
+  const canDayEnd = canReadPayments && canReadFinance;
+  const headerActions = canWritePayments || canWriteFinance || canDayEnd ? (
     <div className="flex flex-wrap gap-2">
+      {canDayEnd && <Button variant="secondary" icon={CalendarCheck} onClick={() => setDayEndOpen(true)}>Gün sonu</Button>}
       {canWriteFinance && (
         <Button variant={canWritePayments ? "secondary" : "primary"} icon={Receipt} onClick={() => openEntry("gider")}>Gider / ödeme</Button>
       )}
@@ -267,6 +272,7 @@ export default function MuhasebePage() {
   return (
     <div className="space-y-3">
       <PageHeader icon="finance" title="Muhasebe" actions={headerActions} />
+      {canDayEnd && <DayEndModal open={dayEndOpen} onClose={() => setDayEndOpen(false)} />}
 
       <Tabs
         ariaLabel="Muhasebe bölümleri"

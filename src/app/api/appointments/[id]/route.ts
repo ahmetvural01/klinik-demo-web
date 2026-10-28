@@ -331,6 +331,7 @@ export async function PUT(request: NextRequest, props: Params) {
           data: {
             ...(typeof body.status === "string" ? { status: body.status } : {}),
             ...(typeof body.note === "string" ? { note: body.note } : {}),
+            updatedById: auth.user.id,
             // Yeniden açılan randevuda hastanın eski "gelemeyeceğim" yanıtı geçersizdir.
             ...(reactivating ? { patientResponse: null, patientRespondedAt: null } : {}),
           },
@@ -627,6 +628,7 @@ export async function PUT(request: NextRequest, props: Params) {
           smsInfo: existing.smsInfo,
           smsReminder: existing.smsReminder,
           smsSurvey: existing.smsSurvey,
+          updatedById: auth.user.id,
           // Saati değişen randevuda hastanın eski onayı yeni saat için geçmez:
           // yeni hatırlatmada bağlantı yeniden gider.
           ...(newStart.getTime() !== existing.startAt.getTime() || (targetStatus !== existing.status && INACTIVE_STATUSES.has(existing.status))

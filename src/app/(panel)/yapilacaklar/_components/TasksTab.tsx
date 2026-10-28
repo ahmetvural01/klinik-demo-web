@@ -248,6 +248,8 @@ export const TasksTab = forwardRef<TasksTabHandle, Props>(function TasksTab({ ac
         message: task.title,
         type: "success",
         icon: "clipboard",
+        // Yanlışlıkla "Tamamla"ya basıldıysa görev tek dokunuşla eski durumuna döner.
+        action: next === "TAMAMLANDI" ? { label: "Geri al", onClick: () => void changeStatus(data as ClinicTask, task.status) } : undefined,
       });
       return true;
     } catch (statusError) {

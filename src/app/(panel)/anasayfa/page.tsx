@@ -25,6 +25,7 @@ import { dayLabelOf, msUntilNextTurkeyMidnight, shiftDateKey, todayKeyTR } from 
 import { TodoList } from "./_components/TodoList";
 import { TodayAppointments } from "./_components/TodayAppointments";
 import { OpenPastModal } from "./_components/OpenPastModal";
+import { GettingStarted } from "./_components/GettingStarted";
 import { HOME_GRID, HOME_MAIN, HOME_SIDE_PANEL, HOME_SIDE_SECTION, HOME_TODO_ORDER } from "./_components/home-layout";
 
 // Randevu formu yalnız açılınca yüklenir (ilk açılışı ağırlaştırmasın).
@@ -53,7 +54,7 @@ type FormState = { mode: "create" | "edit"; appointment?: Appointment | null; in
 export default function AnasayfaPage() {
   // Oturumdaki kullanıcı: panel düzeni verirse hemen (liste özet isteğini
   // beklemez), yoksa özet yanıtından.
-  const { can, userId: contextUserId } = usePermissions();
+  const { can, userId: contextUserId, scopeKey } = usePermissions();
   // Bugünkü randevu listesi randevuları GÖREBİLEN herkese (eski ana sayfa da
   // okuma iznine bakıyordu); "Yeni randevu", Geldi/Tamamlandı ve açık kalan
   // randevuları kapatma yalnız yazma izniyle. Salt okuyan rol listeyi
@@ -230,9 +231,18 @@ export default function AnasayfaPage() {
   // gösterilmez — bilinmeyen tutar "₺0,00" yazılmaz.
   const collections = summary.data?.collectionsToday;
   const collectionsPending = !summary.data && !summary.error;
-  const stats: PageHeaderStat[] | undefined = canSeeCollections && (collections !== undefined || collectionsPending)
-    ? [{ label: "Bugünkü tahsilat", value: collections !== undefined ? <Money value={collections} /> : <Skeleton className="inline-block h-3.5 w-16 align-middle" /> }]
-    : undefined;
+  // Yönetici günün özetini başlıkta görür (en çok 3 sayı): gelen / randevu, gelmeyen, tahsilat.
+  const todayCounts = can("settings:write") ? summary.data?.appointments?.today : undefined;
+  const statList: PageHeaderStat[] = [
+    ...(todayCounts && todayCounts.total > 0 ? [
+      { label: "Bugün gelen", value: `${todayCounts.arrived} / ${todayCounts.total}` },
+      ...(todayCounts.noShow > 0 ? [{ label: "Gelmeyen", value: todayCounts.noShow, color: "text-red-700" }] : []),
+    ] : []),
+    ...(canSeeCollections && (collections !== undefined || collectionsPending)
+      ? [{ label: "Bugünkü tahsilat", value: collections !== undefined ? <Money value={collections} /> : <Skeleton className="inline-block h-3.5 w-16 align-middle" /> }]
+      : []),
+  ];
+  const stats: PageHeaderStat[] | undefined = statList.length > 0 ? statList : undefined;
   const tomorrow = summary.data?.appointments
     ? { all: summary.data.appointments.tomorrow, mine: summary.data.appointments.tomorrowMine }
     : null;
@@ -264,6 +274,8 @@ export default function AnasayfaPage() {
         stats={stats}
         actions={canWriteAppointments ? <Button icon={Plus} onClick={openNewAppointment}>Yeni randevu</Button> : undefined}
       />
+
+      {can("settings:write") && <GettingStarted scopeKey={scopeKey} />}
 
       {canReadAppointments ? (
         // Geniş ekranda (1360 px+, ör. 1366/1440/1920 klinik ekranları) randevular

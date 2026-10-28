@@ -738,7 +738,7 @@ export default function RandevuPage() {
       separatorBefore: permissions.canManageBlocks,
       disabled: !canExport,
       disabledReason: exportReason,
-      onSelect: () => { if (!printSchedule(exportRows, treatments, exportMeta())) printFailed(); },
+      onSelect: () => { void printSchedule(exportRows, treatments, exportMeta()).then((ok) => { if (!ok) printFailed(); }); },
     },
     {
       key: "excel",

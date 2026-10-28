@@ -17,6 +17,7 @@ import { usePatientFile } from "./PatientFileContext";
 import { InstallmentModal } from "./InstallmentModal";
 import { PrintSelectModal } from "./PrintSelectModal";
 import { printInstallmentPlan, printPaymentStatement } from "./print";
+import { printPaymentReceipt } from "@/components/finance/payment-receipt";
 import {
   getItemAmount,
   getItemDueDate,
@@ -113,13 +114,14 @@ export function FinanceTab() {
       <ActionMenu
         label={`${money(payment.amount)} tahsilat için işlemler`}
         items={[
+          { key: "receipt", label: "Makbuz yazdır", icon: Printer, onSelect: () => void printPaymentReceipt(payment.id) },
           ...(canCollect ? [{ key: "edit", label: "Tahsilatı düzelt", icon: Pencil, disabled: busyId === payment.id, onSelect: () => openPayment(payment) }] : []),
           ...(canRefund ? [{ key: "cancel", label: "Tahsilatı iptal et", icon: XCircle, danger: true, disabled: busyId === payment.id, onSelect: () => void cancelPayment(payment) }] : []),
         ]}
       />
     </div>
   );
-  const hasPaymentActions = canCollect || canRefund;
+  // Makbuz tahsilatı gören herkes içindir: "…" menüsü her satırda var.
   // Her satırda aynı hekim → başlık altında bir kez; hiç açıklama yoksa sütun yok.
   const paymentDoctor = sharedName(payments, (payment) => payment.doctor?.fullName);
   const hasDescriptions = payments.some((payment) => Boolean(payment.description?.trim()));
@@ -130,7 +132,7 @@ export function FinanceTab() {
     { key: "method", header: "Yöntem", render: (payment) => paymentMethodLabel(payment.method) },
     ...(paymentDoctor ? [] : [{ key: "doctor", header: "Hekim", render: (payment: Pay) => payment.doctor?.fullName || null }]),
     ...(hasDescriptions ? [{ key: "description", header: "Açıklama", render: (payment: Pay) => payment.description || null }] : []),
-    ...(hasPaymentActions ? [{ key: "actions", header: "", align: "right" as const, render: paymentActions }] : []),
+    { key: "actions", header: "", align: "right" as const, render: paymentActions },
   ];
 
   // Taksitler planın içinde düz satırlar (önceden plan kartının içinde ikinci
@@ -156,7 +158,7 @@ export function FinanceTab() {
   };
 
   const debtTone = debt > 0.004 ? "text-red-700" : debt < -0.004 ? "text-emerald-700" : "text-slate-900";
-  const debtLabel = debt < -0.004 ? "Hastanın avansı" : "Kalan borç";
+  const debtLabel = debt < -0.004 ? "Ön ödeme" : "Kalan borç";
   // Özet tek sırada (yapılan − indirim − alınan = kalan): önceden alt alta
   // dört satır sayfanın yarısını boş bırakıyordu.
   const summaryItems: DescriptionItem[] = [
@@ -207,7 +209,7 @@ export function FinanceTab() {
               <p className="text-sm font-semibold tabular-nums text-emerald-700">{money(payment.amount)} <span className="font-normal text-slate-600">· {paymentMethodLabel(payment.method)}</span></p>
               <p className="line-clamp-2 text-xs text-slate-500">{[formatDateText(payment.createdAt), paymentDoctor ? "" : payment.doctor?.fullName, payment.description].filter(Boolean).join(" · ")}</p>
             </div>
-            {hasPaymentActions && paymentActions(payment)}
+            {paymentActions(payment)}
           </div>
         )}
       />

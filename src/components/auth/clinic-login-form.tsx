@@ -61,6 +61,7 @@ export function ClinicLoginForm({ next, reason }: ClinicLoginFormProps = {}) {
   const [institution, setInstitution] = useState("");
   const [identityNo, setIdentityNo] = useState("");
   const [password, setPassword] = useState("");
+  const [clinicBrand, setClinicBrand] = useState<{ name: string; logoUrl: string | null } | null>(null);
   const [remember, setRemember] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -90,6 +91,15 @@ export function ClinicLoginForm({ next, reason }: ClinicLoginFormProps = {}) {
     if (typedIdentity) setIdentityNo(typedIdentity);
     if (typedPassword) setPassword(typedPassword);
     focusFirstEmpty([institutionRef.current, identityRef.current, passwordRef.current]);
+    // Bu cihazda hatırlanan kliniğin logosu: personel doğru kliniğe girdiğini görür.
+    if (remembered) {
+      fetch(`/api/public/clinic-brand?kurum=${encodeURIComponent(remembered)}`)
+        .then((response) => (response.ok ? response.json() : null))
+        .then((brand: { name?: string | null; logoUrl?: string | null } | null) => {
+          if (brand?.name) setClinicBrand({ name: brand.name, logoUrl: brand.logoUrl || null });
+        })
+        .catch(() => {});
+    }
   }, []);
 
   const finishLogin = (credentials: Credentials, mustChangePassword: boolean) => {
@@ -215,6 +225,15 @@ export function ClinicLoginForm({ next, reason }: ClinicLoginFormProps = {}) {
   return (
     <AuthLayout links={links}>
       <form ref={formRef} method="post" onSubmit={onSubmit} className="space-y-4">
+        {clinicBrand && (
+          <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+            {clinicBrand.logoUrl && (
+              // eslint-disable-next-line @next/next/no-img-element -- logo data URL olabilir.
+              <img src={clinicBrand.logoUrl} alt="" className="h-10 max-w-[96px] shrink-0 object-contain" />
+            )}
+            <span className="min-w-0 truncate text-sm font-bold text-slate-800">{clinicBrand.name}</span>
+          </div>
+        )}
         <h1 className="font-display text-xl font-extrabold text-slate-900">Klinik girişi</h1>
         {idleLogout && !error && (
           <Callout tone="info" role="status" title="Oturum kapatıldı">

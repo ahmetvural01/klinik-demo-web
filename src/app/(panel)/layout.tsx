@@ -135,7 +135,10 @@ export default async function PanelLayout({ children }: { children: React.ReactN
           branchContext={branchSwitcherData}
         />
         {/* relative: içerikteki sr-only (absolute) öğeler body'ye göre yerleşip belgeyi uzatmasın. */}
-        <main className="panel-content relative flex-1 overscroll-contain overflow-y-auto px-3 pb-4 pt-0 sm:px-4 sm:pb-5 lg:px-5">
+        {/* Telefonda alt menü çubuğu içeriğin altını örtmesin (pb-20). */}
+        <main className="panel-content relative flex-1 overscroll-contain overflow-y-auto px-3 pb-20 pt-0 sm:px-4 md:pb-5 lg:px-5">
+          {/* Çok geniş ekranda içerik sabit genişlikte ortalanır: tablolar 1920 px'e yayılmaz. */}
+          <div className="mx-auto w-full max-w-[1440px]">
           {/* Bantlar içerikle birlikte kayar: telefonda ekranın dörtte birini kalıcı kaplamasın. */}
           {user.ghost && <GhostModeBanner institutionName={institutionName} previewRole={user.previewRole} />}
           {showBilling && <BillingStatusBanner initialStatus={billingStatus} />}
@@ -146,6 +149,7 @@ export default async function PanelLayout({ children }: { children: React.ReactN
           </ToastWrapper>
           {/* Reklam alanı: içeriğin en altında; kuralı src/lib/panel-ads.ts. */}
           <PanelAdSlot placement="content" />
+          </div>
         </main>
       </div>
     </div>

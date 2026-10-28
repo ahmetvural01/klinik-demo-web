@@ -6,7 +6,9 @@ import { Info, X } from "lucide-react";
 import { StatusFeedback } from "@/components/ui/StatusFeedback";
 import { ModuleIcon, type ModuleKey } from "@/components/ui/ModuleIcon";
 
-type Toast = { id: string; title?: string; message: string; duration?: number; type?: 'success' | 'error' | 'info'; icon?: ModuleKey };
+/** Bildirimdeki tek düğme ("Makbuz yazdır", "Geri al"); tıklanınca bildirim kapanır. */
+export type ToastAction = { label: string; onClick: () => void };
+type Toast = { id: string; title?: string; message: string; duration?: number; type?: 'success' | 'error' | 'info'; icon?: ModuleKey; action?: ToastAction };
 
 type ToastContextValue = {
   showToast: (t: Omit<Toast, 'id'>) => void;
@@ -35,7 +37,8 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     // Hata bildirimi ne olduğunu ve ne yapılacağını söyler; 3 sn'de okunup
     // anlaşılamıyordu (WCAG 2.2.1). Süre verilmemişse hata 8 sn kalır.
     // Açıkça verilen süre (0 = kendiliğinden kapanmaz) aynen korunur.
-    const toast: Toast = { id, ...t, duration: t.duration ?? (t.type === "error" ? 8000 : 3000) };
+    // Düğmeli bildirim okunup tıklanabilsin diye daha uzun kalır.
+    const toast: Toast = { id, ...t, duration: t.duration ?? (t.type === "error" ? 8000 : t.action ? 8000 : 3000) };
     setToasts((s) => [...s, toast]);
     if (toast.duration && toast.duration > 0) {
       timersRef.current[id] = window.setTimeout(() => {
@@ -50,7 +53,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       try {
         const d = (e as CustomEvent<Omit<Toast, "id">>).detail;
         if (!d) return;
-        showToast({ title: d.title, message: d.message, type: d.type, duration: d.duration, icon: d.icon });
+        showToast({ title: d.title, message: d.message, type: d.type, duration: d.duration, icon: d.icon, action: d.action });
       } catch {}
     }
     window.addEventListener('klinik-show-toast', onEvent as EventListener);
@@ -92,6 +95,15 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               <div className="flex-1">
                 {t.title && <div className="text-sm font-semibold text-slate-800">{t.title}</div>}
                 <div className="text-sm leading-5 text-slate-700">{t.message}</div>
+                {t.action && (
+                  <button
+                    type="button"
+                    onClick={() => { remove(t.id); t.action?.onClick(); }}
+                    className="ui-touch-target mt-1.5 rounded-md text-sm font-bold text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  >
+                    {t.action.label}
+                  </button>
+                )}
               </div>
               {/* ui-touch-target: görünüş 24px, dokunmatikte dokunma alanı 36px. */}
               <button type="button" aria-label="Bildirimi kapat" onClick={() => remove(t.id)} className="ui-touch-target ml-2 rounded-lg p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700">

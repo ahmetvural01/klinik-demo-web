@@ -112,7 +112,7 @@ function buildSections(patient: Raw, balance: PatientBalance, hidePhone: boolean
         ["İndirim oranı", `%${balance.discountRate}`],
         ["İndirimli toplam", money(balance.discountedTotal)],
         ["Alınan tahsilat", money(balance.totalPaid)],
-        [balance.totalDebt < 0 ? "Hastanın avansı" : "Kalan borç", money(Math.abs(balance.totalDebt))],
+        [balance.totalDebt < 0 ? "Ön ödeme" : "Kalan borç", money(Math.abs(balance.totalDebt))],
       ],
     },
     appointments: {

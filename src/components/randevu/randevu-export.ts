@@ -1,5 +1,6 @@
 "use client";
 
+import { letterheadHtml, loadPrintClinic, printDocument } from "@/lib/print-letterhead";
 import type { TreatmentOption } from "@/lib/appointment-follow-up";
 import {
   countByDisplay,
@@ -114,17 +115,19 @@ function openPrintWindow(title: string, bodyHtml: string, extraCss: string): boo
  * basılmaz (canlı test: 6 satırın 3'ü iptaldi), özet satırında sayısı yazar.
  * Excel dosyası kayıt amaçlı olduğu için iptalleri de içerir.
  */
-export function printSchedule(appointments: Appointment[], treatments: TreatmentOption[], meta: ExportMeta): boolean {
+export async function printSchedule(appointments: Appointment[], treatments: TreatmentOption[], meta: ExportMeta): Promise<boolean> {
   const rows = toRows(appointments.filter((item) => item.status !== "IPTAL"), treatments);
   const { counts, active } = summaryLine(appointments);
   const now = new Date().toLocaleString("tr-TR");
+  // Bütün çıktılarla aynı antet (logo, adres, telefon) — src/lib/print-letterhead.ts.
+  const clinic = await loadPrintClinic();
   const body = `<div class="page">
-  <div class="head"><div><div class="clinic">${esc(meta.clinicName || "Randevu çizelgesi")}</div><div class="sub">${esc(meta.title)}</div></div>
-  <div class="meta">Doktor: <b>${esc(meta.doctorName)}</b><br>Oluşturma: ${esc(now)}</div></div>
+  ${letterheadHtml({ ...clinic, name: clinic.name || meta.clinicName }, { title: "Randevu çizelgesi", date: meta.title, meta: [`Doktor: ${meta.doctorName}`, `Oluşturma: ${now}`] })}
   <p class="sum">Randevu: <b>${active}</b> · ${ORDER.map((status) => `${esc(APPOINTMENT_DISPLAY_STATUS_LABELS[status])}: <b>${counts[status]}</b>`).join(" · ")}</p>
   <table><thead><tr><th>Tarih</th><th>Saat</th><th>Süre</th><th>Hasta</th><th>Doktor</th><th>Tedavi</th><th>Durum</th><th>Not</th></tr></thead>
   <tbody>${rows.map((row) => `<tr><td>${esc(row.date)}</td><td><b>${esc(row.time)}</b></td><td>${esc(row.duration)}</td><td><b>${esc(row.patient)}</b></td><td>${esc(row.doctor)}</td><td>${esc(row.treatment)}</td><td><span class="badge" style="${STATUS_STYLE[row.status]}">${esc(APPOINTMENT_DISPLAY_STATUS_LABELS[row.status])}</span></td><td class="note">${esc(row.note)}</td></tr>`).join("") || `<tr><td colspan="8" class="empty">Kayıt yok</td></tr>`}</tbody></table></div>`;
-  return openPrintWindow(meta.title, body, `.page{padding:14mm}.head{display:flex;justify-content:space-between;border-bottom:2px solid #1E3A5F;padding-bottom:10px;margin-bottom:10px}.clinic{font-size:20px;font-weight:800;color:#1E3A5F}.sub{font-size:13px;color:#475569;margin-top:2px}.meta{text-align:right;font-size:11px;color:#475569;line-height:1.6}.sum{margin-bottom:10px;font-size:12px}table{width:100%;border-collapse:collapse}th{background:#1E3A5F;color:#fff;text-align:left;padding:7px 8px;font-size:11px}td{border:1px solid #E2E8F0;padding:6px 8px;vertical-align:top}.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:700}.note{color:#64748B;font-size:11px}.empty{text-align:center;color:#94A3B8;padding:20px}@media print{.page{padding:8mm}thead{display:table-header-group}tr{page-break-inside:avoid}}`);
+  printDocument(meta.title, body, `.page{padding:0}.sum{margin-bottom:10px;font-size:12px}table{width:100%;border-collapse:collapse}th{background:#1E3A5F;color:#fff;text-align:left;padding:7px 8px;font-size:11px}td{border:1px solid #E2E8F0;padding:6px 8px;vertical-align:top}.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:700}.note{color:#64748B;font-size:11px}.empty{text-align:center;color:#94A3B8;padding:20px}@media print{thead{display:table-header-group}tr{page-break-inside:avoid}}`);
+  return true;
 }
 
 /** Odalara asılacak sade liste: doktor başına sayfa, saat + hasta + tedavi (iptal/gelmedi hariç). */
