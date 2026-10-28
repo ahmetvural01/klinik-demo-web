@@ -161,12 +161,11 @@ export async function applyLabInvoiceFirmaIntegration(input: LabFirmaInput): Pro
     };
   }
 
-  const refs = [
-    sourceToken,
-    input.labOrderId ? `Lab Sipariş: ${input.labOrderId}` : "",
-    input.labInvoiceId ? `Lab Fatura Kaydı: ${input.labInvoiceId}` : "",
-    input.note || "",
-  ].filter(Boolean).join(" | ");
+  // Açıklamada yalnız sistem etiketi (tekrar kaydı önler, ekranda gizlenir) ve
+  // kullanıcının notu durur; iş ve hasta "urunHizmet"te okunur. Önceden "Lab
+  // Sipariş: cmv… | Lab Fatura Kaydı: cmv…" iç kimlikleri tedarikçi hesabında
+  // açıklama olarak görünüyordu (kayıt bağlantısı sourceType/sourceId'de).
+  const refs = [sourceToken, input.note || ""].filter(Boolean).join(" | ");
 
   const islem = await input.tx.firmaIslem.create({
     data: {

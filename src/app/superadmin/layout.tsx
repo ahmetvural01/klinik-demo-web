@@ -5,6 +5,12 @@ import ConfirmProvider from "@/components/ui/ConfirmProvider";
 import ToastWrapper from "@/components/ui/ToastWrapper";
 import MobileSidebarToggle from "./mobile-sidebar-toggle";
 
+// Platform yöneticisi alanı gizli: herkese açık sayfalardan bağlantı verilmez,
+// arama motorları da dizine eklemez (adresi yalnız sistem sahibi bilir).
+export const metadata = {
+  robots: { index: false, follow: false, nocache: true },
+};
+
 export default async function SuperadminLayout({ children }: { children: React.ReactNode }) {
   const user = await decodeTokenUser();
 

@@ -202,11 +202,10 @@ export function ClinicLoginForm({ next, reason }: ClinicLoginFormProps = {}) {
     }
   };
 
+  // Platform yöneticisi girişine herkese açık bağlantı verilmez (adresi yalnız
+  // sistem sahibi bilir); klinik giriş sayfasında yalnız tanıtım sayfasına dönüş var.
   const links = (
-    <>
-      <AuthLink href="/"><ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" /> Tanıtım sayfası</AuthLink>
-      <AuthLink href="/superadmin">Platform yöneticisi girişi</AuthLink>
-    </>
+    <AuthLink href="/"><ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" /> Tanıtım sayfası</AuthLink>
   );
 
   if (pendingToken) {

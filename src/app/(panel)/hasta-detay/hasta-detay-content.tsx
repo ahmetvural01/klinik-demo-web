@@ -797,9 +797,13 @@ export default function HastaDetayContent() {
               if (canOpenTab("lab")) selectTab("lab");
             }}
             initialPatient={labInitialPatient}
-            // Oturumdaki kişi hekimse kendisi; asistan/banko açarken hastayı
-            // en son tedavi eden hekim önerilir (tedavi ve reçete formuyla aynı kural).
-            initialDoctorId={doctors.some((doctor) => doctor.id === me.id) ? me.id : recentDoctorId}
+            // Lab işinin hekimi hastayı tedavi eden hekimdir (lab ücreti onun
+            // hakedişinden düşer): doktor rolündeki kişi kendi adına açar;
+            // yönetici, asistan ve banko açarken (yönetici hekim olsa bile)
+            // hastayı en son tedavi eden hekim önerilir. Önceden hekim olan
+            // yönetici kendi adına öneriliyor, başka hekimin hastasının lab
+            // ücreti yanlış hekimin hakedişinden düşüyordu.
+            initialDoctorId={lockDoctorToSelf ? me.id : recentDoctorId || (doctors.some((doctor) => doctor.id === me.id) ? me.id : "")}
             lockPatient
             labNames={labNames}
             labsLoading={labsLoading}

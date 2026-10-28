@@ -79,11 +79,14 @@ function StatusBadges({ person }: { person: Staff }) {
 
 export default function PersonelPage() {
   const searchParams = useSearchParams();
-  const { can, role, userId } = usePermissions();
+  const { can, role, userId, branchManager } = usePermissions();
   const canWriteStaff = can("staff:write");
   // Pasife alınan personel /api/staff listesinde gelmez; şube yöneticisi
   // onları şube erişim listesinden görür ve buradan geri açabilir.
-  const canManageBranch = can("branches:assign");
+  // Sunucu kuralıyla aynı: rol izni + etkin şubenin yöneticisi olmak. Önceden şube
+  // yöneticisi olmayan yönetici pasif listesini isteyip 403 alıyor, pasife aldığı
+  // kişi için "Pasif süzgecini seçin" diye yönlendiriliyordu.
+  const canManageBranch = can("branches:assign") && branchManager;
   // Oranları sunucu da yalnız finance:read sahibine gönderir (api/staff).
   const viewerSeesRates = can("finance:read");
   // Yönetici rolünü yalnız yönetici verebilir (api/staff aynı kuralı uygular).

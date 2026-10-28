@@ -30,7 +30,11 @@ function summaryRows(totals: Totals) {
   const methods = METHOD_ORDER.filter((method) => (totals.byMethod[method]?.in || 0) > 0);
   const cashIn = totals.byMethod.NAKIT?.in || 0;
   const cashOut = totals.byMethod.NAKIT?.out || 0;
-  return { methods, cashIn, cashOut, cashInDrawer: cashIn - cashOut };
+  const cashInDrawer = cashIn - cashOut;
+  // Nakit gider nakit tahsilatı aştıysa fark kasadaki açılış parasından çıkmıştır:
+  // "Kasada olması gereken: −₺90" yerine ne olduğu düz yazılır, tutar artı gösterilir.
+  const cashLabel = cashInDrawer < -0.005 ? "Kasadan eksilen nakit (açılış parasından)" : "Kasada olması gereken nakit";
+  return { methods, cashIn, cashOut, cashInDrawer, cashLabel };
 }
 
 /**
@@ -65,7 +69,7 @@ export function DayEndModal({ open, onClose }: { open: boolean; onClose: () => v
   const print = async () => {
     if (!totals) return;
     const clinic = await loadPrintClinic();
-    const { methods, cashIn, cashOut, cashInDrawer } = summaryRows(totals);
+    const { methods, cashIn, cashOut, cashInDrawer, cashLabel } = summaryRows(totals);
     const line = (label: string, value: string, strong = false) => `<tr${strong ? ' class="strong"' : ""}><td>${escapeHtml(label)}</td><td>${escapeHtml(value)}</td></tr>`;
     const body = `
       ${letterheadHtml(clinic, { title: "Gün sonu özeti", date: dayLabel, meta: [`Yazdırma: ${formatDateText(new Date(), "datetime")}`] })}
@@ -77,7 +81,7 @@ export function DayEndModal({ open, onClose }: { open: boolean; onClose: () => v
       <h3>Gider</h3>
       <table>${line(`Toplam gider (${totals.giderCount} kayıt)`, formatCurrency(totals.gider))}${cashOut > 0 ? line("Bunun nakit ödenen kısmı", formatCurrency(cashOut)) : ""}</table>
       <h3>Kasa</h3>
-      <table>${line("Nakit tahsilat", formatCurrency(cashIn))}${line("Nakit ödenen gider", formatCurrency(cashOut))}${line("Kasada olması gereken nakit", formatCurrency(cashInDrawer), true)}</table>
+      <table>${line("Nakit tahsilat", formatCurrency(cashIn))}${line("Nakit ödenen gider", formatCurrency(cashOut))}${line(cashLabel, formatCurrency(Math.abs(cashInDrawer)), true)}</table>
       <div class="signs"><div>Kasayı teslim eden</div><div>Teslim alan</div></div>
       ${letterheadFooterHtml(clinic, "Kasa açılış bakiyesi bu özete dahil değildir.")}`;
     printDocument(`Gün sonu ${date}`, body, `
@@ -93,7 +97,7 @@ export function DayEndModal({ open, onClose }: { open: boolean; onClose: () => v
 
   const items: DescriptionItem[] = [];
   if (totals) {
-    const { methods, cashIn, cashOut, cashInDrawer } = summaryRows(totals);
+    const { methods, cashIn, cashOut, cashInDrawer, cashLabel } = summaryRows(totals);
     for (const method of methods) items.push({ key: method, label: paymentMethodLabel(method), value: formatCurrency(totals.byMethod[method].in) });
     for (const pos of totals.byPos) items.push({ key: `pos-${pos.id}`, label: `· ${pos.name}`, value: `${formatCurrency(pos.in)} (${pos.count})` });
     items.push({ key: "tahsilat", label: `Toplam tahsilat (${totals.tahsilatCount})`, value: formatCurrency(totals.tahsilat), emphasis: true });
@@ -102,7 +106,7 @@ export function DayEndModal({ open, onClose }: { open: boolean; onClose: () => v
       items.push({ key: `kaydeden-${row.name}`, label: `Kaydeden: ${row.name}`, value: `${formatCurrency(row.in)}${row.cash > 0 ? ` · nakit ${formatCurrency(row.cash)}` : ""}` });
     }
     items.push({ key: "gider", label: `Toplam gider (${totals.giderCount})`, value: formatCurrency(totals.gider) });
-    if (cashOut > 0 || cashIn > 0) items.push({ key: "kasa", label: "Kasada olması gereken nakit", value: formatCurrency(cashInDrawer), emphasis: true });
+    if (cashOut > 0 || cashIn > 0) items.push({ key: "kasa", label: cashLabel, value: formatCurrency(Math.abs(cashInDrawer)), emphasis: true });
   }
 
   return (

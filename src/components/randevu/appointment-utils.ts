@@ -8,6 +8,7 @@ import {
   type DisplayAppointmentStatus,
 } from "@/lib/appointment-status";
 import { buildScheduleByJsDay, type DaySchedule } from "@/lib/working-hours-core";
+import { formatPhoneNumber } from "@/lib/format";
 import {
   APPOINTMENT_TREATMENT_OPTIONS,
   FOLLOW_UP_OPTIONS,
@@ -215,14 +216,18 @@ export function relativeDayLabel(date: Date, now: Date = new Date()): string {
 
 // ── Telefon ───────────────────────────────────────────────────────────────
 
-/** Ekranda gösterim: "0532 123 45 67". Boşsa "". */
+/**
+ * Ekranda gösterim: uygulamanın tek telefon biçimi "(0532) 123-4567" (hasta
+ * dosyası, lab, antet ve belgelerle aynı). Önceden randevu ekranları "0532 123
+ * 45 67" yazıyor, aynı hasta iki ekranda iki biçimde görünüyordu. Boşsa "".
+ */
 export function formatPhoneDisplay(phone: string | null | undefined): string {
   const digits = String(phone || "").replace(/\D/g, "");
   if (!digits) return "";
   const local = digits.length === 12 && digits.startsWith("90") ? digits.slice(2) : digits;
   const ten = local.length === 11 && local.startsWith("0") ? local.slice(1) : local;
   if (ten.length !== 10) return String(phone);
-  return `0${ten.slice(0, 3)} ${ten.slice(3, 6)} ${ten.slice(6, 8)} ${ten.slice(8)}`;
+  return formatPhoneNumber(`0${ten}`);
 }
 
 /** tel: bağlantısı (telefondan tek dokunuşla arama). */

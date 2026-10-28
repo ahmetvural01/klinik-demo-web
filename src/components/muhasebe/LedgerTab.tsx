@@ -104,10 +104,21 @@ function rowTitle(row: LedgerRow) {
  * etmez (özetteki "Tahsilat" ipucunda bir kez yazar).
  */
 function rowDetail(row: LedgerRow, hideDoctor = false) {
-  if (row.subtype === "tahsilat") return [hideDoctor ? "" : doctorLabel(row.doctor), row.note].filter(Boolean).join(" · ");
+  if (row.subtype === "tahsilat") return joinDistinct([hideDoctor ? "" : doctorLabel(row.doctor), row.note]);
   if (row.subtype === "gider") return row.note || "";
-  if (row.subtype === "firma") return ["Firma ödemesi", row.note].filter(Boolean).join(" · ");
-  return [row.item, row.note].filter(Boolean).join(" · ");
+  if (row.subtype === "firma") return joinDistinct(["Firma ödemesi", row.note]);
+  return joinDistinct([row.item, row.note]);
+}
+
+/** Parçaları " · " ile birleştirir; boşları ve tekrarı atar ("Firma ödemesi · Firma ödemesi" olmaz). */
+function joinDistinct(parts: (string | null | undefined)[]) {
+  const seen = new Set<string>();
+  return parts.filter((part): part is string => {
+    const key = (part || "").trim().toLocaleLowerCase("tr-TR");
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).join(" · ");
 }
 
 const timeText = (value: string) => formatDateText(value, "time");
@@ -309,7 +320,7 @@ export function LedgerTab({
     // toplamları. Kalem, doktor ve açıklama tek "İşlem" hücresinde okunur;
     // iptal edilen kayıtta kimin, neden iptal ettiği yazar.
     const operation = (row: LedgerRow) => {
-      const text = [row.item, row.doctor ? doctorLabel(row.doctor) : "", row.note].filter(Boolean).join(" · ");
+      const text = joinDistinct([row.item, row.doctor ? doctorLabel(row.doctor) : "", row.note]);
       if (!row.voided) return text;
       const by = [row.voidedByName ? `İptal eden: ${row.voidedByName}` : "", row.voidReason ? `Neden: ${row.voidReason}` : ""].filter(Boolean).join(" · ");
       return `İptal edildi — ${text}${by ? ` (${by})` : ""}`;

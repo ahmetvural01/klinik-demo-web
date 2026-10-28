@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
-import { Archive, MinusCircle, Pencil, Plus, Printer, RotateCcw, ShoppingCart } from "lucide-react";
+import { Archive, MinusCircle, Pencil, Plus, Printer, RotateCcw, Send, ShoppingCart } from "lucide-react";
 import { showToastSafe } from "@/lib/toast-client";
 import { confirmDialog } from "@/lib/confirm-client";
 import { formatCurrency } from "@/lib/format";
@@ -24,6 +24,7 @@ import { StockItemFormModal } from "@/components/stock/StockItemFormModal";
 import { StockMovementModal } from "@/components/stock/StockMovementModal";
 import { StockItemDetailModal } from "@/components/stock/StockItemDetailModal";
 import { printBarcodeLabel } from "@/components/stock/barcode-print";
+import { sendManagerRequest } from "@/components/takip/ManagerRequestButton";
 import {
   STOCK_CATEGORIES,
   countCriticalStock,
@@ -69,11 +70,13 @@ const VIEW_FILTER: Record<Exclude<StockView, "tumu" | "arsiv">, (item: StockItem
 function StokContent() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { can } = usePermissions();
+  const { can, role } = usePermissions();
   const canWriteStock = can("stock:write");
   const canDeleteStock = can("stock:delete");
   // Satın alma kaydı hem finans hem stok yazma yetkisi ister (sunucu ile aynı kural).
   const canOrder = canWriteStock && can("finance:write");
+  // Görev açabilen, sipariş veremeyen stok personeli siparişi yöneticiden ister (yönetici kendisi verir).
+  const canRequestOrder = !canOrder && canWriteStock && can("clinictasks:write") && role !== "YONETICI";
   // Maliyet (alış fiyatı, ortalama maliyet, stok değeri) finans bilgisidir;
   // sunucu da finance:read olmayan rollere bu alanları göndermez.
   const canSeeCost = can("finance:read");
@@ -240,7 +243,8 @@ function StokContent() {
         productQuery: item.name,
         unit: item.unit,
         quantity: quantity ? String(quantity) : "",
-        unitPrice: toMoneyValue(item.lastPurchase?.unitPrice) ?? "",
+        // Son alış fiyatı; hiç alış yoksa (yalnız açılış stoğu) ortalama maliyet önerilir.
+        unitPrice: toMoneyValue(item.lastPurchase?.unitPrice) ?? (item.averageUnitPrice && item.averageUnitPrice > 0 ? toMoneyValue(item.averageUnitPrice) ?? "" : ""),
       }],
     });
   };
@@ -348,6 +352,21 @@ function StokContent() {
   const menuItems = (item: StockItem): ActionMenuItem[] => [
     ...(canOrder && isCriticalStock(item)
       ? [{ key: "order", label: "Sipariş ver", description: "Son tedarikçi ve fiyatla", icon: ShoppingCart, onSelect: () => openOrder(item) }]
+      : []),
+    // Sipariş veremeyen stok personeli (asistan, banko) kritik ürünü satırdan
+    // yöneticiye iletir; önceden bu istek yalnız ürün ayrıntısının içindeydi.
+    ...(canRequestOrder && isCriticalStock(item)
+      ? [{
+        key: "request",
+        label: "Yöneticiden sipariş iste",
+        description: "Yöneticiye görev olarak düşer",
+        icon: Send,
+        onSelect: () => void sendManagerRequest({
+          taskTitle: `Sipariş gerekli: ${item.name}`,
+          taskDetails: `Stok kritik: mevcut ${formatQuantity(item.quantity, item.unit)}, minimum ${formatQuantity(item.minQuantity, item.unit)}.`,
+          taskType: "PARCA_SIPARIS",
+        }),
+      }]
       : []),
     ...(canWriteStock ? [{ key: "edit", label: "Düzenle", icon: Pencil, onSelect: () => { setFormItem(item); setFormOpen(true); } }] : []),
     { key: "barcode", label: "Barkod yazdır", icon: Printer, onSelect: () => void printBarcode(item) },

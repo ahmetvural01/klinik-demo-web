@@ -117,6 +117,7 @@ export default async function PanelLayout({ children }: { children: React.ReactN
       scopeKey={scopeKey}
       userId={user.id}
       ghost={user.ghost}
+      branchManager={elevated || branchContext.activeBranch?.isBranchManager === true}
     >
     <PanelAdsProvider settings={panelAds}>
     <div className="panel-body flex h-dvh overflow-hidden bg-[rgb(var(--app-bg))]">

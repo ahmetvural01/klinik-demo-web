@@ -17,7 +17,7 @@ export async function GET() {
     return NextResponse.json({ steps: [] });
   }
 
-  const [setting, institution, staff, prices, patients, appointments, whatsapp] = await Promise.all([
+  const [setting, institution, staff, prices, labs, patients, appointments, whatsapp] = await Promise.all([
     prisma.setting.findUnique({
       where: { institutionId },
       select: { institutionPhone: true, institutionAddress: true, dailySchedules: true, closingTime: true, openingTime: true },
@@ -25,6 +25,8 @@ export async function GET() {
     prisma.institution.findUnique({ where: { id: institutionId }, select: { phone: true, address: true, smsBalance: true, whatsappEnabled: true } }),
     prisma.user.count({ where: { institutionId, isActive: true } }),
     prisma.priceItem.count({ where: { institutionId } }),
+    // Lab işi açmak için Laboratuvar türünde firma gerekir; yoksa doktor ilk lab işinde takılıyordu.
+    prisma.firma.count({ where: { institutionId, kategori: "LAB", isActive: true } }),
     prisma.patient.count({ where: { institutionId } }),
     prisma.appointment.count({ where: { institutionId } }),
     prisma.whatsappWebSession.count({ where: { institutionId, credsEncrypted: { not: null } } }),
@@ -45,6 +47,7 @@ export async function GET() {
     { key: "saatler", done: hoursSet },
     { key: "ekip", done: staff > 1 },
     { key: "fiyat", done: prices > 0 },
+    { key: "lab", done: labs > 0 },
     { key: "mesaj", done: (institution?.smsBalance || 0) > 0 || whatsappConnected },
     { key: "hasta", done: patients > 0 },
     { key: "randevu", done: appointments > 0 },

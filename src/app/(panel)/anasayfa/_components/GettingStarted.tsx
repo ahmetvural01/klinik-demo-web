@@ -8,13 +8,14 @@ import { Section } from "@/components/ui/Section";
 import { SettingsList, SettingsRow } from "@/components/ui/SettingsList";
 import { scopedStorageKey } from "@/lib/scoped-client-storage";
 
-type StepKey = "klinik" | "saatler" | "ekip" | "fiyat" | "mesaj" | "hasta" | "randevu";
+type StepKey = "klinik" | "saatler" | "ekip" | "fiyat" | "lab" | "mesaj" | "hasta" | "randevu";
 
 const STEPS: Record<StepKey, { title: string; description: string; href: string; action: string }> = {
   klinik: { title: "Klinik bilgileri", description: "Hastaya giden mesajlarda ve belgelerde görünen ad, telefon ve adres", href: "/ayar?tab=klinik", action: "Ayarlar" },
   saatler: { title: "Çalışma saatleri", description: "Kapalı günlere ve saat dışına randevu verilmez", href: "/ayar?tab=calisma", action: "Saatleri gir" },
   ekip: { title: "Ekip", description: "Doktor, asistan ve banko hesapları", href: "/personel", action: "Personel ekle" },
   fiyat: { title: "Fiyat listesi", description: "Tedavi eklerken ücret kendiliğinden gelir", href: "/ayar?tab=fiyat", action: "Fiyatları gir" },
+  lab: { title: "Laboratuvar", description: "Çalıştığınız diş laboratuvarı; lab işi açarken seçilir, lab ücreti hekimin hakedişine yansır", href: "/firma?yeni=lab", action: "Laboratuvar ekle" },
   mesaj: { title: "SMS ya da WhatsApp", description: "Randevu hatırlatmaları için SMS paketi alın ya da WhatsApp'ı bağlayın", href: "/sms?tab=ayarlar", action: "Kanal ve kredi" },
   hasta: { title: "İlk hasta", description: "Hasta kartını açın; eski hasta listeniz varsa Destek'e gönderin, sizin için aktarılır", href: "/hasta?yeni=1", action: "Hasta ekle" },
   randevu: { title: "İlk randevu", description: "Takvimden randevu verin", href: "/randevu", action: "Takvim" },

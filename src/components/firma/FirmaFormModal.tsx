@@ -132,11 +132,15 @@ export function FirmaFormModal({ open, firma, onClose, onSaved, defaultKategori 
         <Input id="firma-name" value={form.name} onChange={(event) => set("name", event.target.value)} data-autofocus placeholder={isNewLab ? "Ör. Deneme Dental Lab" : undefined} />
       </FormField>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <FormField label="Türü" htmlFor="firma-kategori" required>
-          <Select id="firma-kategori" value={form.kategori} onChange={(event) => set("kategori", event.target.value)}>
-            {Object.entries(FIRMA_KATEGORILERI).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-          </Select>
-        </FormField>
+        {/* Lab işi formundan açılan "Yeni laboratuvar"da tür sorulmaz (hep Laboratuvar);
+            önceden "Banka", "Yüklenici" de seçilebiliyor, seçilince lab işinde görünmüyordu. */}
+        {!isNewLab && (
+          <FormField label="Türü" htmlFor="firma-kategori" required>
+            <Select id="firma-kategori" value={form.kategori} onChange={(event) => set("kategori", event.target.value)}>
+              {Object.entries(FIRMA_KATEGORILERI).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+            </Select>
+          </FormField>
+        )}
         <FormField label="Telefon" htmlFor="firma-phone">
           <Input id="firma-phone" type="tel" inputMode="tel" value={form.phone} onChange={(event) => set("phone", event.target.value)} placeholder="0212 555 11 22" />
         </FormField>

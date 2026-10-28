@@ -17,6 +17,12 @@ type PermissionContextValue = {
    * kendi adıyla iz bırakan kutular özet gelmeden bu bilgiyle gizlenir.
    */
   ghost: boolean;
+  /**
+   * Etkin şubenin yöneticisi mi (layout verir). Şube erişimini yönetmek (pasif
+   * personeli geri açmak dahil) rol izniyle birlikte bunu ister — sunucu ikisini
+   * birden denetler; YÖNETİCİ rolü "*" taşıdığı için izin listesi tek başına yetmez.
+   */
+  branchManager: boolean;
   can: (permission: string) => boolean;
   canAny: (...permissions: string[]) => boolean;
   hasFeature: (feature: keyof InstitutionFeatures) => boolean;
@@ -50,6 +56,7 @@ export function PermissionProvider({
   scopeKey,
   userId = null,
   ghost = false,
+  branchManager = false,
   children,
 }: {
   role: string;
@@ -58,6 +65,7 @@ export function PermissionProvider({
   scopeKey: string;
   userId?: string | null;
   ghost?: boolean;
+  branchManager?: boolean;
   children: ReactNode;
 }) {
   const [activeFeatures, setActiveFeatures] = useState(features);
@@ -97,12 +105,13 @@ export function PermissionProvider({
     scopeKey,
     userId,
     ghost,
+    branchManager,
     can,
     canAny,
     hasFeature,
     permissionsVerified: true,
     accessStatus,
-  }), [accessStatus, activeFeatures, activePermissions, can, canAny, hasFeature, ghost, role, scopeKey, userId]);
+  }), [accessStatus, activeFeatures, activePermissions, branchManager, can, canAny, hasFeature, ghost, role, scopeKey, userId]);
 
   return <PermissionContext.Provider value={value}>{children}</PermissionContext.Provider>;
 }

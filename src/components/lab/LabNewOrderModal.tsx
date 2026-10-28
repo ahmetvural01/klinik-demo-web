@@ -130,7 +130,10 @@ export function LabNewOrderModal({
   canAddLab?: boolean;
   onLabCreated?: (name: string) => void;
 }) {
-  const { can, scopeKey, userId: sessionUserId } = usePermissions();
+  const { can, scopeKey, userId: sessionUserId, role, ghost } = usePermissions();
+  // Doktor rolündeki kişi lab işini yalnız kendi adına açar; diğerleri (yönetici
+  // hekim olsa bile) hastanın hekimini önerir: lab ücreti o hekimin hakedişinden düşer.
+  const doctorIsSelf = role === "DOKTOR" && !ghost;
   const canReadPatientContext = can("appointments:write");
   const [patient, setPatient] = useState<PickedPatient | null>(initialPatient);
   const [form, setForm] = useState<FormState>(() => initialForm(""));
@@ -171,7 +174,8 @@ export function LabNewOrderModal({
     doctorTouchedRef.current = false;
   }, [initialLabName, initialPatient, labNames, open, scopeKey]);
 
-  // Varsayılan hekim: önerilen hekim > giriş yapan hekim > son kullanılan hekim > tek hekim.
+  // Varsayılan hekim: (doktor rolünde) kendisi > önerilen hekim (hastanın hekimi) >
+  // giriş yapan hekim > son kullanılan hekim > tek hekim.
   // Oturumdaki kullanıcı kabuktan (layout) gelir; ayrı /api/auth/me isteği yalnız yedek.
   useEffect(() => {
     if (!open) return;
@@ -183,11 +187,11 @@ export function LabNewOrderModal({
       if (!active) return;
       const list = selectDoctors(staff || []);
       const isDoctor = (id?: string) => Boolean(id && list.some((doctor) => doctor.id === id));
-      const pick = [initialDoctorId, me?.id, prefsRef.current.doctorId].find(isDoctor) || (list.length === 1 ? list[0].id : "");
+      const pick = [doctorIsSelf ? me?.id : "", initialDoctorId, me?.id, prefsRef.current.doctorId].find(isDoctor) || (list.length === 1 ? list[0].id : "");
       if (pick) setForm((current) => (current.doctorId ? current : { ...current, doctorId: pick }));
     });
     return () => { active = false; };
-  }, [initialDoctorId, open, sessionUserId]);
+  }, [doctorIsSelf, initialDoctorId, open, sessionUserId]);
 
   // Hasta dosyasından gelindiğinde hasta bilgisi pencere açıldıktan sonra
   // yüklenebilir; geldiğinde bir kez yerleştirilir (kullanıcı sonra değiştirebilir).
@@ -205,9 +209,10 @@ export function LabNewOrderModal({
 
   // Hasta seçilince hekim önerisi: hastanın yaklaşan ya da son randevusunun
   // hekimi (randevu yetkisi varsa), o da yoksa hastanın son lab işinin hekimi.
-  // "Son kullanılan / tek hekim" tahmininin yerine geçer; kullanıcının seçtiği,
-  // önerilen (initialDoctorId) ya da giriş yapan hekim değiştirilmez. Önceden
-  // Laboratuvar sayfasında hasta seçilince hekim boş kalıyordu.
+  // "Son kullanılan / tek hekim" ve hekim olan yöneticinin kendi adı tahmininin
+  // yerine geçer; kullanıcının seçtiği, önerilen (initialDoctorId) ya da doktor
+  // rolündeki kişinin kendisi değiştirilmez. Önceden Laboratuvar sayfasında hasta
+  // seçilince hekim boş kalıyor, hekim olan yönetici açınca kendi adı kalıyordu.
   const patientId = patient?.id || "";
   useEffect(() => {
     if (!open || !patientId || lockPatient) return;
@@ -216,7 +221,7 @@ export function LabNewOrderModal({
       const staff = await cachedGet<StaffLike[]>("/api/staff", 60_000, { throwOnError: true }).catch(() => null);
       const doctors = selectDoctors(staff || []);
       const isDoctor = (id?: string | null): id is string => Boolean(id && doctors.some((doctor) => doctor.id === id));
-      if (!active || doctorTouchedRef.current || isDoctor(initialDoctorId) || isDoctor(sessionUserId)) return;
+      if (!active || doctorTouchedRef.current || isDoctor(initialDoctorId) || (doctorIsSelf && isDoctor(sessionUserId))) return;
       const context = canReadPatientContext ? await fetchPatientContext(patientId, undefined).catch(() => null) : null;
       let pick = [context?.nextAppointment?.doctorId, context?.lastAppointmentDoctorId].find(isDoctor);
       if (!pick) {
@@ -230,7 +235,7 @@ export function LabNewOrderModal({
       setErrors((current) => ({ ...current, doctorId: "" }));
     })();
     return () => { active = false; };
-  }, [canReadPatientContext, initialDoctorId, lockPatient, open, patientId, sessionUserId]);
+  }, [canReadPatientContext, doctorIsSelf, initialDoctorId, lockPatient, open, patientId, sessionUserId]);
 
   // Laboratuvar listesi pencere açıldıktan sonra gelirse: tek laboratuvar ya da son kullanılan seçilir.
   useEffect(() => {

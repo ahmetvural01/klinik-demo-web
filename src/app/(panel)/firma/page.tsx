@@ -91,6 +91,8 @@ function FirmaContent() {
   const [kategori, setKategori] = useState("");
   const [sort, setSort] = useState<ListSort>({ key: "bakiye", dir: "desc" });
   const [showAddFirma, setShowAddFirma] = useState(false);
+  // "Yeni laboratuvar" olarak açıldıysa tür sabit (LAB); düz "Yeni tedarikçi"de boş.
+  const [newFirmaKategori, setNewFirmaKategori] = useState<string | undefined>(undefined);
 
   const loadFirmas = useCallback(async () => {
     const sequence = ++firmaLoadSequenceRef.current;
@@ -198,14 +200,22 @@ function FirmaContent() {
   const openAddPurchaseRef = useRef(purchaseManager.openAddPurchase);
   useEffect(() => { openAddPurchaseRef.current = purchaseManager.openAddPurchase; });
   useEffect(() => {
-    if (searchParams.get("yeni") !== "1" || !canPurchase || !loaded) return;
-    openAddPurchaseRef.current(searchParams.get("firmaId") || undefined);
+    const yeni = searchParams.get("yeni");
+    // ?yeni=lab: "Başlarken" ve lab işi formundan gelen "Laboratuvar ekle".
+    if (yeni === "lab" && canWriteFinance) {
+      setNewFirmaKategori("LAB");
+      setShowAddFirma(true);
+    } else if (yeni !== "1" || !canPurchase || !loaded) {
+      return;
+    } else {
+      openAddPurchaseRef.current(searchParams.get("firmaId") || undefined);
+    }
     const params = new URLSearchParams(searchParams.toString());
     params.delete("yeni");
     params.delete("firmaId");
     // history.replaceState: adres temizlenirken sunucuya tur atılmaz.
     window.history.replaceState(null, "", params.toString() ? `${pathname}?${params.toString()}` : pathname);
-  }, [searchParams, canPurchase, loaded, pathname]);
+  }, [searchParams, canPurchase, canWriteFinance, loaded, pathname]);
 
   const totalDebt = useMemo(() => firmas.reduce((sum, firma) => sum + Math.max(0, firma.bakiye || 0), 0), [firmas]);
 
@@ -566,7 +576,8 @@ function FirmaContent() {
 
       <FirmaFormModal
         open={showAddFirma}
-        onClose={() => setShowAddFirma(false)}
+        defaultKategori={newFirmaKategori}
+        onClose={() => { setShowAddFirma(false); setNewFirmaKategori(undefined); }}
         onSaved={async () => { await loadFirmas(); }}
       />
 
