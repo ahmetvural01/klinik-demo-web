@@ -210,7 +210,7 @@ export function LedgerTab({
   const openRow = (row: LedgerRow) => {
     if (row.voided) return;
     if (row.locked) {
-      if (row.whoId) router.push(`/firma-detay?id=${encodeURIComponent(row.whoId)}`);
+      if (row.whoId) router.push(`/firma?firma=${encodeURIComponent(row.whoId)}`);
       return;
     }
     if (!canEdit(row)) return;
@@ -368,9 +368,9 @@ export function LedgerTab({
       if (!row.whoId) return null;
       const firmItems: ActionMenuItem[] = [{
         key: "firma",
-        label: "Tedarikçi sayfasında aç",
+        label: "Tedarikçi hesabını aç",
         icon: ExternalLink,
-        href: `/firma-detay?id=${encodeURIComponent(row.whoId)}`,
+        href: `/firma?firma=${encodeURIComponent(row.whoId)}`,
       }];
       if (canWriteFinance && row.expense?.sourceId) {
         firmItems.push({ key: "iptal", label: "Ödemeyi iptal et", icon: Ban, danger: true, separatorBefore: true, onSelect: () => void cancelFirmPayment(row) });

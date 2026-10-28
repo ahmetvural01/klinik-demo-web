@@ -27,7 +27,10 @@ export default async function SuperadminLayout({ children }: { children: React.R
         {/* Üst çubuk sayfa adını tekrar etmez (her sayfanın kendi başlığı var);
             telefonda menü düğmesi ve ürün adı, sağda klinik panelindeki gibi
             hesap menüsü (Profilim, Oturumu kapat). */}
-        <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-slate-200 bg-[rgb(var(--app-surface))]/95 px-3 shadow-[0_1px_0_rgb(15_23_42/0.025)] backdrop-blur sm:px-6">
+        {/* relative z-[160] isolate: klinik üst çubuğuyla aynı katman. Önceden
+            hesap menüsü görünüyor ama altındaki (sonra çizilen, konumlu) içerik
+            alanı tıklamayı yutuyordu: "Profilim" ve "Oturumu kapat" çalışmıyordu. */}
+        <header className="relative z-[160] isolate flex h-14 shrink-0 items-center justify-between gap-2 border-b border-slate-200 bg-[rgb(var(--app-surface))]/95 px-3 shadow-[0_1px_0_rgb(15_23_42/0.025)] backdrop-blur sm:px-6">
           <div className="flex min-w-0 items-center gap-2">
             <MobileSidebarToggle />
             <span className="truncate font-display text-sm font-bold text-slate-800 lg:hidden">Platform Yönetimi</span>

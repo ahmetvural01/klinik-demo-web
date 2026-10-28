@@ -1,7 +1,7 @@
 "use client";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import dynamic from "next/dynamic";
+import { usePathname, useSearchParams } from "next/navigation";
 import { FlaskConical, PackageCheck, Plus, ShoppingCart, Wallet } from "lucide-react";
 import { showToastSafe } from "@/lib/toast-client";
 import { formatCurrency, formatPhoneNumber } from "@/lib/format";
@@ -26,6 +26,9 @@ import { FIRMA_KATEGORILERI, telHref } from "@/components/firma/firma-shared";
 import { FirmaFormModal } from "@/components/firma/FirmaFormModal";
 import { usePurchaseModals } from "@/components/firma/usePurchaseModals";
 import { RECEIPT_STATUS_META, summarizeLines, type Purchase } from "@/components/firma/purchase-model";
+
+// Tedarikçi ayrıntısı penceresi yalnız açılınca yüklenir.
+const FirmaDetail = dynamic(() => import("@/components/firma/FirmaDetail").then((module) => module.FirmaDetail), { ssr: false });
 
 const FirmaEmptyIcon = createSceneIllustration("firma");
 
@@ -60,7 +63,6 @@ function waitingDays(tarih: string) {
 }
 
 function FirmaContent() {
-  const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { can } = usePermissions();
@@ -113,6 +115,38 @@ function FirmaContent() {
       if (sequence === firmaLoadSequenceRef.current) setLoading(false);
     }
   }, []);
+
+  // Tedarikçi ayrıntısı listenin üstünde pencere (adreste ?firma=…): satıra
+  // tıklayınca açılır, kapatınca liste aynı yerde kalır. Açılış geçmişe
+  // eklenir; telefonda geri tuşu sayfadan çıkmaz, pencereyi kapatır. Başka
+  // ekrandan gelen bağlantı (/firma?firma=…) da aynı pencereyi açar.
+  const openFirmaId = searchParams.get("firma") || "";
+  const pushedFirmaRef = useRef(false);
+  const openFirma = (firmaId: string) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("firma", firmaId);
+    window.history.pushState(null, "", `${pathname}?${params.toString()}`);
+    pushedFirmaRef.current = true;
+  };
+  const closeFirma = () => {
+    if (pushedFirmaRef.current) {
+      pushedFirmaRef.current = false;
+      window.history.back();
+      return;
+    }
+    const params = new URLSearchParams(searchParams.toString());
+    for (const key of ["firma", "firmaTab", "firmaDonem", "firmaFrom", "firmaTo"]) params.delete(key);
+    window.history.replaceState(null, "", params.toString() ? `${pathname}?${params.toString()}` : pathname);
+  };
+  // Pencere kapanınca (düğme ya da geri tuşu) liste yenilenir: ödeme ve alım bakiyeyi değiştirmiş olabilir.
+  const previousFirmaRef = useRef(openFirmaId);
+  useEffect(() => {
+    if (previousFirmaRef.current && !openFirmaId) {
+      pushedFirmaRef.current = false;
+      void loadFirmas();
+    }
+    previousFirmaRef.current = openFirmaId;
+  }, [loadFirmas, openFirmaId]);
 
   const loadOrders = useCallback(async () => {
     setOrdersError(null);
@@ -315,7 +349,7 @@ function FirmaContent() {
         return (
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <Link href={`/firma-detay?id=${firma.id}`} className="truncate font-semibold text-slate-900 hover:text-primary">{firma.name}</Link>
+              <span className="truncate font-semibold text-slate-900">{firma.name}</span>
               {!firma.isActive && <Badge tone="neutral">Pasif</Badge>}
             </div>
             {detail && <p className="truncate text-xs text-slate-500">{detail}</p>}
@@ -491,8 +525,8 @@ function FirmaContent() {
           emptyDescription={firmaFilters.length > 0 || searchActive ? undefined : "Alımı “Yeni satın alma” ile girerken tedarikçiyi de ekleyebilirsiniz."}
           emptyIcon={FirmaEmptyIcon}
           emptyIllustrative
-          onRowClick={(firma) => router.push(`/firma-detay?id=${firma.id}`)}
-          getRowAriaLabel={(firma) => `${firma.name} tedarikçi sayfasını aç`}
+          onRowClick={(firma) => openFirma(firma.id)}
+          getRowAriaLabel={(firma) => `${firma.name} tedarikçi hesabını aç`}
           sort={sort}
           onSortChange={(key) => setSort((current) => ({ key, dir: current.key === key && current.dir === "desc" ? "asc" : "desc" }))}
           mobileCard={(firma) => {
@@ -580,6 +614,8 @@ function FirmaContent() {
         onClose={() => { setShowAddFirma(false); setNewFirmaKategori(undefined); }}
         onSaved={async () => { await loadFirmas(); }}
       />
+
+      {openFirmaId && <FirmaDetail firmaId={openFirmaId} onClose={closeFirma} />}
 
       {purchaseManager.modals}
     </div>

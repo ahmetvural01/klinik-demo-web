@@ -215,7 +215,7 @@ export function usePurchaseModals({
         // Liste açılır (aşağıda).
       }
     }
-    router.push(`/firma-detay?id=${encodeURIComponent(firmaId)}&tab=siparisler`);
+    router.push(`/firma?firma=${encodeURIComponent(firmaId)}&firmaTab=siparisler`);
   }, [openReceivePurchase, router]);
 
   // ── İptal ──────────────────────────────────────────────────────────────

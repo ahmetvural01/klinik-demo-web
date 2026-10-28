@@ -265,7 +265,7 @@ export function LabOrderDetailPanel({
           <dt className="text-xs text-slate-500">{LAB_LABELS.lab}</dt>
           <dd className="truncate font-semibold text-slate-900">
             {canOpenFirma ? (
-              <Link href={`/firma-detay?id=${order.firmaId}`} className="text-primary hover:underline" title="Tedarikçi hesabını aç (borç ve ödemeler)">{order.labName}</Link>
+              <Link href={`/firma?firma=${order.firmaId}`} className="text-primary hover:underline" title="Tedarikçi hesabını aç (borç ve ödemeler)">{order.labName}</Link>
             ) : order.labName}
           </dd>
           {order.labPhone && (
