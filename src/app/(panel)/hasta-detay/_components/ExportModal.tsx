@@ -6,6 +6,7 @@ import { ChoiceCards } from "@/components/ui/ChoiceCards";
 import { Switch } from "@/components/ui/Switch";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { formatDateText } from "@/components/ui/Money";
+import { formatPhoneNumber } from "@/lib/format";
 import { showToastSafe } from "@/lib/toast-client";
 import { turkeyDateKey } from "@/lib/tz";
 import { examStatusKind, isChargeableExamStatus } from "@/lib/examination-status";
@@ -40,10 +41,19 @@ const SECTIONS: { key: SectionKey; label: string; description: string; anyOf: st
 const TREATMENT_SELECTION: SectionKey[] = ["profile", "completedTreatments", "plannedTreatments", "payments", "balance"];
 
 const list = (value: unknown): Raw[] => (Array.isArray(value) ? (value as Raw[]) : []);
-const str = (value: unknown) => (value === null || value === undefined || value === "" ? "-" : String(value));
-const date = (value: unknown) => (value ? formatDateText(String(value)) : "-");
-const dateTime = (value: unknown) => (value ? formatDateText(String(value), "datetime") : "-");
-const name = (value: unknown) => (value && typeof value === "object" && "fullName" in value ? str((value as Raw).fullName) : "-");
+// Boş değer belgede her yerde aynı: "—".
+const str = (value: unknown) => (value === null || value === undefined || value === "" ? "—" : String(value));
+const date = (value: unknown) => (value ? formatDateText(String(value)) : "—");
+const dateTime = (value: unknown) => (value ? formatDateText(String(value), "datetime") : "—");
+const name = (value: unknown) => (value && typeof value === "object" && "fullName" in value ? str((value as Raw).fullName) : "—");
+
+/** Telefon yazdırılan hasta belgeleriyle aynı biçimde: "(0555) 000-0110"; yurt dışı numara ülke koduyla. */
+function phoneText(patient: Raw) {
+  const phone = typeof patient.phone === "string" ? patient.phone.trim() : "";
+  if (!phone) return "—";
+  const code = typeof patient.phoneCountryCode === "string" ? patient.phoneCountryCode : "";
+  return code && code !== "+90" ? `${code} ${phone}` : formatPhoneNumber(phone);
+}
 
 function drugText(raw: unknown) {
   try {
@@ -63,49 +73,52 @@ function buildSections(patient: Raw, balance: PatientBalance, hidePhone: boolean
 
   return {
     profile: {
-      title: "Hasta Bilgileri",
+      title: "Hasta bilgileri",
       headers: ["Alan", "Değer"],
       rows: [
         ["Ad Soyad", str(patient.fullName)],
-        ["TC Kimlik", hidePhone ? "***" : str(patient.tcNo)],
-        ["Telefon", hidePhone ? "***" : str(patient.phone)],
-        ["Cinsiyet", genderLabel(String(patient.gender || "")) || "-"],
-        ["Doğum Tarihi", date(patient.birthDate)],
-        ["Kurum / Sigorta", str(patient.insurance)],
+        ["TC kimlik no", hidePhone ? "***" : str(patient.tcNo)],
+        ["Telefon", hidePhone ? "***" : phoneText(patient)],
+        ["Cinsiyet", genderLabel(String(patient.gender || "")) || "—"],
+        ["Doğum tarihi", date(patient.birthDate)],
+        ["Kurum / sigorta", str(patient.insurance)],
         ["İndirim", `%${Number(patient.discountRate || 0)}`],
         ["Meslek", str(patient.profession)],
-        ["Sağlık Uyarıları", health],
-        ["Kullandığı İlaçlar", str(patient.medications)],
-        ["Geçirdiği Ameliyatlar", str(patient.surgeries)],
-        ["Diğer Hastalıklar", str(patient.otherDiseases)],
+        ["Sağlık uyarıları", health],
+        ["Kullandığı ilaçlar", str(patient.medications)],
+        ["Geçirdiği ameliyatlar", str(patient.surgeries)],
+        ["Diğer hastalıklar", str(patient.otherDiseases)],
       ],
     },
     completedTreatments: {
-      title: "Yapılan Tedaviler",
-      headers: withDoctor(["Tarih", "Tedavi", "Diş", "Tutar"], 4),
+      title: "Yapılan tedaviler",
+      headers: withDoctor(["Tarih", "Tedavi", "Diş", "Tutar"], 3),
       rows: exams.filter((exam) => isChargeableExamStatus(String(exam.status || ""))).map((exam) => [
-        date(exam.diagnosedAt), str(exam.treatmentName), str(exam.toothNo), money(exam.amount), ...doctorCol(exam),
+        date(exam.diagnosedAt), str(exam.treatmentName), str(exam.toothNo), ...doctorCol(exam), money(exam.amount),
       ]),
     },
     // Hasta dosyasının Tedavi sekmesindeki "Planlanan tedaviler" listesiyle aynı
     // kayıtlar (ayrı tedavi planı kaldırıldı; önceden plan adımları da buraya
     // "Kaynak" sütunuyla karışıyordu).
     plannedTreatments: {
-      title: "Planlanan Tedaviler",
-      headers: withDoctor(["Tarih", "Tedavi", "Diş", "Tutar"], 4),
+      title: "Planlanan tedaviler",
+      headers: withDoctor(["Tarih", "Tedavi", "Diş", "Tutar"], 3),
       rows: exams.filter((exam) => examStatusKind(String(exam.status || "")) === "pending").map((exam) => [
-        date(exam.diagnosedAt), str(exam.treatmentName), str(exam.toothNo), money(exam.amount), ...doctorCol(exam),
+        date(exam.diagnosedAt), str(exam.treatmentName), str(exam.toothNo), ...doctorCol(exam), money(exam.amount),
       ]),
     },
     payments: {
       title: "Tahsilatlar",
-      headers: withDoctor(["Tarih", "Tutar", "Yöntem", "POS", "Açıklama"], 4),
-      rows: list(patient.payments).map((payment) => [
-        dateTime(payment.createdAt), money(payment.amount), paymentMethodLabel(String(payment.method || "")), payment.pos && typeof payment.pos === "object" ? str((payment.pos as Raw).name) : "-", ...doctorCol(payment), str(payment.description),
-      ]),
+      // Tutar en sağda (belgelerde tutarlar alt alta okunur); POS yöntemin yanında ("Kredi kartı · Garanti").
+      headers: withDoctor(["Tarih", "Yöntem", "Açıklama", "Tutar"], 2),
+      rows: list(patient.payments).map((payment) => {
+        const pos = payment.pos && typeof payment.pos === "object" ? String((payment.pos as Raw).name || "").trim() : "";
+        const method = paymentMethodLabel(String(payment.method || ""));
+        return [dateTime(payment.createdAt), pos ? `${method} · ${pos}` : method, ...doctorCol(payment), str(payment.description), money(payment.amount)];
+      }),
     },
     balance: {
-      title: "Hesap Özeti",
+      title: "Hesap özeti",
       headers: ["Alan", "Tutar"],
       rows: [
         ["Yapılan tedaviler", money(balance.totalCharged)],
@@ -124,7 +137,7 @@ function buildSections(patient: Raw, balance: PatientBalance, hidePhone: boolean
     },
     labOrders: {
       title: "Laboratuvar",
-      headers: withDoctor(["Tarih", "İş", "Laboratuvar", "Diş", "Durum", "Lab ücreti"], 6),
+      headers: withDoctor(["Tarih", "İş", "Laboratuvar", "Diş", "Durum", "Lab ücreti"], 5),
       rows: list(patient.labOrders).map((order) => {
         const invoices = list(order.invoices).filter((invoice) => invoice.status === undefined || invoice.status === "ACTIVE");
         const summary = getOrderSummary({
@@ -134,7 +147,7 @@ function buildSections(patient: Raw, balance: PatientBalance, hidePhone: boolean
           trips: list(order.trips).map((trip) => ({ description: String(trip.description || ""), sentAt: String(trip.sentAt || ""), expectedAt: (trip.expectedAt as string | null) ?? null, receivedAt: (trip.receivedAt as string | null) ?? null, receivedNote: (trip.receivedNote as string | null) ?? null, sentNote: (trip.sentNote as string | null) ?? null })),
           invoices: invoices.map((invoice) => ({ amount: Number(invoice.amount || 0) })),
         });
-        return [date(order.createdAt), str(order.labType), str(order.labName), str(order.teeth), LAB_STAGE_LABEL[summary.stage], money(summary.totalAmount), ...doctorCol(order)];
+        return [date(order.createdAt), str(order.labType), str(order.labName), str(order.teeth), LAB_STAGE_LABEL[summary.stage], ...doctorCol(order), money(summary.totalAmount)];
       }),
     },
     prescriptions: {
@@ -145,11 +158,11 @@ function buildSections(patient: Raw, balance: PatientBalance, hidePhone: boolean
       ]),
     },
     documents: {
-      title: "Belgeler ve Onamlar",
+      title: "Belgeler ve onamlar",
       headers: ["Tarih", "Tür", "Dosya / Başlık", "Ayrıntı"],
       rows: [
         ...list(patient.documents).filter((doc) => !doc.archivedAt).map((doc) => [
-          date(doc.createdAt), doc.category === "RONTGEN" ? "Röntgen" : doc.category === "FOTOGRAF" ? "Fotoğraf" : "Belge", str(doc.fileName), [doc.toothNo ? `Diş ${doc.toothNo}` : "", doc.note ? String(doc.note) : ""].filter(Boolean).join(" · ") || "-",
+          date(doc.createdAt), doc.category === "RONTGEN" ? "Röntgen" : doc.category === "FOTOGRAF" ? "Fotoğraf" : "Belge", str(doc.fileName), [doc.toothNo ? `Diş ${doc.toothNo}` : "", doc.note ? String(doc.note) : ""].filter(Boolean).join(" · ") || "—",
         ]),
         ...list(patient.consents).map((consent) => [
           date(consent.signedAt), "Onam", str(consent.title), consent.status === "IPTAL" ? `İptal: ${str(consent.voidReason)}` : `İmzalayan: ${str(consent.signerName)}`,
@@ -205,7 +218,7 @@ export function ExportModal({ open, onClose }: { open: boolean; onClose: () => v
       return `<h2>${escapeCell(section.title)}</h2><table><thead><tr>${section.headers.map((header) => `<th>${escapeCell(header)}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table>`;
     }).join("<br/>");
     const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="UTF-8" />
-      <style>body{font-family:"Segoe UI",Arial,sans-serif;font-size:10pt}h1{font-size:18pt}h2{font-size:12pt;margin:14px 0 6px}table{border-collapse:collapse;width:100%}th{background:#0f172a;color:#fff;text-align:left;padding:6px;border:1px solid #334155}td{padding:5px 6px;border:1px solid #cbd5e1;mso-number-format:"\\@";vertical-align:top}</style></head>
+      <style>body{font-family:"Segoe UI",Arial,sans-serif;font-size:10pt}h1{font-size:18pt}h2{font-size:12pt;margin:14px 0 6px}table{border-collapse:collapse;width:100%}th{background:#1e3a5f;color:#fff;text-align:left;padding:6px;border:1px solid #1e3a5f}td{padding:5px 6px;border:1px solid #cbd5e1;mso-number-format:"\\@";vertical-align:top}</style></head>
       <body><h1>${escapeCell(clinicName || "Klinik")} · Hasta raporu</h1><p>${escapeCell(data.fullName)} · ${escapeCell(formatDateText(new Date(), "datetime"))}</p>${tables}</body></html>`;
     const blob = new Blob(["\uFEFF" + html], { type: "application/vnd.ms-excel;charset=utf-8" });
     const link = document.createElement("a");
@@ -215,43 +228,31 @@ export function ExportModal({ open, onClose }: { open: boolean; onClose: () => v
     window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
   };
 
-  const downloadPdf = async (sections: Record<SectionKey, Section>, keys: SectionKey[], fileName: string, clinicName: string) => {
-    const { addPdfSection, createPdfDoc, pdfSafeText, preparePdfFonts, setPdfTextFont } = await import("@/lib/pdf-export");
-    // Türkçe font hazır olunca belge "Doğum tarihi", "Kadın" gibi harflerle yazılır.
+  // Antet, devam sayfası başlığı ve "Sayfa X / Y" ortak PDF tasarımından gelir.
+  const downloadPdf = async (sections: Record<SectionKey, Section>, keys: SectionKey[], fileName: string) => {
+    const { addPdfFacts, addPdfSection, addPdfStats, addPdfTitle, createPdfDoc, preparePdfFonts } = await import("@/lib/pdf-export");
+    // Türkçe font ve klinik anteti hazır olunca belge "Doğum tarihi", "Kadın" gibi harflerle yazılır.
     await preparePdfFonts();
-    const doc = createPdfDoc("l");
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const header = (suffix = "") => {
-      doc.setFillColor(15, 23, 42);
-      doc.rect(0, 0, pageWidth, 20, "F");
-      doc.setTextColor(255, 255, 255);
-      setPdfTextFont(doc);
-      doc.setFontSize(14);
-      doc.text(pdfSafeText(`Hasta raporu${suffix}`, doc), 14, 11);
-      doc.setFontSize(8.5);
-      doc.text(pdfSafeText(`${clinicName || "Klinik"} · ${data.fullName} · ${formatDateText(new Date(), "datetime")}`, doc), 14, 17);
-      doc.setTextColor(17, 24, 39);
-    };
-    header();
-    let y = 28;
-    keys.forEach((key) => {
-      if (y > 175) {
-        doc.addPage();
-        header(" (devam)");
-        y = 28;
-      }
-      y = addPdfSection(doc, y, sections[key].title, sections[key].headers, sections[key].rows);
-    });
-    const pages = doc.getNumberOfPages();
-    for (let page = 1; page <= pages; page += 1) {
-      doc.setPage(page);
-      setPdfTextFont(doc);
-      doc.setFontSize(7.5);
-      doc.setTextColor(100, 116, 139);
-      doc.text(pdfSafeText(`${clinicName || "Klinik"} · ${data.fullName}`, doc), 14, pageHeight - 6);
-      doc.text(pdfSafeText(`Sayfa ${page}/${pages}`, doc), pageWidth - 14, pageHeight - 6, { align: "right" });
+    const doc = createPdfDoc();
+    let y = addPdfTitle(doc, "Hasta raporu", `Hasta: ${data.fullName}`);
+    // Hesap özeti en üstte kart olarak: belgeyi açan önce kalan borcu görür.
+    if (keys.includes("balance")) {
+      y = addPdfStats(doc, y, [
+        { label: "Yapılan tedaviler", value: money(balance.totalCharged) },
+        ...(balance.discountRate > 0 ? [{ label: `İndirimli toplam (%${balance.discountRate})`, value: money(balance.discountedTotal) }] : []),
+        { label: "Alınan tahsilat", value: money(balance.totalPaid), tone: balance.totalPaid > 0 ? "positive" as const : undefined },
+        balance.totalDebt < 0
+          ? { label: "Ön ödeme", value: money(-balance.totalDebt), tone: "positive" as const }
+          : { label: "Kalan borç", value: money(balance.totalDebt), tone: balance.totalDebt > 0.005 ? "negative" as const : undefined },
+      ]);
     }
+    keys.forEach((key) => {
+      if (key === "balance") return;
+      const section = sections[key];
+      y = key === "profile"
+        ? addPdfFacts(doc, y, section.title, section.rows.map((row): [string, string | number] => [String(row[0]), row[1]]), { columns: 2 })
+        : addPdfSection(doc, y, section.title, section.headers, section.rows);
+    });
     doc.save(`${fileName}.pdf`);
   };
 
@@ -285,7 +286,7 @@ export function ExportModal({ open, onClose }: { open: boolean; onClose: () => v
       const safeName = data.fullName.trim().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "") || "hasta";
       // Dosya adındaki tarih Türkiye günüdür (gece yarısından sonra UTC bir gün geride kalıyordu).
       const fileName = `hasta-raporu-${safeName}-${turkeyDateKey()}`;
-      if (format === "pdf") await downloadPdf(sections, keys, fileName, clinic.name);
+      if (format === "pdf") await downloadPdf(sections, keys, fileName);
       else downloadExcel(sections, keys, fileName, clinic.name);
       showToastSafe({ type: "success", message: `${format === "pdf" ? "PDF" : "Excel"} dosyası indirildi.` });
       onClose();

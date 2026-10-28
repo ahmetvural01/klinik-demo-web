@@ -207,6 +207,18 @@ const period = useDateRangeParam(DATE_PRESET_SETS.takvim, "ay"); // period.range
 - `onSelect` Promise döndürürse düğme iş bitene kadar meşgul görünür.
 - Yetki sayfada denetlenir: `{can("finance:export") && <ExportMenu … />}`.
 
+**PDF belgeleri** (`src/lib/pdf-export.ts`)
+- Her PDF **dikey A4**'tür (`createPdfDoc()` yön almaz); yatay belge yazdırmaya,
+  dosyalamaya ve telefonda okumaya yaramıyordu.
+- Düzen ortaktır: `addPdfTitle` (antet: logo, klinik, belge adı, oluşturma zamanı;
+  altında kapsam kutusu) → gerekiyorsa `addPdfStats` (özet kartları) → bölümler
+  (`addPdfSection` tablo, `addPdfFacts` etiket–değer/hesap) → `addPdfNote`,
+  `addPdfSignatures`. Alt bilgi ve "Sayfa X / Y" kaydederken eklenir.
+- Belge ekranın kopyası değildir: dikey sayfaya sığmayan ikinci bilgi aynı hücrede
+  alt satıra yazılır (ad + telefon), tutar en sağdadır, boş bölümler tek cümlede
+  toplanır ("Bu ay laboratuvar gideri ve doktora ödeme yok."), iki tarafın
+  imzalayacağı belgede (hakediş) imza alanı vardır.
+
 **`Drawer`**
 - **Form, kısa ya da uzun, her zaman `FormModal`'da açılır** (gerekirse `size="lg"`/`"xl"`);
   Drawer form taşımaz (Enter ile gönderim, çift gönderim ve kayıt sürerken kapanmama

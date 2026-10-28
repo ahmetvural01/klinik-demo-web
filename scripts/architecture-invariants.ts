@@ -91,6 +91,9 @@ function scanSourceContracts() {
     "src/app/api/profile/route.ts",
     "src/app/api/treatment-types/route.ts",
     "src/app/api/treatment-types/[id]/route.ts",
+    // Ana sayfa "Başlarken": kliniğin herhangi bir şubesinde hasta/randevu var
+    // mı diye kurum geneli SAYAR (adım bir kez yapılınca tamamdır; kayıt dönmez).
+    "src/app/api/onboarding/route.ts",
   ]);
   for (const file of routeFiles) {
     const name = relative(file);

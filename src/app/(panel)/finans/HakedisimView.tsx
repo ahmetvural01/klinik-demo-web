@@ -16,8 +16,8 @@ type Props = {
 };
 
 /**
- * Hakedişim ekranı: doktor için sade — ayların hakedişi, ödenen ve kalan;
- * satıra tıklayınca ayın dökümü. Ödeme düğmesi yok (ödeme muhasebeden yapılır).
+ * Hakedişim ekranı: doktor için sade — solda ayların hakedişi ve kalanı,
+ * yanında seçili ayın tam dökümü. Ödeme düğmesi yok (ödeme muhasebeden yapılır).
  * Hakediş görme izni olan ama muhasebe ekranı olmayan diğer kullanıcılar
  * doktor seçerek aynı dökümü görür.
  */

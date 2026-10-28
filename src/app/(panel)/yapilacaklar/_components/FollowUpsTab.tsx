@@ -394,13 +394,28 @@ export const FollowUpsTab = forwardRef<FollowUpsTabHandle, Props>(function Follo
   };
   const downloadPdf = async () => {
     const { createPdfDoc, addPdfTitle, addPdfSection, preparePdfFonts } = await import("@/lib/pdf-export");
-    // Türkçe font beklenir: yoksa oturumdaki ilk PDF ğ/ı/ş harflerini dönüştürerek yazılır.
+    // Türkçe font ve klinik anteti beklenir: yoksa ilk PDF ğ/ı/ş harflerini dönüştürerek yazılır.
     await preparePdfFonts();
-    const exported = exportRows();
-    const headers = exported.length > 0 ? Object.keys(exported[0]) : ["Hasta"];
-    const doc = createPdfDoc("l");
-    addPdfTitle(doc, "Hasta aramaları", `${STATUS_TITLES[status]} · ${exported.length} kayıt · ${formatDateText(new Date(), "datetime")}`);
-    addPdfSection(doc, 30, STATUS_TITLES[status], headers, exported.map((row) => headers.map((header) => String((row as Record<string, string>)[header] ?? ""))));
+    const doc = createPdfDoc();
+    // Oluşturma zamanı antette, kayıt sayısı bölüm başlığında yazılır.
+    const y = addPdfTitle(doc, "Hasta aramaları", STATUS_TITLES[status]);
+    // Dikey sayfada elde tutulup sırayla aranacak liste: dört sütun, ikinci
+    // bilgi aynı hücrede alt satırda (telefon adın altında, doktor nedenin
+    // yanında). Excel'deki ayrı sütunlar dikey sayfaya sığmıyordu.
+    const closed = status === "kapali";
+    const headers = ["Hasta", "Neden", closed ? "Kapanış" : "Ne zaman", closed ? "Sonuç" : "Son görüşme / not"];
+    addPdfSection(doc, y, "Aramalar", headers, rows.map((item) => {
+      const phone = !hidePhone && item.patientPhone ? formatPhoneNumber(item.patientPhone) : "";
+      const lastEvent = item.lastEvent ? `${formatDateText(item.lastEvent.occurredAt, "datetime")} — ${item.lastEvent.summary}` : "";
+      return [
+        [item.patientName, phone].filter(Boolean).join("\n"),
+        [item.reasonLabel, item.doctorName || ""].filter(Boolean).join("\n"),
+        closed
+          ? (item.closedAt ? formatDateText(item.closedAt, "datetime") : "")
+          : `${item.dueAt ? formatDateText(item.dueAt, item.dueAllDay ? "short" : "datetime") : "Hemen ara"}${isOverdueItem(item, todayKey) ? "\nGecikmiş" : ""}`,
+        (closed ? [item.resolutionNote || "", lastEvent] : [lastEvent, item.noteText || ""]).filter(Boolean).join("\n"),
+      ];
+    }));
     doc.save(`hasta-aramalari-${fileStamp()}.pdf`);
   };
 

@@ -305,9 +305,10 @@ export function FollowUpDetailModal({
     const { createPdfDoc, addPdfTitle, addPdfSection, preparePdfFonts } = await import("@/lib/pdf-export");
     // Türkçe font beklenir: yoksa oturumdaki ilk PDF ğ/ı/ş harflerini dönüştürerek yazılır.
     await preparePdfFonts();
-    const doc = createPdfDoc("l");
-    addPdfTitle(doc, `Hasta arama geçmişi — ${item.patientName}`, `${item.reasonLabel} · ${item.isOpen ? "Açık" : "Kapalı"} · ${formatDateText(new Date(), "datetime")}`);
-    addPdfSection(doc, 30, "Görüşmeler", ["Tarih", "Kanal", "Sonuç / not", "Kaydeden"], events.map((event) => [
+    const doc = createPdfDoc();
+    // Oluşturma zamanı antette yazılır.
+    const y = addPdfTitle(doc, `Hasta arama geçmişi — ${item.patientName}`, `${item.reasonLabel} · ${item.isOpen ? "Açık" : "Kapalı"}`);
+    addPdfSection(doc, y, "Görüşmeler", ["Tarih", "Kanal", "Sonuç / not", "Kaydeden"], events.map((event) => [
       formatDateText(event.occurredAt, "datetime"),
       event.channel || "—",
       [event.summary, event.patientResponse, event.nextStep, event.detail].filter(Boolean).join(" — "),

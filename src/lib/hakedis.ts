@@ -210,7 +210,23 @@ export async function computeDoctorMonthlyHakedis(params: {
   // gününe (dolayısıyla bazen bir önceki aya) sayılırdı.
   const keyOf = (d: Date) => turkeyDateKey(new Date(d)).slice(0, 7);
   const chargeable = examinationRows.filter((e) => isChargeableForHakedis(e.status));
-  const chargeablePatients = new Set(chargeable.map((e) => e.patientId));
+  // Kart komisyonu, AYNI AY tedavi gören hastaların o ayki kartlı tahsilatından
+  // kesilir. Hasta kümesi ay ay tutulur: önceden 12 aylık listede bir önceki ay
+  // tedavi görüp bu ay kartla ödeyen hasta da sayılıyor, aynı ay ayrıntıda,
+  // özette ve ödeme kontrolünde (tek aylık hesap) sayılmıyordu; liste ile
+  // ayrıntı farklı hakediş gösterebiliyordu. Artık sonuç sorgu aralığından
+  // bağımsız: her ay, yalnız o ay hesaplanmış gibi çıkar.
+  const patientsByMonth = (rows: typeof examinationRows) => {
+    const map = new Map<string, Set<string>>();
+    for (const row of rows) {
+      const key = keyOf(row.diagnosedAt);
+      if (!map.has(key)) map.set(key, new Set());
+      map.get(key)!.add(row.patientId);
+    }
+    return map;
+  };
+  const chargeablePatients = patientsByMonth(chargeable);
+  const treatedPatients = patientsByMonth(examinationRows);
   const hasSettled = settledKeys.size > 0;
   // Eski hesap (planlanan/iptal dahil) yalnız ödenmiş aylar için gerekir.
   const legacyRows = hasSettled ? examinationRows.filter((e) => settledKeys.has(keyOf(e.diagnosedAt))) : [];
@@ -254,7 +270,7 @@ export async function computeDoctorMonthlyHakedis(params: {
   for (const e of chargeable) ensure(current, new Date(e.diagnosedAt)).ciro += Number(e.amount);
   for (const inv of labInvoices) ensure(current, new Date(inv.issuedAt)).labCost += Number(inv.amount || 0);
   for (const p of patientPayments) {
-    if (p.method === "KREDI_KARTI" && p.patientId && chargeablePatients.has(p.patientId)) ensure(current, new Date(p.createdAt)).kk += Number(p.amount);
+    if (p.method === "KREDI_KARTI" && p.patientId && chargeablePatients.get(keyOf(p.createdAt))?.has(p.patientId)) ensure(current, new Date(p.createdAt)).kk += Number(p.amount);
   }
 
   const legacy = new Map<string, Bucket>();
@@ -264,7 +280,8 @@ export async function computeDoctorMonthlyHakedis(params: {
       if (settledKeys.has(keyOf(inv.issuedAt))) ensure(legacy, new Date(inv.issuedAt)).labCost += Number(inv.amount || 0);
     }
     for (const p of patientPayments) {
-      if (p.method === "KREDI_KARTI" && settledKeys.has(keyOf(p.createdAt))) ensure(legacy, new Date(p.createdAt)).kk += Number(p.amount);
+      const key = keyOf(p.createdAt);
+      if (p.method === "KREDI_KARTI" && settledKeys.has(key) && p.patientId && treatedPatients.get(key)?.has(p.patientId)) ensure(legacy, new Date(p.createdAt)).kk += Number(p.amount);
     }
   }
 

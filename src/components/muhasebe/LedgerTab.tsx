@@ -281,20 +281,55 @@ export function LedgerTab({
 
   const exportPdf = async () => {
     const rows = await fetchAllRows();
-    const { addPdfSection, addPdfTitle, createPdfDoc, preparePdfFonts } = await import("@/lib/pdf-export");
-    // Türkçe yazı tipi oturumun ilk PDF'inde de yüklü olsun (yoksa harfler dönüştürülür).
+    const { addPdfSection, addPdfStats, addPdfTitle, createPdfDoc, preparePdfFonts } = await import("@/lib/pdf-export");
+    // Türkçe yazı tipi ve klinik anteti oturumun ilk PDF'inde de hazır olsun.
     await preparePdfFonts();
-    const doc = createPdfDoc("l");
+    const doc = createPdfDoc();
     const totals = data?.totals;
-    addPdfTitle(
-      doc,
-      cancelledView ? "İptal edilen kayıtlar" : showExpenses ? "Gelir ve gider" : "Tahsilatlar",
-      cancelledView
-        ? `${formatRangeLabel(range)} · İptal edilen kayıtlar toplamlara girmez`
-        : `${formatRangeLabel(range)} · Tahsilat ${money(totals?.tahsilat)} · Gider ${money(totals?.gider)} · Fark ${money(totals?.net)}`,
-    );
-    addPdfSection(doc, 28, "Hareketler", ["Tarih", "Kim", "Kalem", "Doktor", "Açıklama", "Yöntem", "Tutar"],
-      exportRows(rows).map((row) => [row.Tarih, row.Kim, row.Kalem, row.Doktor, row.Açıklama, row.Yöntem, row.Tutar]));
+    // Belgenin kapsamı ekrandaki süzgeçlerle aynı: dönem, tür, yöntem, arama.
+    const scope = [
+      formatRangeLabel(range),
+      effectiveTur === "TAHSILAT" || effectiveTur === "GIDER" ? TYPE_FILTER_LABEL[effectiveTur] : "",
+      yontem !== "HEPSI" ? methodLabel(yontem) : "",
+      debouncedSearch ? `Arama: "${debouncedSearch}"` : "",
+      cancelledView ? "İptal edilen kayıtlar toplamlara girmez" : "",
+    ].filter(Boolean).join(" · ");
+    let y = addPdfTitle(doc, cancelledView ? "İptal edilen kayıtlar" : showExpenses ? "Gelir ve gider" : "Tahsilatlar", scope);
+    // Özet kartları ekrandaki özetle aynı: Tahsilat · Gider · Fark.
+    const withIn = showPayments && effectiveTur !== "GIDER";
+    const withOut = showExpenses && effectiveTur !== "TAHSILAT";
+    if (totals && !cancelledView) {
+      y = addPdfStats(doc, y, [
+        ...(withIn ? [{ label: `Tahsilat · ${totals.tahsilatCount} kayıt`, value: signedMoney(totals.tahsilat), tone: totals.tahsilat > 0 ? "positive" as const : undefined }] : []),
+        ...(withOut ? [{ label: `Gider · ${totals.giderCount} kayıt`, value: signedMoney(-totals.gider), tone: totals.gider > 0 ? "negative" as const : undefined }] : []),
+        ...(withIn && withOut ? [{ label: "Fark", value: signedMoney(totals.net), tone: totals.net < 0 ? "negative" as const : undefined }] : []),
+      ]);
+    }
+    // Hesap ekstresi düzeni (dikey A4): giren ve çıkan ayrı sütunda, altta
+    // toplamları. Kalem, doktor ve açıklama tek "İşlem" hücresinde okunur;
+    // iptal edilen kayıtta kimin, neden iptal ettiği yazar.
+    const operation = (row: LedgerRow) => {
+      const text = [row.item, row.doctor ? doctorLabel(row.doctor) : "", row.note].filter(Boolean).join(" · ");
+      if (!row.voided) return text;
+      const by = [row.voidedByName ? `İptal eden: ${row.voidedByName}` : "", row.voidReason ? `Neden: ${row.voidReason}` : ""].filter(Boolean).join(" · ");
+      return `İptal edildi — ${text}${by ? ` (${by})` : ""}`;
+    };
+    const headers = ["Tarih", "Kim", "İşlem", "Yöntem", ...(withIn ? ["Giren"] : []), ...(withOut ? ["Çıkan"] : [])];
+    const tableRows = rows.map((row) => [
+      `${shortDate(row.date)}${row.hasTime ? ` ${timeText(row.date)}` : ""}`,
+      row.who || "",
+      operation(row),
+      methodWithPos(row),
+      ...(withIn ? [row.kind === "TAHSILAT" ? money(row.amount) : ""] : []),
+      ...(withOut ? [row.kind === "GIDER" ? money(row.amount) : ""] : []),
+    ]);
+    // İptal edilen kayıt toplama girmez (ekrandaki özetle aynı kural).
+    const counted = rows.filter((row) => !row.voided);
+    if (!cancelledView && counted.length > 1) {
+      const sum = (kind: LedgerRow["kind"]) => counted.filter((row) => row.kind === kind).reduce((total, row) => total + row.amount, 0);
+      tableRows.push(["Toplam", "", "", "", ...(withIn ? [money(sum("TAHSILAT"))] : []), ...(withOut ? [money(sum("GIDER"))] : [])]);
+    }
+    addPdfSection(doc, y, "Hareketler", headers, tableRows);
     doc.save(`${fileBase}.pdf`);
   };
 

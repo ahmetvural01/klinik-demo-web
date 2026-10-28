@@ -1,16 +1,14 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Wallet } from "lucide-react";
-import { Modal } from "@/components/ui/Modal";
-import { Tabs } from "@/components/ui/Tabs";
-import { ActionMenu } from "@/components/ui/ActionMenu";
-import { ListTable, EmptyValue, type ListTableColumn } from "@/components/ui/ListTable";
+import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { ListRowSkeleton } from "@/components/ui/ListSkeleton";
 import { LoadErrorState } from "@/components/ui/LoadErrorState";
 import { StatStrip } from "@/components/ui/StatStrip";
-import { DescriptionList } from "@/components/ui/DescriptionList";
 import { ExportMenu } from "@/components/ui/ExportMenu";
+import { Section } from "@/components/ui/Section";
+import { Select } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { methodLabel, money, monthName, shortDate, todayKey } from "@/components/muhasebe/muhasebe-utils";
@@ -30,37 +28,41 @@ type HakedisDetail = {
   payoutExpenses: { id: string; tarih: string; tutar: number; aciklama: string | null; yontem: string }[];
 };
 
-type DetailTab = "hesap" | "tedavi" | "tahsilat" | "lab" | "odeme";
-const DETAIL_TABS: { key: DetailTab; label: string }[] = [
-  { key: "hesap", label: "Hesap" },
-  { key: "tedavi", label: "Tedaviler" },
-  { key: "tahsilat", label: "Tahsilatlar" },
-  { key: "lab", label: "Laboratuvar" },
-  { key: "odeme", label: "Ödemeler" },
-];
-
 const monthKey = (year: number, month: number) => `${year}-${String(month).padStart(2, "0")}`;
 
-/** Hesap dökümü kalemi: tutar ve kesinti mi (kesinti eksiyle yazılır). */
-type BreakdownItem = { label: string; amount: number; deduction?: boolean };
+/** Hesap kalemi: tutar; kesinti mi (eksiyle yazılır); sonuç satırı mı (kalın). */
+type StatementItem = { label: string; amount: number; deduction?: boolean; result?: boolean };
 
-/** Hesap dökümü kalemleri: ekranda, Excel'de ve PDF'te aynı sözcükler. */
-const breakdownItems = (d: HakedisDetail): BreakdownItem[] => [
-  { label: "Tedavi tutarı (üretim)", amount: d.breakdown.ciro },
-  { label: "Kredi kartıyla alınan tahsilat", amount: d.breakdown.kk },
-  { label: `Kredi kartı komisyonu (%${d.rates.kkYuzde})`, amount: d.breakdown.kkMasraf, deduction: true },
-  { label: `Genel gider payı (tedavi tutarının %${d.rates.genelYuzde}'i)`, amount: d.breakdown.genelMasraf, deduction: true },
-  { label: "Laboratuvar gideri", amount: d.breakdown.labCost, deduction: true },
-  { label: "Toplam kesinti", amount: d.breakdown.toplamGider, deduction: true },
-  { label: "Kesintiden sonra kalan", amount: d.breakdown.brut },
-  { label: `Doktor payı — hakediş (%${d.rates.maasYuzde})`, amount: d.breakdown.hakedilen },
-];
+/**
+ * Bir ayın hesabı, üretimden kalana kadar TEK sütunda; ekranda, Excel'de ve
+ * PDF'te aynı sözcükler. Her kesintinin neyin yüzdesi olduğu satırda yazar
+ * (kart komisyonu kartlı tahsilattan, genel gider payı tedavi tutarından);
+ * hakediş ve kalan kalın. Satırlar toplanınca kalan çıkar: kural
+ * değişmeden önce ödenmiş ayda hakediş ödenenle kapatıldıysa aradaki fark ayrı
+ * satırda yazar (yoksa hesap tutmaz görünürdü).
+ */
+function statementItems(d: HakedisDetail): StatementItem[] {
+  const closedDifference = d.breakdown.hakedilen - d.summary.hakedilen;
+  return [
+    { label: `Tedavi tutarı (${d.examinations.length} tedavi)`, amount: d.breakdown.ciro },
+    { label: `Kredi kartı komisyonu (${money(d.breakdown.kk)} kartlı tahsilat × %${d.rates.kkYuzde})`, amount: d.breakdown.kkMasraf, deduction: true },
+    { label: `Genel gider payı (tedavi tutarı × %${d.rates.genelYuzde})`, amount: d.breakdown.genelMasraf, deduction: true },
+    { label: `Laboratuvar gideri${d.labInvoices.length > 0 ? ` (${d.labInvoices.length} kalem)` : ""}`, amount: d.breakdown.labCost, deduction: true },
+    { label: "Toplam kesinti", amount: d.breakdown.toplamGider, deduction: true },
+    { label: "Kesintiden sonra kalan", amount: d.breakdown.brut },
+    { label: `Hakediş (doktor payı %${d.rates.maasYuzde})`, amount: d.breakdown.hakedilen, result: true },
+    ...(Math.abs(closedDifference) >= 0.005
+      ? [{ label: "Eski hesapla ödenip kapatılan fark", amount: closedDifference, deduction: true }]
+      : []),
+    { label: "Doktora ödenen", amount: d.summary.odenen, deduction: true },
+    d.summary.kalan < -0.005
+      ? { label: "Fazla ödenen", amount: -d.summary.kalan, result: true }
+      : { label: "Kalan", amount: d.summary.kalan, result: true },
+  ];
+}
 
-/** Ekran ve PDF metni: kesinti "−₺120,00"; sıfır kesinti işaretsiz "₺0,00" (önceden "−₺0,00"). */
-const breakdownText = (item: BreakdownItem) => (item.deduction && Math.abs(item.amount) >= 0.005 ? `−${money(item.amount)}` : money(item.amount));
-
-/** Ekrandaki ve PDF'teki satırlar (eski biçim: [kalem, metin]). */
-const breakdownRows = (d: HakedisDetail): [string, string][] => breakdownItems(d).map((item) => [item.label, breakdownText(item)]);
+/** Ekran ve PDF metni: kesinti "−₺120,00"; sıfır kesinti işaretsiz "₺0,00". */
+const itemText = (item: StatementItem) => (item.deduction && Math.abs(item.amount) >= 0.005 ? `−${money(item.amount)}` : money(item.amount));
 
 /**
  * CSV tutarı: Excel'in toplayabileceği sayı — "22880,00", eksi ASCII "-"
@@ -87,11 +89,109 @@ function monthStatus(row: HakedisMonth, isCurrent: boolean) {
   return { label: "Ödendi", tone: "success" as const, hint: "", plain: true };
 }
 
-type DetailRow = { id: string; tarih: string; ad: string; aciklama: string; yontem: string; tutar: number };
+/** Dökümün bir bölümündeki satır: tarih, kim/ne, ayrıntı, tutar. */
+type StatementLine = { id: string; date: string; primary: string; secondary: string; amount: number };
+type StatementGroup = {
+  key: string;
+  title: string;
+  /** PDF sütun adları: [birincil, ayrıntı]. */
+  columns: [string, string];
+  /** Boşken tek cümlede geçen ad ("laboratuvar gideri"). */
+  emptyLabel: string;
+  /** Ekranda tutar rengi. */
+  tone: string;
+  lines: StatementLine[];
+};
+
+/**
+ * Hakedişe giren bütün kayıtlar, hesaptaki sırasıyla: üretim (tedaviler),
+ * kimden ne alındı (hasta tahsilatları), ne masraf düşüldü (laboratuvar),
+ * doktora ne ödendi. Ekranda ve PDF'te aynı bölümler ve sözcükler.
+ */
+function statementGroups(d: HakedisDetail): StatementGroup[] {
+  return [
+    {
+      key: "tedavi", title: "Tedaviler", columns: ["Hasta", "Tedavi"], emptyLabel: "tedavi", tone: "text-slate-900",
+      lines: d.examinations.map((e) => ({ id: e.id, date: e.tarih, primary: e.hasta, secondary: [e.tedavi, e.dis ? `diş ${e.dis}` : ""].filter(Boolean).join(" · "), amount: e.tutar })),
+    },
+    {
+      key: "tahsilat", title: "Hasta tahsilatları", columns: ["Hasta", "Yöntem"], emptyLabel: "hasta tahsilatı", tone: "text-emerald-700",
+      lines: d.patientPayments.map((p) => ({ id: p.id, date: p.tarih, primary: p.hasta, secondary: methodLabel(p.yontem), amount: p.tutar })),
+    },
+    {
+      key: "lab", title: "Laboratuvar giderleri", columns: ["Laboratuvar", "Kalem"], emptyLabel: "laboratuvar gideri", tone: "text-red-700",
+      lines: d.labInvoices.map((i) => ({ id: i.id, date: i.tarih, primary: i.lab, secondary: i.kalem, amount: i.tutar })),
+    },
+    {
+      key: "odeme", title: "Doktora yapılan ödemeler", columns: ["Açıklama", "Yöntem"], emptyLabel: "doktora ödeme", tone: "text-slate-900",
+      lines: d.payoutExpenses.map((p) => ({ id: p.id, date: p.tarih, primary: p.aciklama || "Hakediş ödemesi", secondary: methodLabel(p.yontem), amount: p.tutar })),
+    },
+  ];
+}
+
+const groupTotal = (group: StatementGroup) => group.lines.reduce((sum, line) => sum + line.amount, 0);
+
+/** Boş bölümler ayrı ayrı "kayıt yok" kutusu açmaz; tek cümle: "Bu ay laboratuvar gideri ve doktora ödeme yok." */
+function emptyGroupsNote(groups: StatementGroup[]) {
+  const empty = groups.filter((group) => group.lines.length === 0).map((group) => group.emptyLabel);
+  if (empty.length === 0) return "";
+  const list = empty.length === 1 ? empty[0] : `${empty.slice(0, -1).join(", ")} ve ${empty[empty.length - 1]}`;
+  return `Bu ay ${list} yok.`;
+}
+
+/**
+ * Bir ayın hakediş dökümü, yukarıdan aşağı okunur: hesap (üretimden kalana)
+ * → hesaba giren kayıtlar. Doktor "hakedişim eksik" dediğinde her şey aynı
+ * yerde gösterilir; önceden ayrı pencerede beş sekmeye bölünmüştü.
+ */
+function HakedisStatement({ detail }: { detail: HakedisDetail }) {
+  const groups = statementGroups(detail);
+  const note = emptyGroupsNote(groups);
+  const items = statementItems(detail);
+  return (
+    <div className="space-y-5">
+      {/* Tutarlar sağda alt alta: hesap şeridi gibi okunur; kesinti kırmızı, hakediş ve kalan kalın. */}
+      <dl className="divide-y divide-slate-100 text-sm" aria-label="Hesap">
+        {items.map((item) => {
+          const negative = item.deduction && Math.abs(item.amount) >= 0.005;
+          return (
+            <div key={item.label} className={`flex items-baseline justify-between gap-4 py-2 first:pt-0 ${item.result ? "border-t border-slate-300 font-extrabold text-slate-900" : ""}`}>
+              <dt className={item.result ? "" : "text-slate-600"}>{item.label}</dt>
+              <dd className={`shrink-0 tabular-nums ${negative ? "text-red-700" : item.result ? "" : "text-slate-900"}`}>{itemText(item)}</dd>
+            </div>
+          );
+        })}
+      </dl>
+      {groups.filter((group) => group.lines.length > 0).map((group) => (
+        <section key={group.key} aria-label={group.title}>
+          <div className="flex items-baseline justify-between gap-3 border-b border-slate-200 pb-1.5">
+            <h3 className="text-sm font-extrabold text-slate-900">
+              {group.title} <span className="font-semibold text-slate-400">· {group.lines.length}</span>
+            </h3>
+            <span className="text-sm font-bold tabular-nums text-slate-900">{money(groupTotal(group))}</span>
+          </div>
+          <ul className="divide-y divide-slate-100">
+            {group.lines.map((line) => (
+              <li key={line.id} className="flex items-start gap-3 py-2 text-sm">
+                <span className="w-[5.25rem] shrink-0 tabular-nums text-slate-500">{shortDate(line.date)}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block font-semibold text-slate-800">{line.primary}</span>
+                  {line.secondary && <span className="block text-xs text-slate-500">{line.secondary}</span>}
+                </span>
+                <span className={`shrink-0 font-semibold tabular-nums ${group.tone}`}>{money(line.amount)}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+      {note && <p className="text-xs text-slate-500">{note}</p>}
+    </div>
+  );
+}
 
 export interface HakedisMonthlyPanelProps {
   doctorId: string;
-  /** "Öde" düğmesi gösterilsin mi? Doktorun kendi görünümünde false. */
+  /** "Kalanı öde" gösterilsin mi? Doktorun kendi görünümünde false. */
   canPay?: boolean;
   onPay?: (doctorId: string, year: number, month: number, kalan: number) => void;
   /** Bir ödeme sonrası veya dışarıdan tetiklenen yenilemede artan sayaç. */
@@ -103,8 +203,12 @@ export interface HakedisMonthlyPanelProps {
 }
 
 /**
- * Doktorun son 12 aylık hakediş dökümü — Muhasebe > Hakediş ile doktorun kendi
- * "Hakedişim" ekranı aynı hesabı (tek kaynak: /api/hakedis) gösterir.
+ * Doktorun hakedişi TEK ekranda: solda son 12 ay (hakediş, kalan, durum),
+ * sağda seçili ayın tam dökümü (hesap ve hesaba giren bütün kayıtlar), dışa
+ * aktarma ve ödeme aynı yerde. Telefonda ay seçici üstte, döküm altında.
+ * Açılışta ödenmemiş en eski ay seçilir (yoksa hareketi olan en yeni ay).
+ * Muhasebe › Hakediş ile doktorun kendi "Hakedişim" ekranı aynı hesabı (tek
+ * kaynak: /api/hakedis ve /api/hakedis/detay) gösterir.
  */
 export function HakedisMonthlyPanel({ doctorId, canPay = false, onPay, refreshToken = 0, canExport = false, active = true }: HakedisMonthlyPanelProps) {
   // Aylar hangi doktora ait: doktor değişince öncekinin satırları yeni adla görünmez.
@@ -114,12 +218,12 @@ export function HakedisMonthlyPanel({ doctorId, canPay = false, onPay, refreshTo
   const [reloadKey, setReloadKey] = useState(0);
   const sequenceRef = useRef(0);
 
-  const [detailOpen, setDetailOpen] = useState(false);
-  const [detail, setDetail] = useState<HakedisDetail | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [detailError, setDetailError] = useState("");
-  const [detailTarget, setDetailTarget] = useState<{ year: number; month: number } | null>(null);
-  const [detailTab, setDetailTab] = useState<DetailTab>("hesap");
+  // Kullanıcının seçtiği ay (doktora bağlı: doktor değişince varsayılana döner).
+  const [picked, setPicked] = useState<{ doctorId: string; key: string } | null>(null);
+  // Döküm hangi doktor ve aya ait: ay değişince eski ayın dökümü yeni ayın başlığıyla görünmez.
+  const [detailState, setDetailState] = useState<{ key: string; detail: HakedisDetail | null; error: string } | null>(null);
+  const [detailReload, setDetailReload] = useState(0);
+  const detailSequence = useRef(0);
 
   const load = useCallback(async () => {
     if (!doctorId) return;
@@ -145,40 +249,56 @@ export function HakedisMonthlyPanel({ doctorId, canPay = false, onPay, refreshTo
   useLoadWhenActive(active && Boolean(doctorId), `${doctorId}|${refreshToken}|${reloadKey}`, () => void load());
 
   const months = monthsState && monthsState.doctorId === doctorId ? monthsState.months : null;
-
-  const openDetail = async (year: number, month: number) => {
-    setDetailTarget({ year, month });
-    setDetailTab("hesap");
-    setDetailOpen(true);
-    setDetailLoading(true);
-    setDetailError("");
-    setDetail(null);
-    const response = await fetch(`/api/hakedis/detay?doctorId=${encodeURIComponent(doctorId)}&year=${year}&month=${month}`, { cache: "no-store" }).catch(() => null);
-    const body = await response?.json().catch(() => null);
-    if (response?.ok && body) setDetail(body as HakedisDetail);
-    else setDetailError(body?.message || "Hakediş detayı yüklenemedi.");
-    setDetailLoading(false);
-  };
-
   const currentKey = todayKey().slice(0, 7);
   const isCurrent = (row: HakedisMonth) => monthKey(row.year, row.month) === currentKey;
   const payable = (months || []).filter((row) => !isCurrent(row) && row.kalan > 0.5);
   const totalPayable = payable.reduce((sum, row) => sum + row.kalan, 0);
   const current = (months || []).find(isCurrent);
 
+  // Açılışta gösterilecek ay: ödenmemiş en eski kapanmış ay (ödenecek olan);
+  // yoksa hakedişi ya da ödemesi olan en yeni ay; o da yoksa bu ay.
+  const defaultKey = useMemo(() => {
+    if (!months || months.length === 0) return "";
+    const unpaid = months.filter((row) => monthKey(row.year, row.month) !== currentKey && row.kalan > 0.5);
+    const oldestUnpaid = unpaid[unpaid.length - 1];
+    const withActivity = months.find((row) => Math.abs(row.hakedilen) >= 0.005 || row.odenen > 0.005);
+    const target = oldestUnpaid || withActivity || months[0];
+    return monthKey(target.year, target.month);
+  }, [months, currentKey]);
+  const pickedKey = picked && picked.doctorId === doctorId && (months || []).some((row) => monthKey(row.year, row.month) === picked.key) ? picked.key : "";
+  const selectedKey = pickedKey || defaultKey;
+  const selectedRow = (months || []).find((row) => monthKey(row.year, row.month) === selectedKey) || null;
+
+  const loadDetail = useCallback(async (key: string) => {
+    const [year, month] = key.split("-").map(Number);
+    const sequence = ++detailSequence.current;
+    const stateKey = `${doctorId}|${key}`;
+    const response = await fetch(`/api/hakedis/detay?doctorId=${encodeURIComponent(doctorId)}&year=${year}&month=${month}`, { cache: "no-store" }).catch(() => null);
+    const body = await response?.json().catch(() => null);
+    if (sequence !== detailSequence.current) return;
+    setDetailState(response?.ok && body
+      ? { key: stateKey, detail: body as HakedisDetail, error: "" }
+      : { key: stateKey, detail: null, error: body?.message || "Hakediş dökümü yüklenemedi." });
+  }, [doctorId]);
+
+  useLoadWhenActive(active && Boolean(selectedKey), `${doctorId}|${selectedKey}|${refreshToken}|${detailReload}`, () => void loadDetail(selectedKey));
+
+  const shown = detailState && detailState.key === `${doctorId}|${selectedKey}` ? detailState : null;
+  const detail = shown?.detail || null;
+
   const detailFileName = detail
     ? `hakedis-${detail.doctor.fullName.replace(/\s+/g, "-")}-${monthKey(detail.year, detail.month)}`
-    : "hakedis-detay";
+    : "hakedis-dokumu";
 
   const exportExcel = async () => {
     if (!detail) return;
     const d = detail;
+    // Ekran ve PDF ile aynı bölümler ve sözcükler: Hesap, sonra hesaba giren kayıtlar.
     const rows: Record<string, string>[] = [
-      ...breakdownItems(d).map((item) => ({ Bölüm: "Hesap dökümü", Tarih: "", Açıklama: item.label, Yöntem: "", Tutar: csvAmount(item.amount, item.deduction) })),
-      ...d.examinations.map((e) => ({ Bölüm: "Tedaviler", Tarih: shortDate(e.tarih), Açıklama: `${e.hasta} — ${e.tedavi}${e.dis ? ` (diş ${e.dis})` : ""}`, Yöntem: "", Tutar: csvAmount(e.tutar) })),
-      ...d.patientPayments.map((p) => ({ Bölüm: "Hasta tahsilatları", Tarih: shortDate(p.tarih), Açıklama: p.hasta, Yöntem: methodLabel(p.yontem), Tutar: csvAmount(p.tutar) })),
-      ...d.labInvoices.map((i) => ({ Bölüm: "Laboratuvar ücretleri", Tarih: shortDate(i.tarih), Açıklama: `${i.lab} — ${i.kalem}`, Yöntem: "", Tutar: csvAmount(i.tutar) })),
-      ...d.payoutExpenses.map((p) => ({ Bölüm: "Doktora yapılan ödemeler", Tarih: shortDate(p.tarih), Açıklama: p.aciklama || "", Yöntem: methodLabel(p.yontem), Tutar: csvAmount(p.tutar) })),
+      ...statementItems(d).map((item) => ({ Bölüm: "Hesap", Tarih: "", Kayıt: item.label, Ayrıntı: "", Tutar: csvAmount(item.amount, item.deduction) })),
+      ...statementGroups(d).flatMap((group) => group.lines.map((line) => ({
+        Bölüm: group.title, Tarih: shortDate(line.date), Kayıt: line.primary, Ayrıntı: line.secondary, Tutar: csvAmount(line.amount),
+      }))),
     ];
     const { downloadCsv } = await import("@/lib/csv-export");
     downloadCsv(`${detailFileName}.csv`, rows);
@@ -186,23 +306,29 @@ export function HakedisMonthlyPanel({ doctorId, canPay = false, onPay, refreshTo
 
   const exportPdf = async () => {
     if (!detail) return;
-    const { addPdfSection, addPdfTitle, createPdfDoc, preparePdfFonts } = await import("@/lib/pdf-export");
-    // Türkçe yazı tipi oturumun ilk PDF'inde de yüklü olsun (yoksa harfler dönüştürülür).
+    const { addPdfFacts, addPdfNote, addPdfSection, addPdfSignatures, addPdfTitle, createPdfDoc, preparePdfFonts } = await import("@/lib/pdf-export");
+    // Türkçe yazı tipi ve klinik anteti oturumun ilk PDF'inde de hazır olsun.
     await preparePdfFonts();
     const d = detail;
-    const doc = createPdfDoc("l");
-    addPdfTitle(doc, `Hakediş — ${d.doctor.fullName}`,
-      `${monthName(d.year, d.month)} · Hakediş: ${money(d.summary.hakedilen)} · Ödenen: ${money(d.summary.odenen)} · Kalan: ${money(d.summary.kalan)}`);
-    let y = 28;
-    y = addPdfSection(doc, y, "Hesap dökümü", ["Kalem", "Tutar"], breakdownRows(d));
-    y = addPdfSection(doc, y, "Tedaviler", ["Tarih", "Hasta", "Tedavi", "Diş", "Tutar"],
-      d.examinations.map((e) => [shortDate(e.tarih), e.hasta, e.tedavi, e.dis || "", money(e.tutar)]));
-    y = addPdfSection(doc, y, "Hasta tahsilatları", ["Tarih", "Hasta", "Yöntem", "Tutar"],
-      d.patientPayments.map((p) => [shortDate(p.tarih), p.hasta, methodLabel(p.yontem), money(p.tutar)]));
-    y = addPdfSection(doc, y, "Laboratuvar ücretleri", ["Tarih", "Laboratuvar", "Kalem", "Tutar"],
-      d.labInvoices.map((i) => [shortDate(i.tarih), i.lab, i.kalem, money(i.tutar)]));
-    addPdfSection(doc, y, "Doktora yapılan ödemeler", ["Tarih", "Açıklama", "Yöntem", "Tutar"],
-      d.payoutExpenses.map((p) => [shortDate(p.tarih), p.aciklama || "", methodLabel(p.yontem), money(p.tutar)]));
+    // Ekrandaki dökümün aynısı, tek akışta: hesap → kayıtlar → imza.
+    const doc = createPdfDoc();
+    let y = addPdfTitle(doc, "Hakediş dökümü",
+      `Hekim: ${d.doctor.fullName} · Dönem: ${monthName(d.year, d.month)} · Hakediş oranı %${d.rates.maasYuzde} · Kart komisyonu %${d.rates.kkYuzde} · Genel gider payı %${d.rates.genelYuzde}`);
+    const items = statementItems(d);
+    y = addPdfFacts(doc, y, "Hesap", items.map((item): [string, string] => [item.label, itemText(item)]), {
+      emphasize: items.flatMap((item, index) => (item.result ? [index] : [])),
+    });
+    const groups = statementGroups(d);
+    for (const group of groups) {
+      if (group.lines.length === 0) continue;
+      const rows = group.lines.map((line) => [shortDate(line.date), line.primary, line.secondary, money(line.amount)]);
+      // Tek kayıtta toplam satırı tekrar olur; birden çoksa bölüm toplamı altta.
+      if (group.lines.length > 1) rows.push(["Toplam", "", "", money(groupTotal(group))]);
+      y = addPdfSection(doc, y, group.title, ["Tarih", ...group.columns, "Tutar"], rows);
+    }
+    const note = emptyGroupsNote(groups);
+    if (note) y = addPdfNote(doc, y, note);
+    addPdfSignatures(doc, y + 4, [{ title: "Hazırlayan" }, { title: "Hekim", name: d.doctor.fullName }]);
     doc.save(`${detailFileName}.pdf`);
   };
 
@@ -213,113 +339,43 @@ export function HakedisMonthlyPanel({ doctorId, canPay = false, onPay, refreshTo
     return <Badge tone={status.tone} title={status.hint || undefined}>{status.label}</Badge>;
   };
 
-  // Telefon: ödeme kartın sağ üst köşesindeki "…" menüsünde (ayrı eylem sırası yok).
-  const payMenu = (row: HakedisMonth) => (canPay && onPay && !isCurrent(row) && row.kalan > 0.5 ? (
-    <ActionMenu
-      label={`${monthName(row.year, row.month)} için işlemler`}
-      items={[{ key: "pay", label: `${monthName(row.year, row.month)} hakedişini öde`, icon: Wallet, onSelect: () => onPay(doctorId, row.year, row.month, row.kalan) }]}
-    />
-  ) : null);
+  const selectMonth = (row: HakedisMonth) => setPicked({ doctorId, key: monthKey(row.year, row.month) });
+  const isSelected = (row: HakedisMonth) => monthKey(row.year, row.month) === selectedKey;
 
-  // Her ayda görünür "Ayrıntı": kimden ne alındı, hangi tedavi, hangi masraf
-  // düşüldü (hesap dökümü, tedaviler, tahsilatlar, laboratuvar, ödemeler).
-  const payButton = (row: HakedisMonth) => (
-    <div className="flex items-center justify-end gap-1.5">
-      <Button size="sm" variant="ghost" onClick={() => void openDetail(row.year, row.month)} aria-label={`${monthName(row.year, row.month)} hakediş ayrıntısı`}>
-        Ayrıntı
-      </Button>
-      {canPay && onPay && !isCurrent(row) && row.kalan > 0.5 && (
-        <Button size="sm" variant="secondary" icon={Wallet} onClick={() => onPay(doctorId, row.year, row.month, row.kalan)} aria-label={`${monthName(row.year, row.month)} hakedişini öde`}>
-          Öde
-        </Button>
-      )}
+  const monthCell = (row: HakedisMonth) => (
+    <div className="min-w-0">
+      <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+        <span className={`font-semibold ${isSelected(row) ? "text-primary-strong" : "text-slate-900"}`}>{monthName(row.year, row.month)}</span>
+        {statusBadge(row)}
+      </p>
+      <p className="text-xs text-slate-500">
+        Hakediş {money(row.hakedilen)}{row.odenen > 0 ? ` · Ödenen ${money(row.odenen)}` : ""}
+      </p>
     </div>
   );
+  const kalanCell = (row: HakedisMonth) => (!isCurrent(row) && row.kalan > 0.5
+    ? <span className="font-bold tabular-nums text-slate-900">{money(row.kalan)}</span>
+    : null);
 
   const columns: ListTableColumn<HakedisMonth>[] = [
-    { key: "ay", header: "Ay", render: (row) => <span className="font-semibold text-slate-900">{monthName(row.year, row.month)}</span> },
-    {
-      key: "hakedilen",
-      header: "Hakediş",
-      headerHint: "O ayın tedavilerinden doktor payı: kart komisyonu, genel gider payı ve laboratuvar gideri düşüldükten sonra.",
-      align: "right",
-      render: (row) => <span className={`tabular-nums ${row.hakedilen < 0 ? "text-red-700" : "text-slate-700"}`}>{money(row.hakedilen)}</span>,
-    },
-    // Ödeme yoksa hücre boş ("—" her satırda tekrar etmez).
-    { key: "odenen", header: "Ödenen", align: "right", render: (row) => (row.odenen > 0 ? <span className="tabular-nums text-slate-700">{money(row.odenen)}</span> : null) },
-    {
-      key: "kalan",
-      header: "Kalan",
-      align: "right",
-      // İçinde bulunulan ayın kalanı henüz ödenemez; durum sütunu "Ay sürüyor" der.
-      render: (row) => (isCurrent(row)
-        ? null
-        : <span className={`font-bold tabular-nums ${row.kalan > 0.5 ? "text-slate-900" : "text-slate-500"}`}>{money(row.kalan)}</span>),
-    },
-    { key: "durum", header: "Durum", render: statusBadge },
-    { key: "islem", header: "", align: "right" as const, render: payButton },
+    { key: "ay", header: "Ay", render: monthCell },
+    { key: "kalan", header: "Kalan", align: "right", headerHint: "Kapanmış ayın ödenmemiş kısmı. İçinde bulunulan ay, ay kapanınca ödenir.", render: kalanCell },
   ];
 
-  const detailColumns = (tone: string, withMethod: boolean): ListTableColumn<DetailRow>[] => [
-    { key: "tarih", header: "Tarih", cellClassName: "whitespace-nowrap text-sm text-slate-600", render: (row) => shortDate(row.tarih) },
-    {
-      key: "ad",
-      header: "Kayıt",
-      render: (row) => (
-        <div className="min-w-0">
-          {row.ad ? <p className="text-sm font-semibold text-slate-800">{row.ad}</p> : null}
-          {row.aciklama ? <p className="text-xs text-slate-500">{row.aciklama}</p> : null}
-          {!row.ad && !row.aciklama && <EmptyValue />}
-        </div>
-      ),
-    },
-    ...(withMethod ? [{ key: "yontem", header: "Yöntem", cellClassName: "text-sm text-slate-600", render: (row: DetailRow) => row.yontem || <EmptyValue /> }] : []),
-    { key: "tutar", header: "Tutar", align: "right", render: (row) => <span className={`font-semibold tabular-nums ${tone}`}>{money(row.tutar)}</span> },
-  ];
+  const monthOptionLabel = (row: HakedisMonth) => {
+    const status = monthStatus(row, isCurrent(row));
+    const kalan = !isCurrent(row) && row.kalan > 0.5 ? ` ${money(row.kalan)}` : "";
+    return `${monthName(row.year, row.month)}${status ? ` — ${status.label}${status.label === "Ödenecek" ? kalan : ""}` : ""}`;
+  };
 
-  const detailList = (rows: DetailRow[], tone: string, withMethod: boolean, emptyText: string) => (
-    <ListTable
-      columns={detailColumns(tone, withMethod)}
-      rows={rows}
-      rowKey={(row) => row.id}
-      emptyText={emptyText}
-      mobileCard={(row) => (
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-slate-800">{row.ad || row.aciklama || "—"}</p>
-            <p className="text-xs text-slate-500">{[shortDate(row.tarih), row.ad ? row.aciklama : "", row.yontem].filter(Boolean).join(" · ")}</p>
-          </div>
-          <span className={`shrink-0 font-semibold tabular-nums ${tone}`}>{money(row.tutar)}</span>
-        </div>
-      )}
-    />
-  );
+  const canPaySelected = Boolean(canPay && onPay && detail && selectedRow && !isCurrent(selectedRow) && detail.summary.kalan > 0.5);
 
-  const detailBody = () => {
-    if (!detail) return null;
-    if (detailTab === "hesap") {
-      return (
-        <DescriptionList
-          layout="rows"
-          items={breakdownRows(detail).map(([label, value], index, list) => ({
-            key: label,
-            label,
-            value: <span className="tabular-nums">{value}</span>,
-            emphasis: index === list.length - 1,
-          }))}
-        />
-      );
+  const statementBody = () => {
+    if (shown?.error) {
+      return <LoadErrorState message={shown.error} onRetry={() => setDetailReload((value) => value + 1)} />;
     }
-    if (detailTab === "tedavi") {
-      return detailList(detail.examinations.map((e) => ({ id: e.id, tarih: e.tarih, ad: e.hasta, aciklama: [e.tedavi, e.dis ? `diş ${e.dis}` : ""].filter(Boolean).join(" · "), yontem: "", tutar: e.tutar })), "text-slate-900", false, "Bu ay tedavi kaydı yok");
-    }
-    if (detailTab === "tahsilat") {
-      return detailList(detail.patientPayments.map((p) => ({ id: p.id, tarih: p.tarih, ad: p.hasta, aciklama: "", yontem: methodLabel(p.yontem), tutar: p.tutar })), "text-emerald-700", true, "Bu ay hasta tahsilatı yok");
-    }
-    if (detailTab === "lab") {
-      return detailList(detail.labInvoices.map((i) => ({ id: i.id, tarih: i.tarih, ad: i.lab, aciklama: i.kalem, yontem: "", tutar: i.tutar })), "text-red-700", false, "Bu ay laboratuvar ücreti yok");
-    }
-    return detailList(detail.payoutExpenses.map((p) => ({ id: p.id, tarih: p.tarih, ad: "", aciklama: p.aciklama || "Hakediş ödemesi", yontem: methodLabel(p.yontem), tutar: p.tutar })), "text-slate-900", true, "Bu ay için doktora ödeme yapılmadı");
+    if (!detail) return <ListRowSkeleton variant="row" rows={6} />;
+    return <HakedisStatement detail={detail} />;
   };
 
   return (
@@ -336,63 +392,66 @@ export function HakedisMonthlyPanel({ doctorId, canPay = false, onPay, refreshTo
               { key: "buay", label: "Bu ay biriken", value: money(current?.hakedilen ?? 0), hint: "Ay kapanınca ödenir" },
             ]}
           />
-          <ListTable
-            columns={columns}
-            rows={months || []}
-            rowKey={(row) => monthKey(row.year, row.month)}
-            loading={loading || (!months && !loadError)}
-            staleError={months ? loadError || null : null}
-            onRetry={() => setReloadKey((value) => value + 1)}
-            onRowClick={(row) => void openDetail(row.year, row.month)}
-            getRowAriaLabel={(row) => `${monthName(row.year, row.month)} dökümünü aç`}
-            emptyText="Bu doktor için son 12 ayda hakediş yok"
-            emptyDescription="Doktorun tedavi kaydı oluştukça aylık hakediş burada görünür."
-            // Telefon kartı iki satır: ay + durum, hakediş · ödenen; kalan sağda, ödeme sağ üstte "…".
-            mobileCard={(row) => (
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                    <span className="font-semibold text-slate-900">{monthName(row.year, row.month)}</span>
-                    {statusBadge(row)}
-                  </p>
-                  <p className="text-xs text-slate-500">
-                    Hakediş {money(row.hakedilen)}{row.odenen > 0 ? ` · Ödenen ${money(row.odenen)}` : ""}
-                  </p>
-                </div>
-                {!isCurrent(row) && row.kalan > 0.5 && <span className="shrink-0 font-bold tabular-nums text-slate-900">{money(row.kalan)}</span>}
+          {months && months.length === 0 ? (
+            <ListTable
+              columns={columns}
+              rows={[]}
+              rowKey={(row) => monthKey(row.year, row.month)}
+              emptyText="Bu doktor için son 12 ayda hakediş yok"
+              emptyDescription="Doktorun tedavi kaydı oluştukça aylık hakediş burada görünür."
+            />
+          ) : (
+            <div className="grid items-start gap-3 lg:grid-cols-[minmax(0,21rem)_minmax(0,1fr)]">
+              {/* Aylar: geniş ekranda solda liste (seçili ay vurgulu); telefonda dökümün üstünde seçici. */}
+              <div className="hidden lg:block">
+                <ListTable
+                  columns={columns}
+                  rows={months || []}
+                  rowKey={(row) => monthKey(row.year, row.month)}
+                  loading={loading || (!months && !loadError)}
+                  staleError={months ? loadError || null : null}
+                  onRetry={() => setReloadKey((value) => value + 1)}
+                  onRowClick={selectMonth}
+                  getRowAriaLabel={(row) => `${monthName(row.year, row.month)} dökümünü göster`}
+                  rowClassName={(row) => (isSelected(row) ? "bg-primary/[0.07] shadow-[inset_3px_0_0_rgb(var(--color-primary))]" : "")}
+                  mobileCard={(row) => (
+                    <div className="flex items-start justify-between gap-3">
+                      {monthCell(row)}
+                      {kalanCell(row)}
+                    </div>
+                  )}
+                />
               </div>
-            )}
-            mobileCardActions={canPay && onPay ? payMenu : undefined}
-          />
+              {months && (
+                <div className="lg:hidden">
+                  <Select aria-label="Ay" value={selectedKey} onChange={(event) => setPicked({ doctorId, key: event.target.value })}>
+                    {months.map((row) => (
+                      <option key={monthKey(row.year, row.month)} value={monthKey(row.year, row.month)}>{monthOptionLabel(row)}</option>
+                    ))}
+                  </Select>
+                </div>
+              )}
+              <Section
+                title={selectedRow ? `${monthName(selectedRow.year, selectedRow.month)} hakediş dökümü` : "Hakediş dökümü"}
+                badge={selectedRow ? statusBadge(selectedRow) : null}
+                description={detail ? `Hakediş oranı %${detail.rates.maasYuzde} · kart komisyonu %${detail.rates.kkYuzde} · genel gider payı %${detail.rates.genelYuzde}` : undefined}
+                actions={(canExport || canPaySelected) ? (
+                  <>
+                    {canExport && <ExportMenu onExcel={exportExcel} onPdf={exportPdf} disabled={!detail} disabledReason="Döküm hazırlanıyor" />}
+                    {canPaySelected && detail && onPay && (
+                      <Button size="sm" icon={Wallet} onClick={() => onPay(doctorId, detail.year, detail.month, detail.summary.kalan)}>
+                        Kalanı öde
+                      </Button>
+                    )}
+                  </>
+                ) : undefined}
+              >
+                {statementBody()}
+              </Section>
+            </div>
+          )}
         </>
       )}
-
-      <Modal
-        open={detailOpen}
-        onClose={() => setDetailOpen(false)}
-        title={detail ? `${detail.doctor.fullName} — ${monthName(detail.year, detail.month)}` : detailTarget ? `Hakediş — ${monthName(detailTarget.year, detailTarget.month)}` : "Hakediş dökümü"}
-        description={detail ? `Hakediş ${money(detail.summary.hakedilen)} · Ödenen ${money(detail.summary.odenen)} · Kalan ${money(detail.summary.kalan)}` : undefined}
-        size="xl"
-        module="hakediş"
-        trackFormChanges={false}
-        footer={(
-          <>
-            {canExport && <ExportMenu onExcel={exportExcel} onPdf={exportPdf} disabled={!detail} disabledReason="Döküm hazırlanıyor" />}
-            <Button variant="secondary" onClick={() => setDetailOpen(false)}>Kapat</Button>
-          </>
-        )}
-      >
-        {detailLoading ? (
-          <ListRowSkeleton variant="row" rows={6} />
-        ) : detailError || !detail ? (
-          <LoadErrorState message={detailError || "Hakediş detayı yüklenemedi."} onRetry={detailTarget ? () => void openDetail(detailTarget.year, detailTarget.month) : undefined} />
-        ) : (
-          <div className="space-y-3">
-            <Tabs ariaLabel="Döküm bölümleri" size="sm" items={DETAIL_TABS} value={detailTab} onChange={setDetailTab} />
-            {detailBody()}
-          </div>
-        )}
-      </Modal>
     </div>
   );
 }

@@ -17,7 +17,13 @@ import { PATIENT_FILTER_LABELS, count, csvAmount, doctorNames, money, patientDeb
 // satırları olarak yazar. Tutar ve adet hücresi biçime göre yazılır.
 
 type Cell = string | { money: number } | { count: number };
-type ExportSection = { title: string; headers: string[]; rows: Cell[][] };
+type ExportSection = {
+  title: string;
+  headers: string[];
+  rows: Cell[][];
+  /** PDF'te tablo yerine özet kartları (yalnız sayı/tutar satırları; CSV'de tablo kalır). */
+  pdf?: "stats";
+};
 
 export type ExportDocument = {
   fileName: string;
@@ -25,7 +31,6 @@ export type ExportDocument = {
   title: string;
   /** PDF başlık altı: dönem · doktor · süzgeç. */
   meta: string;
-  orientation: "p" | "l";
   sections: ExportSection[];
 };
 
@@ -48,6 +53,7 @@ export function summaryDocument(data: SummaryReport, context: ExportContext, inc
   const sections: ExportSection[] = [{
     title: "Özet",
     headers: ["Kalem", "Değer"],
+    pdf: "stats",
     rows: [
       ["Dönem", context.rangeLabel],
       ...(context.doctorName ? [["Doktor", context.doctorName] as Cell[]] : []),
@@ -77,7 +83,6 @@ export function summaryDocument(data: SummaryReport, context: ExportContext, inc
     fileName: `rapor-ozet-${context.fileRange}`,
     title: "Rapor: Özet",
     meta: metaLine(context.rangeLabel, context.doctorName),
-    orientation: "p",
     sections,
   };
 }
@@ -88,7 +93,6 @@ export function patientsDocument(data: PatientsReport, rows: PatientReportRow[],
     fileName: `rapor-hastalar-${context.fileRange}`,
     title: "Rapor: Hastalar",
     meta: metaLine(context.rangeLabel, context.doctorName, data.filter === "tumu" ? "" : PATIENT_FILTER_LABELS[data.filter], truncatedNote(data.truncated, data.limit)),
-    orientation: "p",
     sections: [{
       title: data.filter === "tumu" ? "Gelen hastalar" : PATIENT_FILTER_LABELS[data.filter],
       headers: ["Hasta", "Doktor", "Tedavi tutarı", "Tahsilat", "Kalan borç"],
@@ -111,7 +115,6 @@ export function treatmentsDocument(data: TreatmentsReport, rows: TreatmentReport
     fileName: `rapor-tedaviler-${context.fileRange}`,
     title: "Rapor: Tedaviler",
     meta: metaLine(context.rangeLabel, context.doctorName, truncatedNote(data.truncated, data.limit)),
-    orientation: "p",
     sections: [{
       title: "Yapılan tedaviler",
       headers: ["Tarih", "Hasta", "Doktor", "Tedavi", "Ücret"],
@@ -134,7 +137,6 @@ export function expensesDocument(data: ExpensesReport, context: ExportContext): 
     fileName: `rapor-giderler-${context.fileRange}`,
     title: "Rapor: Giderler",
     meta: context.rangeLabel,
-    orientation: "p",
     sections: [
       {
         title: "Gider türleri",
@@ -177,19 +179,19 @@ export async function downloadReportCsv(file: ExportDocument) {
 }
 
 export async function downloadReportPdf(file: ExportDocument) {
-  const { addPdfSection, addPdfTitle, createPdfDoc, preparePdfFonts } = await import("@/lib/pdf-export");
-  // Türkçe yazı tipi oturumun ilk PDF'inde de yüklü olsun (yoksa harfler dönüştürülür).
+  const { addPdfSection, addPdfStats, addPdfTitle, createPdfDoc, preparePdfFonts } = await import("@/lib/pdf-export");
+  // Türkçe yazı tipi ve klinik anteti oturumun ilk PDF'inde de hazır olsun.
   await preparePdfFonts();
-  const doc = createPdfDoc(file.orientation);
-  addPdfTitle(doc, file.title, file.meta);
-  const pageHeight = doc.internal.pageSize.getHeight();
-  let y = 30;
+  const doc = createPdfDoc();
+  let y = addPdfTitle(doc, file.title, file.meta);
   for (const section of file.sections) {
-    // Uzun tablodan sonra bölüm başlığı sayfa dışına düşmesin.
-    if (y > pageHeight - 30) {
-      doc.addPage();
-      y = 20;
+    if (section.pdf === "stats") {
+      // Dönem ve doktor başlığın altında yazılı; kartlarda yalnız sayılar.
+      const stats = section.rows.filter((row) => typeof row[1] !== "string").map((row) => ({ label: pdfCell(row[0] ?? ""), value: pdfCell(row[1] ?? "") }));
+      y = addPdfStats(doc, y, stats);
+      continue;
     }
+    // Bölüm başlığı sayfanın dibine düşerse ortak işlev yeni sayfaya geçer.
     y = addPdfSection(doc, y, section.title, section.headers, section.rows.map((row) => row.map(pdfCell)));
   }
   doc.save(`${file.fileName}.pdf`);
